@@ -28,18 +28,6 @@ option1_housing = db.option1_housing
 option2_fundflow = db.option2_fundflow
 plan_layouts = db.plan_layouts
 
-# ----------------------------------------------------------------------------
-# Indexes (create once; safe to run repeatedly)
-# ----------------------------------------------------------------------------
-
-villages.create_index([("village_id", ASCENDING)], unique=True)
-villages.create_index([("name", ASCENDING)])
-families.create_index([("village_id", ASCENDING)])
-families.create_index([("relocation_option", ASCENDING)])
-users.create_index([("email", ASCENDING)], unique=True)
-stages.create_index([("stage_id", ASCENDING)], unique=True)
-village_stage_progress.create_index([("village_id", ASCENDING), ("stage_id", ASCENDING)], unique=True)
-option2_fundflow.create_index([("family_id", ASCENDING), ("stage", ASCENDING)], unique=True)
 
 # ----------------------------------------------------------------------------
 # Routes
