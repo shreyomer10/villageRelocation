@@ -11,7 +11,10 @@ from tokenAuth import auth_required,make_jwt
 
 
 app = Flask(__name__)
-CORS(app, supports_credentials=True)
+CORS(app, supports_credentials=True, origins=[
+    "http://localhost:5173",
+])
+
 
 
 
