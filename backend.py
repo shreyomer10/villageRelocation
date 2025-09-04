@@ -11,9 +11,16 @@ from tokenAuth import auth_required,make_jwt
 
 
 app = Flask(__name__)
-CORS(app, supports_credentials=True, origins=[
-    "http://localhost:5173",
-])
+CORS(app,
+     supports_credentials=True,
+     resources={
+         r"/*": {
+             "origins": [
+                 "http://localhost:5173",
+                 "https://villagerelocation-kkot.onrender.com"
+             ]
+         }
+     })
 
 
 
