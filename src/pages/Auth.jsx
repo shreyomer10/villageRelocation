@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 
 export default function Auth() {
   const [email, setEmail] = useState("");
@@ -7,18 +8,14 @@ export default function Auth() {
   const [loading, setLoading] = useState(false);
 
   const mountedRef = useRef(false);
+  const navigate = useNavigate();
+
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
     };
   }, []);
-
-  function navigateToDashboard() {
-    if (typeof window !== "undefined") {
-      window.location.href = "/dashboard";
-    }
-  }
 
   async function handleSubmit() {
     setError(null);
@@ -47,32 +44,30 @@ export default function Auth() {
       if (!mountedRef.current) return;
 
       if (!res.ok) {
-        // try to read error message from server
         let errMsg = "Login failed.";
         try {
           const payload = await res.json();
           if (payload && payload.error) errMsg = payload.error;
-        } catch (e) {
+        } catch {
           // ignore JSON parse error
         }
         throw new Error(errMsg);
       }
 
       const payload = await res.json();
-      // Backend returns: { token: "...", user: { name, email, role } }
       const user = payload?.user;
       if (!user || !user.name) {
         throw new Error("Invalid server response.");
       }
 
-      // STORE ONLY the user's name for later use in your AuthContext
-      // (the AuthContext can later read localStorage.getItem("user") to get name)
+      // Save user info to localStorage
       localStorage.setItem("user", JSON.stringify({ name: user.name }));
 
-      // If you later need the token for API calls, you can store payload.token as well.
+      // Save token if you want to use it later for authenticated API calls
       // localStorage.setItem("token", payload.token);
 
-      navigateToDashboard();
+      // ✅ Navigate using React Router (no reload, no 404)
+      navigate("/dashboard");
     } catch (err) {
       if (mountedRef.current) {
         setError(err?.message || "Login failed.");
