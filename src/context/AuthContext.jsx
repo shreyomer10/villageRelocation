@@ -1,59 +1,129 @@
 // src/context/AuthContext.jsx
-import React, { createContext, useState, useEffect, useCallback, useRef } from "react";
-
-// set this to your backend base URL
-const API_BASE = "https://villagerelocation.onrender.com";
+import React, { createContext, useCallback, useEffect, useRef, useState } from "react";
 
 export const AuthContext = createContext({
   user: null,
-  setUser: () => {},
   villageId: null,
-  setVillageId: () => {},
-  // token left for backwards compat; avoid depending on it for cookie-based auth
   token: null,
-  setToken: () => {},
-  login: async () => {},
+  tokenExpiry: null,
+  remainingMs: null,
+  isAuthenticated: false,
+  login: () => {},
   logout: () => {},
-  apiFetch: async () => {}, // helper for authenticated fetches (sends cookies)
+  refreshSession: () => Promise.resolve(false),
+  setVillageId: () => {},
 });
 
+const API_BASE = process.env.REACT_APP_API_BASE || "https://villagerelocation.onrender.com";
+
+function base64UrlDecode(str) {
+  if (!str) return null;
+  str = str.replace(/-/g, "+").replace(/_/g, "/");
+  while (str.length % 4) str += "=";
+  try {
+    return atob(str);
+  } catch {
+    try {
+      return decodeURIComponent(escape(atob(str)));
+    } catch {
+      return null;
+    }
+  }
+}
+function parseJwt(token) {
+  if (!token) return null;
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  const payload = base64UrlDecode(parts[1]);
+  if (!payload) return null;
+  try {
+    return JSON.parse(payload);
+  } catch {
+    return null;
+  }
+}
+
 export function AuthProvider({ children }) {
-  const [user, setUserState] = useState(null); // { name, email, ... }
+  const [user, setUserState] = useState(null);
   const [villageId, setVillageIdState] = useState(null);
-  const [token, setTokenState] = useState(null); // optional: only if backend returns a token in JSON
+  const [token, setTokenState] = useState(null); // readable token if backend returned it (app flow)
+  const [tokenExpiry, setTokenExpiry] = useState(null); // ms since epoch
+  const [remainingMs, setRemainingMs] = useState(null);
 
-  // for refresh control
-  const isRefreshingRef = useRef(false);
+  const intervalRef = useRef(null);
+  const timeoutRef = useRef(null);
 
-  // --- Initialize from localStorage (only safe, non-sensitive items) ---
+  // timers
+  const clearTimers = useCallback(() => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+  }, []);
+
+  const startTimers = useCallback(
+    (expiryMs) => {
+      clearTimers();
+      setTokenExpiry(expiryMs);
+
+      const tick = () => {
+        const rem = Math.max(0, expiryMs - Date.now());
+        setRemainingMs(rem);
+        if (rem <= 0) {
+          clearTimers();
+          doLogout(); // auto logout on expiry
+        }
+      };
+      tick();
+      intervalRef.current = setInterval(tick, 1000);
+
+      const msUntilExpiry = Math.max(0, expiryMs - Date.now());
+      timeoutRef.current = setTimeout(() => {
+        clearTimers();
+        doLogout();
+      }, msUntilExpiry + 50);
+    },
+    [clearTimers]
+  );
+
+  // persistent init
   useEffect(() => {
     try {
       const rawUser = localStorage.getItem("user");
       if (rawUser) {
         const parsed = JSON.parse(rawUser);
-        if (parsed?.name) setUserState(parsed);
+        if (parsed?.name) setUserState({ name: parsed.name });
       }
-    } catch (e) {
-      // ignore parse errors
-    }
+    } catch {}
 
     const storedVillage = localStorage.getItem("villageId");
     if (storedVillage) setVillageIdState(storedVillage);
 
-    // NOTE: we intentionally do NOT read token from localStorage by default
-    // to encourage cookie-based auth. If your backend returns token in JSON and
-    // you want it stored, you can set it via login() and it will be kept in memory.
+    const storedToken = localStorage.getItem("token");
+    if (storedToken) setTokenState(storedToken);
+
+    const storedExpiry = localStorage.getItem("tokenExpiry");
+    if (storedExpiry) {
+      const ms = Number(storedExpiry);
+      if (!Number.isNaN(ms)) {
+        startTimers(ms);
+        return;
+      }
+    }
+
+    // otherwise attempt to fetch session info (useful if server set httpOnly cookie)
+    fetchSessionInfo().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // persist user (safe small object) and villageId
+  // persist changes
   useEffect(() => {
-    if (user && user.name) {
-      try {
-        localStorage.setItem("user", JSON.stringify(user));
-      } catch (e) {}
-    } else {
-      localStorage.removeItem("user");
-    }
+    if (user && user.name) localStorage.setItem("user", JSON.stringify({ name: user.name }));
+    else localStorage.removeItem("user");
   }, [user]);
 
   useEffect(() => {
@@ -61,193 +131,196 @@ export function AuthProvider({ children }) {
     else localStorage.removeItem("villageId");
   }, [villageId]);
 
-  // NOTE: do NOT persist token in localStorage by default for HttpOnly cookie flows.
   useEffect(() => {
-    if (!token) return;
-    // keep token only in memory; if you want to persist, uncomment:
-    // localStorage.setItem("token", token);
+    if (token) localStorage.setItem("token", token);
+    else localStorage.removeItem("token");
   }, [token]);
 
-  // storage event listener: sync across tabs for user/village changes
+  useEffect(() => {
+    if (tokenExpiry) localStorage.setItem("tokenExpiry", tokenExpiry.toString());
+    else localStorage.removeItem("tokenExpiry");
+  }, [tokenExpiry]);
+
+  // multi-tab sync
   useEffect(() => {
     function onStorage(e) {
       if (!e.key) return;
       if (e.key === "user") {
         try {
-          const val = e.newValue ? JSON.parse(e.newValue) : null;
-          setUserState(val && val.name ? val : null);
+          const v = e.newValue ? JSON.parse(e.newValue) : null;
+          setUserState(v && v.name ? { name: v.name } : null);
         } catch {
           setUserState(null);
         }
       } else if (e.key === "villageId") {
         setVillageIdState(e.newValue);
+      } else if (e.key === "token") {
+        setTokenState(e.newValue);
+      } else if (e.key === "tokenExpiry") {
+        const ms = e.newValue ? Number(e.newValue) : null;
+        if (ms && !Number.isNaN(ms)) startTimers(ms);
+        else {
+          clearTimers();
+          setTokenExpiry(null);
+          setRemainingMs(null);
+        }
       }
-      // token key intentionally not handled here
     }
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
-  }, []);
+  }, [startTimers, clearTimers]);
 
-  // safe setters
-  const setUser = useCallback((u) => setUserState(u ? { ...u } : null), []);
-  const setVillageId = useCallback((id) => setVillageIdState(id ?? null), []);
-  const setToken = useCallback((t) => setTokenState(t ?? null), []);
-
-  // ---------------- Helper: refresh session ----------------
-  // Calls the backend refresh endpoint to renew access (server should set cookie)
-  const refresh = useCallback(async () => {
-    if (isRefreshingRef.current) return false;
-    isRefreshingRef.current = true;
+  // fetch session info (for cookie-only web flow)
+  const fetchSessionInfo = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/auth/refresh`, {
-        method: "POST",
-        credentials: "include", // important: send cookies
-        headers: { "Content-Type": "application/json" },
-      });
-
-      if (!res.ok) {
-        isRefreshingRef.current = false;
-        return false;
-      }
-
-      const payload = await res.json();
-      // backend may return user and optional token
-      if (payload?.user) setUserState(payload.user);
-      if (payload?.token) setTokenState(payload.token);
-
-      isRefreshingRef.current = false;
-      return true;
-    } catch (err) {
-      isRefreshingRef.current = false;
-      return false;
-    }
-  }, []);
-
-  // ---------------- Helper: apiFetch ----------------
-  // A small wrapper around fetch that:
-  // - includes credentials by default
-  // - if receives 401, attempts a refresh() then retries once
-  const apiFetch = useCallback(
-    async (input, init = {}) => {
-      const merged = {
-        credentials: "include", // ensures cookies are sent
-        headers: { "Content-Type": "application/json", ...(init.headers || {}) },
-        ...init,
-      };
-
-      // First attempt
-      let res = await fetch(typeof input === "string" ? `${API_BASE}${input}` : input, merged);
-
-      // If unauthorized, try refreshing once and retry
-      if (res.status === 401) {
-        const didRefresh = await refresh();
-        if (didRefresh) {
-          // retry once
-          res = await fetch(typeof input === "string" ? `${API_BASE}${input}` : input, merged);
-        } else {
-          // refresh failed → logout (clear local state)
-          // do not call external logout endpoint here (we do it explicitly in logout())
-          setUserState(null);
-          setVillageIdState(null);
-          setTokenState(null);
-        }
-      }
-
-      return res;
-    },
-    [refresh]
-  );
-
-  // ---------------- login ----------------
-  // Accepts credentials object: { email, password, is_app: true/false }
-  // The server should set the HttpOnly cookie on successful login (browser will store it)
-  const login = useCallback(
-    async (credentials) => {
-      const payload = credentials || {};
-      try {
-        const res = await fetch(`${API_BASE}/auth/login`, {
-          method: "POST",
-          credentials: "include", // important: receive cookie
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-
-        if (!res.ok) {
-          let errMsg = "Login failed.";
-          try {
-            const body = await res.json();
-            if (body?.error) errMsg = body.error;
-            else if (body?.message) errMsg = body.message;
-          } catch {}
-          throw new Error(errMsg);
-        }
-
-        const data = await res.json();
-        // expected: data.user (server may also send cookies server-side)
-        if (data?.user) {
-          setUserState(data.user);
-        }
-        // server might return a token in JSON for non-HttpOnly flows (optional)
-        if (data?.token) {
-          setTokenState(data.token);
-        }
-
-        return { ok: true, data };
-      } catch (err) {
-        return { ok: false, error: err?.message || "Login failed" };
-      }
-    },
-    []
-  );
-
-  // ---------------- logout ----------------
-  // Try to call the server logout to clear cookie; clear local state
-  const logout = useCallback(async () => {
-    try {
-      // Optional: if server exposes a logout endpoint that clears cookies
-      await fetch(`${API_BASE}/auth/logout`, {
-        method: "POST",
+      const res = await fetch(`${API_BASE}/auth/me`, {
+        method: "GET",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
       });
-    } catch (e) {
-      // ignore network errors
-    } finally {
-      setUserState(null);
-      setVillageIdState(null);
-      setTokenState(null);
-      try {
-        localStorage.removeItem("user");
-        localStorage.removeItem("villageId");
-        // do not remove token from localStorage because we don't persist it
-      } catch (e) {}
-    }
-  }, []);
+      if (!res.ok) return false;
+      const payload = await res.json();
 
-  // Optionally: try to restore session on mount by calling refresh()
-  useEffect(() => {
-    // Attempt to refresh session silently (non-blocking)
-    (async () => {
-      try {
-        await refresh();
-      } catch (e) {
-        // ignore
+      const u = payload?.user;
+      if (u?.name) setUserState({ name: u.name });
+
+      // token might be returned in cookies dict or token field
+      const tkn = payload?.cookies?.token ?? payload?.token ?? null;
+      if (tkn) setTokenState(tkn);
+
+      let expiryMs = null;
+      if (payload?.tokenExpiry) expiryMs = Number(payload.tokenExpiry);
+      else if (payload?.expiry) expiryMs = Number(payload.expiry);
+      else if (tkn) {
+        const dec = parseJwt(tkn);
+        if (dec?.exp) expiryMs = Number(dec.exp) * 1000;
       }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // run once on mount
 
-  const value = {
-    user,
-    setUser,
-    villageId,
-    setVillageId,
-    token, // may be null for HttpOnly cookie flows
-    setToken,
-    login,
-    logout,
-    apiFetch,
-  };
+      if (expiryMs && !Number.isNaN(expiryMs)) {
+        startTimers(expiryMs);
+        return true;
+      }
+      return !!u;
+    } catch {
+      return false;
+    }
+  }, [startTimers]);
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  // core logout (clears local data and asks server to clear cookie)
+  const doLogout = useCallback(() => {
+    clearTimers();
+    setUserState(null);
+    setVillageIdState(null);
+    setTokenState(null);
+    setTokenExpiry(null);
+    setRemainingMs(null);
+    try {
+      localStorage.removeItem("user");
+      localStorage.removeItem("villageId");
+      localStorage.removeItem("token");
+      localStorage.removeItem("tokenExpiry");
+    } catch {}
+
+    // best-effort notify backend to clear cookie
+    fetch(`${API_BASE}/auth/logout`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+    }).catch(() => {});
+  }, [clearTimers]);
+
+  // public API: login({ name, token, tokenExpiry })
+  const login = useCallback(
+    ({ name, token: tkn, tokenExpiry: expiry }) => {
+      if (name) setUserState({ name });
+      if (tkn) setTokenState(tkn);
+
+      let expiryMs = null;
+      if (expiry) expiryMs = Number(expiry);
+      else if (tkn) {
+        const dec = parseJwt(tkn);
+        if (dec?.exp) expiryMs = Number(dec.exp) * 1000;
+      }
+
+      if (expiryMs && !Number.isNaN(expiryMs)) startTimers(expiryMs);
+      else fetchSessionInfo().catch(() => {});
+    },
+    [startTimers, fetchSessionInfo]
+  );
+
+  const logout = useCallback(() => {
+    doLogout();
+  }, [doLogout]);
+
+  // refreshSession: uses Authorization header if token readable (app flow),
+  // otherwise uses credentials: "include" to let cookie-based refresh happen.
+  const refreshSession = useCallback(async () => {
+    try {
+      const hasReadableToken = Boolean(token);
+      const headers = { "Content-Type": "application/json" };
+      let fetchOpts = {
+        method: "POST",
+        headers,
+        credentials: hasReadableToken ? "omit" : "include", // if token present use header, else use cookie
+      };
+
+      if (hasReadableToken) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+
+      const res = await fetch(`${API_BASE}/auth/refresh`, fetchOpts);
+      if (!res.ok) return false;
+      const payload = await res.json();
+
+      // payload shape (per your docs): may return { token, employee/user }
+      const u = payload?.user ?? payload?.employee;
+      if (u?.name) setUserState({ name: u.name });
+
+      const newToken = payload?.cookies?.token ?? payload?.token ?? null;
+      if (newToken) setTokenState(newToken);
+
+      let expiryMs = null;
+      if (payload?.tokenExpiry) expiryMs = Number(payload.tokenExpiry);
+      else if (payload?.expiry) expiryMs = Number(payload.expiry);
+      else if (newToken) {
+        const dec = parseJwt(newToken);
+        if (dec?.exp) expiryMs = Number(dec.exp) * 1000;
+      }
+
+      if (expiryMs && !Number.isNaN(expiryMs)) {
+        startTimers(expiryMs);
+      } else {
+        // fallback: re-fetch session info (cookie-only flows)
+        await fetchSessionInfo();
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }, [token, startTimers, fetchSessionInfo]);
+
+  useEffect(() => {
+    return () => clearTimers();
+  }, [clearTimers]);
+
+  const isAuthenticated = Boolean(user && (token || tokenExpiry || (remainingMs && remainingMs > 0)));
+
+  return (
+    <AuthContext.Provider
+      value={{
+        user,
+        villageId,
+        token,
+        tokenExpiry,
+        remainingMs,
+        isAuthenticated,
+        login,
+        logout,
+        refreshSession,
+        setVillageId: (id) => setVillageIdState(id ?? null),
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
+  );
 }
