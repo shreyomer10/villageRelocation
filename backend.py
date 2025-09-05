@@ -1,13 +1,16 @@
 
 import datetime as dt
 
-from flask import Flask, request, jsonify
+from flask import Flask, Blueprint,request, jsonify,make_response
 from flask_cors import CORS
 from pymongo import  ASCENDING, DESCENDING
-from config import db
+from config import JWT_EXPIRE_MIN, db
 import jwt
-from helpers import hash_password,verify_password,to_village_card
-from tokenAuth import auth_required,make_jwt
+from utils.helpers import hash_password,verify_password,to_village_card
+from utils.tokenAuth import auth_required,make_jwt
+from routes.auth import auth_bp
+from routes.village import village_bp
+from routes.family import family_bp
 
 
 app = Flask(__name__)
@@ -35,151 +38,136 @@ option1_housing = db.option1_housing
 option2_fundflow = db.option2_fundflow
 plan_layouts = db.plan_layouts
 
+app.register_blueprint(auth_bp,url_prefix="/")
+app.register_blueprint(village_bp,url_prefix="/")
+app.register_blueprint(family_bp,url_prefix="/")
 
-# ----------------------------------------------------------------------------
-# Routes
-# ----------------------------------------------------------------------------
-
-@app.route("/",methods=["GET"])
+@app.route("/", methods=["GET"])
 def home():
-    return "ok"
-
-@app.route("/auth/login", methods=["POST"])
-def login():
-    data = request.get_json(force=True)
-    email = (data.get("email") or "").strip().lower()
-    password = data.get("password") or ""
-    user = users.find_one({"email": email})
-    if not user or not verify_password(password, user.get("password_hash", b"")):
-        return jsonify({"error": "Invalid credentials"}), 401
-    token = make_jwt({"sub": str(user.get("_id")), "role": user.get("role"), "name": user.get("name")})
-    return jsonify({
-        "token": token,
-        "user": {"name": user.get("name"), "email": user.get("email"), "role": user.get("role")}
-    })
-
-
-
-
-@app.route("/villages", methods=["GET"])
-def get_all_villages():
-    """Dashboard list with optional stage filter (?stage=3 or ?stage=2,3)."""
-    stage = request.args.get("stage")
-    q = {}
-    if stage:
-        try:
-            # allow comma-separated list
-            stages_filter = [int(s.strip()) for s in stage.split(",") if s.strip().isdigit()]
-            if stages_filter:
-                q["current_stage"] = {"$in": stages_filter}
-        except Exception:
-            pass
-    cursor = villages.find(q, projection={"_id": 0, "village_id": 1, "name": 1, "current_stage": 1, "updated_at": 1}).sort("name", ASCENDING)
-    return jsonify([to_village_card(v) for v in cursor])
-
-
-@app.route("/villages/<village_id>/family-count", methods=["GET"])
-def get_family_count(village_id):
-    pipeline = [
-        {"$match": {"village_id": village_id}},
-        {"$group": {
-            "_id": "$relocation_option",
-            "count": {"$sum": 1}
-        }}
-    ]
-    counts = {"total": 0, "option1": 0, "option2": 0}
-    for row in families.aggregate(pipeline):
-        counts["total"] += row["count"]
-        if row["_id"] == 1 or row["_id"] == "1" or row["_id"] == "Option1":
-            counts["option1"] = row["count"]
-        elif row["_id"] == 2 or row["_id"] == "2" or row["_id"] == "Option2":
-            counts["option2"] = row["count"]
-    return jsonify({
-        "villageId": village_id,
-        "totalFamilies": counts["total"],
-        "familiesOption1": counts["option1"],
-        "familiesOption2": counts["option2"],
-    })
-
-
-@app.route("/villages/<village_id>", methods=["GET"])
-def get_village_data(village_id):
-    v = villages.find_one({"village_id": village_id}, {"_id": 0})
-    if not v:
-        return jsonify({"error": "Village not found"}), 404
-
-    # Compute total stages from stages collection if not set
-    total_stages = v.get("total_stages")
-    if not total_stages:
-        total_stages = stages.count_documents({})
-
-    data = {
-        "villageId": v.get("village_id"),
-        "name": v.get("name"),
-        "currentStage": v.get("current_stage"),
-        "totalStages": total_stages,
-        "lastUpdatedOn": v.get("updated_at"),
-        "location": {
-            "latitude": v.get("location_latitude"),
-            "longitude": v.get("location_longitude"),
-        },
-        "areaOfRelocation": v.get("area_of_relocation"),
-        "areaDiverted": v.get("area_diverted"),
-        "image": v.get("photo"),
+    api_docs = {
+        "api_documentation": {
+            "auth": {
+                "prefix": "/auth",
+                "routes": [
+                    {
+                        "path": "/login",
+                        "method": "POST",
+                        "description": "Authenticates a user and returns a JWT token.",
+                        "request_sample": {
+                            "email": "user@example.com",
+                            "password": "securepassword123",
+                            "is_app": True
+                        },
+                        "response_sample": {
+                            "200_app_success": {
+                                "error": False,
+                                "message": "Login Successfull",
+                                "token": "eyJhbGciOiJIUzI1NiIsInR5c...<jwt_token>...jS8l7_B_h4w1K9c",
+                                "user": {
+                                    "name": "John Doe",
+                                    "email": "user@example.com",
+                                    "role": "admin"
+                                }
+                            },
+                            "200_web_success": {
+                                "error": False,
+                                "message": "Login successful",
+                                "user": {
+                                    "name": "John Doe",
+                                    "email": "user@example.com",
+                                    "role": "admin"
+                                },
+                                "cookies": {
+                                    "token": "eyJhbGciOiJIUzI1NiIsInR5c...<jwt_token>...jS8l7_B_h4w1K9c"
+                                }
+                            },
+                            "400_missing_credentials": {
+                                "message": "Missing emp_id, roll, password, or mobile_number"
+                            },
+                            "401_invalid_credentials": {
+                                "error": "Invalid credentials"
+                            }
+                        }
+                    },
+                    {
+                        "path": "/refresh",
+                        "method": "POST",
+                        "description": "Refreshes an expired access token using a valid refresh token. This endpoint requires an existing access token to be passed in the Authorization header via the `auth_required` decorator.",
+                        "request_sample": None,
+                        "response_sample": {
+                            "200_success": {
+                                "message": "Token refreshed successfully",
+                                "token": "eyJhbGciOiJIUzI1NiIsInR5c...<new_jwt_token>...jS8l7_B_h4w1K9c",
+                                "employee": {
+                                    "name": "John Doe",
+                                    "email": "user@example.com",
+                                    "role": "admin"
+                                }
+                            },
+                            "401_invalid_token": {
+                                "error": "Invalid token"
+                            }
+                        }
+                    }
+                ]
+            },
+            "village": {
+                "prefix": "/village",
+                "routes": [
+                    {
+                        "path": "/villages",
+                        "method": "GET",
+                        "description": "Gets a list of all villages. Can be filtered by a stage number or a comma-separated list of stages.",
+                        "request_sample": None,
+                        "query_parameters": {
+                            "stage": "2"
+                        },
+                        "response_sample": {
+                            "200_success": [
+                                {
+                                    "villageId": "V001",
+                                    "name": "Village A",
+                                    "currentStage": 3,
+                                    "updatedAt": "2023-10-27T10:00:00Z"
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "path": "/villages/<village_id>",
+                        "method": "GET",
+                        "description": "Retrieves detailed information about a specific village.",
+                        "request_sample": None,
+                        "path_parameters": {
+                            "village_id": "V001"
+                        },
+                        "response_sample": {
+                            "200_success": {
+                                "villageId": "V001",
+                                "name": "Village A",
+                                "currentStage": 3,
+                                "totalStages": 5,
+                                "lastUpdatedOn": "2023-10-27T10:00:00Z",
+                                "location": {
+                                    "latitude": 21.1702,
+                                    "longitude": 72.8311
+                                },
+                                "areaOfRelocation": 500.5,
+                                "areaDiverted": 450.2,
+                                "image": "path/to/image.jpg"
+                            },
+                            "404_not_found": {
+                                "error": "Village not found"
+                            }
+                        }
+                    }
+                ]
+            }
+            # ... (add other sections from your JSON structure here)
+        }
     }
-    return jsonify(data)
-
-
-@app.route("/villages/<village_id>/beneficiaries", methods=["GET"])
-def get_beneficiaries(village_id):
-    option = request.args.get("option")  # '1' or '2'
-    q = {"village_id": village_id}
-    if option in {"1", "2"}:
-        # support numeric or string storage
-        q["relocation_option"] = int(option)
-    projection = {
-        "_id": 0,
-        "family_id": 1,
-        "mukhiyaName": 1,
-        "mukhiya_photo": 1,
-    }
-    cursor = families.find(q, projection=projection).sort("mukhiyaName", ASCENDING)
-    results = [{
-        "familyId": f.get("family_id"),
-        "mukhiyaName": f.get("mukhiyaName"),
-        "mukhiyaPhoto": f.get("mukhiya_photo"),
-    } for f in cursor]
-    return jsonify(results)
-
-
-@app.route("/families/<family_id>", methods=["GET"])
-def get_family_data(family_id):
-    f = families.find_one({"family_id": family_id}, {"_id": 0})
-    if not f:
-        return jsonify({"error": "Family not found"}), 404
-
-    members = list(family_members.find({"family_id": family_id}, {"_id": 0}))
-
-    # Option1 and Option2 progress (if any)
-    o1_photos = list(option1_housing.find({"family_id": family_id}, {"_id": 0}).sort("uploaded_on", DESCENDING))
-    o2_progress = list(option2_fundflow.find({"family_id": family_id}, {"_id": 0}).sort("transaction_date", DESCENDING))
-
-    return jsonify({
-        "family": {
-            "familyId": f.get("family_id"),
-            "villageId": f.get("village_id"),
-            "mukhiyaId": f.get("mukhiyaId"),
-            "mukhiyaName": f.get("mukhiyaName"),
-            "mukhiyaPhoto": f.get("mukhiya_photo"),
-            "relocationOption": f.get("relocation_option"),
-            "createdAt": f.get("created_at"),
-            "updatedAt": f.get("updated_at"),
-        },
-        "members": members,
-        "option1Housing": o1_photos,
-        "option2FundFlow": o2_progress,
-    })
-
+    
+    return jsonify(api_docs)
 
 # ----------------------------------------------------------------------------
 # Bootstrap utility: create an initial admin and sample data (optional)
