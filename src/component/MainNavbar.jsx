@@ -98,7 +98,7 @@ export default function MainNavbar({
   return (
     <header className="w-full select-none">
       <div className="bg-[#a7dec0]">
-        <div className="max-w-7xl mx-auto px-4">
+        <div className="max-w-8xl mx-auto px-4">
           {/* top row: left and right stay in flow; center is absolutely centered */}
           <div className="relative flex items-center justify-between py-2 min-h-[64px]">
             {/* LEFT: logo + welcome */}
