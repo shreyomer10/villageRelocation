@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 
 export default function Auth() {
   const [email, setEmail] = useState("");
@@ -7,18 +8,12 @@ export default function Auth() {
   const [loading, setLoading] = useState(false);
 
   const mountedRef = useRef(false);
+  const navigate = useNavigate();
+
   useEffect(() => {
     mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
+    return () => { mountedRef.current = false; };
   }, []);
-
-  function navigateToDashboard() {
-    if (typeof window !== "undefined") {
-      window.location.href = "/dashboard";
-    }
-  }
 
   async function handleSubmit() {
     setError(null);
@@ -34,49 +29,41 @@ export default function Auth() {
         "https://villagerelocation.onrender.com/auth/login",
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            email: trimmedEmail,
-            password,
-          }),
+          headers: { "Content-Type": "application/json" },
+          credentials: "include", // ← important: send/receive cookies
+          body: JSON.stringify({ email: trimmedEmail, password, is_app: false })
         }
       );
 
       if (!mountedRef.current) return;
 
+      // If backend sets cookie and returns 200_web_success with user object:
       if (!res.ok) {
-        // try to read error message from server
+        // If 401, backend may not return JSON — attempt parse safely
         let errMsg = "Login failed.";
         try {
           const payload = await res.json();
           if (payload && payload.error) errMsg = payload.error;
-        } catch (e) {
-          // ignore JSON parse error
-        }
+          else if (payload && payload.message) errMsg = payload.message;
+        } catch { /* ignore parse error */ }
         throw new Error(errMsg);
       }
 
       const payload = await res.json();
-      // Backend returns: { token: "...", user: { name, email, role } }
       const user = payload?.user;
       if (!user || !user.name) {
         throw new Error("Invalid server response.");
       }
 
-      // STORE ONLY the user's name for later use in your AuthContext
-      // (the AuthContext can later read localStorage.getItem("user") to get name)
-      localStorage.setItem("user", JSON.stringify({ name: user.name }));
+      // Save only safe user info to localStorage (do NOT save access token if it's HttpOnly cookie)
+      localStorage.setItem("user", JSON.stringify({ name: user.name, email: user.email, role: user.role }));
 
-      // If you later need the token for API calls, you can store payload.token as well.
-      // localStorage.setItem("token", payload.token);
+      // If backend also returned an expiry timestamp you can store that for UI timers:
+      // if (payload.expires_at) localStorage.setItem("access_expires_at", payload.expires_at);
 
-      navigateToDashboard();
+      navigate("/dashboard");
     } catch (err) {
-      if (mountedRef.current) {
-        setError(err?.message || "Login failed.");
-      }
+      if (mountedRef.current) setError(err?.message || "Login failed.");
     } finally {
       if (mountedRef.current) setLoading(false);
     }
@@ -90,65 +77,31 @@ export default function Auth() {
   return (
     <div className="flex items-center justify-center min-h-screen bg-[#f7f2e7]">
       <div className="w-full max-w-sm p-8 bg-white rounded-xl shadow-md text-center">
-        {/* Logo */}
         <div className="mb-6">
-          <img
-            src="images/logo.png"
-            alt="Logo"
-            className="mx-auto w-24 h-24 object-contain"
-          />
+          <img src="images/logo.png" alt="Logo" className="mx-auto w-24 h-24 object-contain" />
         </div>
 
-        {/* Error */}
-        {error && (
-          <div className="mb-4 text-sm text-red-600" role="alert">
-            {error}
-          </div>
-        )}
+        {error && <div className="mb-4 text-sm text-red-600" role="alert">{error}</div>}
 
-        {/* Email */}
         <div className="mb-4">
-          <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="you@example.com"
-            autoComplete="email"
-            className="w-full px-4 py-2 text-center border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
-          />
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" autoComplete="email"
+            className="w-full px-4 py-2 text-center border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500" />
         </div>
 
-        {/* Password */}
         <div className="mb-4">
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="••••••••"
-            autoComplete="current-password"
-            className="w-full px-4 py-2 text-center border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
-          />
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" autoComplete="current-password"
+            className="w-full px-4 py-2 text-center border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500" />
         </div>
 
-        {/* Actions */}
         <div className="flex items-center justify-between gap-4">
-          <button
-            onClick={handleSubmit}
-            disabled={loading}
-            className="w-full py-2 text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-60"
-          >
+          <button onClick={handleSubmit} disabled={loading}
+            className="w-full py-2 text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-60">
             {loading ? "Signing in..." : "Sign in"}
           </button>
         </div>
 
-        <button
-          onClick={fillTest}
-          className="mt-3 text-sm text-gray-600 underline"
-        >
-          Fill test credentials
-        </button>
+        <button onClick={fillTest} className="mt-3 text-sm text-gray-600 underline">Fill test credentials</button>
 
-        {/* Branding */}
         <div className="mt-8">
           <h1 className="text-3xl font-bold text-gray-800">माटी</h1>
           <p className="text-m font-bold text-gray-600 tracking-wide">MAATI</p>
