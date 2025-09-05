@@ -39,13 +39,22 @@ export default function Auth() {
 
       // If backend sets cookie and returns 200_web_success with user object:
       if (!res.ok) {
+<<<<<<< HEAD
         // If 401, backend may not return JSON — attempt parse safely
+=======
+>>>>>>> f84242dacde7f7db9668428187aa10fd602e0d65
         let errMsg = "Login failed.";
         try {
           const payload = await res.json();
           if (payload && payload.error) errMsg = payload.error;
+<<<<<<< HEAD
           else if (payload && payload.message) errMsg = payload.message;
         } catch { /* ignore parse error */ }
+=======
+        } catch {
+          // ignore JSON parse error
+        }
+>>>>>>> f84242dacde7f7db9668428187aa10fd602e0d65
         throw new Error(errMsg);
       }
 
@@ -55,12 +64,22 @@ export default function Auth() {
         throw new Error("Invalid server response.");
       }
 
+<<<<<<< HEAD
       // Save only safe user info to localStorage (do NOT save access token if it's HttpOnly cookie)
       localStorage.setItem("user", JSON.stringify({ name: user.name, email: user.email, role: user.role }));
 
       // If backend also returned an expiry timestamp you can store that for UI timers:
       // if (payload.expires_at) localStorage.setItem("access_expires_at", payload.expires_at);
 
+=======
+      // Save user info to localStorage
+      localStorage.setItem("user", JSON.stringify({ name: user.name }));
+
+      // Save token if you want to use it later for authenticated API calls
+      // localStorage.setItem("token", payload.token);
+
+      // ✅ Navigate using React Router (no reload, no 404)
+>>>>>>> f84242dacde7f7db9668428187aa10fd602e0d65
       navigate("/dashboard");
     } catch (err) {
       if (mountedRef.current) setError(err?.message || "Login failed.");
