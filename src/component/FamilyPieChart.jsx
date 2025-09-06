@@ -11,7 +11,7 @@ export default function FamilyPieChart({ total, opt1, opt2, loading, error }) {
 
   return (
     <div className="bg-white rounded-2xl p-6 shadow-lg h-full flex flex-col">
-      <h2 className="text-lg font-semibold text-gray-700 mb-4">
+      <h2 className="text-lg text-center font-semibold text-gray-700 mb-4">
         Families / Beneficiaries
       </h2>
 

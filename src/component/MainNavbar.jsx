@@ -1,34 +1,64 @@
 // src/components/MainNavbar.jsx
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useContext } from "react";
+import { AuthContext } from "../context/AuthContext"; // adjust path to where your provider lives
 
 export default function MainNavbar({
   logoUrl = "/images/logo.png",
   brandDevanagari = "माटी",
   brandLatin = "MAATI",
+  // legacy prop fallback: you can still pass this (e.g. 36) but when using AuthContext
+  // the component will prefer tokenRemaining from context for the timer.
   durationSeconds = 36,
-  onRefreshToken,
-  onLogout,
+  onRefreshToken, // optional callback from parent
+  onLogout, // optional callback from parent
   name = "",
   village = "",
   showWelcome = false,
   showInNavbar = false,
   showVillageInNavbar = false,
   rightContent = null,
+  refreshBeforeSeconds = 60, // when to auto-call onRefreshToken (if provided)
 }) {
+  // try to use AuthContext if present — allows automatic timer & actions
+  const auth = useContext(AuthContext);
+
+  // If auth exists, prefer its values; otherwise use props
+  const ctxUser = auth?.user ?? null;
+  const ctxVillage = auth?.villageId ?? null;
+  const ctxRemaining = typeof auth?.tokenRemaining === "number" ? auth.tokenRemaining : null;
+  const ctxForceRefresh = auth?.forceRefresh ?? null;
+  const ctxLogout = auth?.logout ?? null;
+
+  // UI state
   const [menuOpen, setMenuOpen] = useState(false);
   const [remaining, setRemaining] = useState(durationSeconds);
   const menuRef = useRef(null);
   const adminButtonRef = useRef(null);
 
-  useEffect(() => setRemaining(durationSeconds), [durationSeconds]);
+  // track if we've already auto-triggered onRefreshToken for the current token cycle
+  const autoRefreshTriggeredRef = useRef(false);
 
+  // Initialize remaining from context if available, else from prop
   useEffect(() => {
+    if (ctxRemaining !== null) {
+      setRemaining(ctxRemaining);
+    } else {
+      setRemaining(durationSeconds);
+    }
+  }, [ctxRemaining, durationSeconds]);
+
+  // If there's no context-provided tick, maintain a fallback local tick only
+  useEffect(() => {
+    // if context drives remaining, we do not run the local interval
+    if (ctxRemaining !== null) return;
+
     const t = setInterval(() => {
       setRemaining((r) => (r <= 0 ? 0 : r - 1));
     }, 1000);
     return () => clearInterval(t);
-  }, []);
+  }, [ctxRemaining]);
 
+  // listen for clicks outside menu to close it
   useEffect(() => {
     function handleClick(e) {
       if (
@@ -45,7 +75,49 @@ export default function MainNavbar({
     return () => document.removeEventListener("mousedown", handleClick);
   }, [menuOpen]);
 
+  // auto-refresh hook: when remaining drops below threshold, call onRefreshToken once.
+  useEffect(() => {
+    // reset trigger whenever remaining jumps back up (new login/new token)
+    if (ctxRemaining !== null) {
+      if (ctxRemaining > refreshBeforeSeconds + 5) {
+        // assume a new token started or refreshed
+        autoRefreshTriggeredRef.current = false;
+      }
+    } else {
+      // if using fallback prop timer, reset trigger when it resets to full duration
+      if (remaining >= durationSeconds - 1) autoRefreshTriggeredRef.current = false;
+    }
+
+    const currentRemaining = ctxRemaining !== null ? ctxRemaining : remaining;
+
+    if (
+      currentRemaining !== null &&
+      currentRemaining <= refreshBeforeSeconds &&
+      currentRemaining > 0 &&
+      !autoRefreshTriggeredRef.current
+    ) {
+      // call provided callback first (preserve existing prop behavior)
+      if (typeof onRefreshToken === "function") {
+        try {
+          onRefreshToken();
+        } catch (err) {
+          // swallow errors from parent callback
+          // optionally you can console.error(err);
+        }
+        autoRefreshTriggeredRef.current = true;
+      } else if (ctxForceRefresh) {
+        // else if auth context exposes forceRefresh, call that
+        ctxForceRefresh().catch(() => {
+          // ignore - the provider will handle failed refresh and logout
+        });
+        autoRefreshTriggeredRef.current = true;
+      }
+    }
+  }, [ctxRemaining, remaining, refreshBeforeSeconds, durationSeconds, onRefreshToken, ctxForceRefresh]);
+
+  // format time helper
   function formatTime(sec) {
+    if (sec == null) return "--:--";
     if (sec <= 0) return "Session expired";
     const hrs = Math.floor(sec / 3600);
     const mins = Math.floor((sec % 3600) / 60);
@@ -55,40 +127,79 @@ export default function MainNavbar({
     return `${s} sec`;
   }
 
-  const progress = Math.max(0, Math.min(1, remaining / durationSeconds));
+  // compute progress: prefer using provided durationSeconds as total window.
+  // if ctxRemaining is larger than durationSeconds, cap to 1.
+  const displayRemaining = ctxRemaining !== null ? ctxRemaining : remaining;
+  const total = Math.max(1, durationSeconds);
+  const progress = Math.max(0, Math.min(1, displayRemaining / total));
 
+  // actions
   const handleRefreshPage = () => window.location.reload();
-  const handleRefreshToken = () => {
-    setRemaining(durationSeconds);
-    if (typeof onRefreshToken === "function") onRefreshToken();
-    setMenuOpen(false);
-  };
-  const handleLogout = () => {
-    if (typeof onLogout === "function") onLogout();
-    else {
+
+  const handleRefreshToken = async () => {
+    // prefer parent callback
+    if (typeof onRefreshToken === "function") {
       try {
-        localStorage.clear();
-        sessionStorage.clear();
-      } catch (e) {}
-      window.location.href = "/login";
+        setMenuOpen(false);
+        onRefreshToken();
+        // mark as triggered so auto-refresh doesn't immediately re-trigger
+        autoRefreshTriggeredRef.current = true;
+      } catch (err) {
+        // ignore
+      }
+      return;
     }
+
+    // else prefer auth.forceRefresh()
+    if (ctxForceRefresh) {
+      setMenuOpen(false);
+      try {
+        await ctxForceRefresh();
+        autoRefreshTriggeredRef.current = true;
+      } catch (err) {
+        // provider handles failures (e.g. logout)
+      }
+      return;
+    }
+
+    // fallback: reload page (last resort)
+    window.location.reload();
+  };
+
+  const handleLogout = () => {
     setMenuOpen(false);
+    if (typeof onLogout === "function") {
+      onLogout();
+      return;
+    }
+    if (ctxLogout) {
+      ctxLogout();
+      return;
+    }
+    try {
+      localStorage.clear();
+      sessionStorage.clear();
+    } catch (e) {}
+    window.location.href = "/login";
   };
 
   // center content: prefer showInNavbar over showVillageInNavbar
+  const displayName = ctxUser?.name ?? name;
+  const displayVillage = ctxVillage ?? village;
+
   const centerContent = (() => {
-    if (showInNavbar && village) {
+    if (showInNavbar && displayVillage) {
       return (
         <h1 className="text-2xl font-bold text-black text-center whitespace-nowrap">
-          {village} <span className="text-2xl font-bold text-black">Beneficiaries -</span>{" "}
+          {displayVillage} <span className="text-2xl font-bold text-black">Beneficiaries -</span>{" "}
           <span className="text-green-800 font-semibold">Family List</span>
         </h1>
       );
     }
-    if (showVillageInNavbar && village) {
+    if (showVillageInNavbar && displayVillage) {
       return (
         <div className="text-2xl font-bold text-green-800 text-center whitespace-nowrap">
-          {village}
+          {displayVillage}
         </div>
       );
     }
@@ -98,7 +209,7 @@ export default function MainNavbar({
   return (
     <header className="w-full select-none">
       <div className="bg-[#a7dec0]">
-        <div className="max-w-7xl mx-auto px-4">
+        <div className="max-w-8xl mx-auto px-4">
           {/* top row: left and right stay in flow; center is absolutely centered */}
           <div className="relative flex items-center justify-between py-2 min-h-[64px]">
             {/* LEFT: logo + welcome */}
@@ -106,9 +217,9 @@ export default function MainNavbar({
               <img src={logoUrl} alt="logo" className="w-14 h-14 object-contain" />
 
               <div>
-                {showWelcome && name ? (
+                {showWelcome && displayName ? (
                   <div className="text-lg font-semibold text-black leading-tight">
-                    Welcome {name}
+                    Welcome {displayName}
                   </div>
                 ) : null}
               </div>
@@ -176,12 +287,19 @@ export default function MainNavbar({
           <div className="flex items-center justify-center py-1 relative">
             <div className="text-sm text-[#4a6b54] z-10">
               Login Expires in:{" "}
-              <span className={remaining <= 10 ? "animate-pulse font-semibold text-red-600" : "font-medium"}>
-                {formatTime(remaining)}
+              <span className={displayRemaining <= 10 ? "animate-pulse font-semibold text-red-600" : "font-medium"}>
+                {formatTime(displayRemaining)}
               </span>
             </div>
             <div className="absolute left-4 right-4 bottom-0 h-0.5 bg-[#dff6de] rounded overflow-hidden">
-              <div style={{ width: `${progress * 100}%`, transition: "width 1s linear", height: "100%", background: remaining <= 0 ? "#f87171" : "#68d391" }} />
+              <div
+                style={{
+                  width: `${progress * 100}%`,
+                  transition: "width 1s linear",
+                  height: "100%",
+                  background: displayRemaining <= 0 ? "#f87171" : "#68d391",
+                }}
+              />
             </div>
           </div>
         </div>

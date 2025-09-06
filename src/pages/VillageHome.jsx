@@ -284,14 +284,14 @@ export default function VillageDashboard() {
           </div>
 
           {/* Buttons */}
-          <div className="flex gap-4 justify-end">
+          <div className="flex gap-40   justify-center">
             <button
               onClick={() => navigate("/family")}
-              className="bg-green-200 hover:bg-green-300 px-6 py-2 rounded-2xl shadow text-sm font-medium"
+              className="bg-green-200 hover:bg-green-300 px-20 py-2 rounded-2xl shadow text-sm font-medium"
             >
               All Beneficiaries
             </button>
-            <button className="bg-green-200 hover:bg-green-300 px-6 py-2 rounded-2xl shadow text-sm font-medium">
+            <button className="bg-green-200 hover:bg-green-300 px-20 py-2 rounded-2xl shadow text-sm font-medium">
               Plan Layout
             </button>
           </div>

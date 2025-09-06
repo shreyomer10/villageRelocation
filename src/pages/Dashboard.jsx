@@ -231,6 +231,11 @@ export default function Dashboard() {
     navigate("/home");
   };
 
+  // new: navigate to add/create village page (adjust route as needed)
+  const handleAddVillage = () => {
+    navigate("/villages/new");
+  };
+
   // read name from localStorage user (Auth stored { name })
   const storedUserRaw = localStorage.getItem("user");
   let username = "Shrey";
@@ -247,78 +252,87 @@ export default function Dashboard() {
     <div className="min-h-screen bg-[rgb(245,242,236)]">
       {/* Navbar */}
       <div>
-        <MainNavbar 
-        name={username}
-        showWelcome={true} />
+        <MainNavbar name={username} showWelcome={true} />
       </div>
 
-      {/* Search + Filter */}
+      {/* Header: Search + Filter + Action Button (formally aligned) */}
       <div className="px-6 py-6">
-        <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-start md:items-center gap-4">
-          <div className="relative flex-1 max-w-xs w-full">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-            <input
-              type="text"
-              placeholder="Search"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-            />
-          </div>
+        <div className="mx-auto flex flex-col md:flex-row items-center gap-4 justify-between">
+          {/* Left: Search + Filter */}
+          <div className="flex items-center w-full md:max-w-2xl gap-4">
+            <div className="relative flex-1 w-2">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+              <input
+                type="text"
+                placeholder="Search by name, id or status"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                aria-label="Search villages"
+              />
+            </div>
 
-          <div className="relative">
-            <button
-              onClick={() => setStageFilterOpen((s) => !s)}
-              className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
-            >
-              <Sliders className="w-4 h-4" />
-              <span className="text-gray-700">Filter by Stages</span>
-            </button>
+            <div className="relative">
+              <button
+                onClick={() => setStageFilterOpen((s) => !s)}
+                className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+                aria-expanded={stageFilterOpen}
+                aria-controls="stage-filter"
+              >
+                <Sliders className="w-4 h-4" />
+                <span className="text-gray-700 text-sm">Filter by Stages</span>
+              </button>
 
-            {stageFilterOpen && (
-              <div className="absolute left-0 mt-2 w-64 bg-white rounded-xl shadow-lg border border-gray-100 p-4 z-20">
-                <div className="flex items-center justify-between mb-3">
-                  <h4 className="font-medium">Stages</h4>
-                  <button
-                    onClick={() => setSelectedStages(new Set())}
-                    className="text-sm text-gray-500 hover:underline"
-                  >
-                    Clear
-                  </button>
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  {stageOptions.map((s) => (
-                    <label
-                      key={s}
-                      className="inline-flex items-center gap-2 text-sm"
+              {stageFilterOpen && (
+                <div id="stage-filter" className="absolute left-0 mt-2 w-64 bg-white rounded-xl shadow-lg border border-gray-100 p-4 z-20">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="font-medium">Stages</h4>
+                    <button
+                      onClick={() => setSelectedStages(new Set())}
+                      className="text-sm text-gray-500 hover:underline"
                     >
-                      <input
-                        type="checkbox"
-                        checked={selectedStages.has(s)}
-                        onChange={() => toggleStage(s)}
-                        className="w-4 h-4 rounded"
-                      />
-                      <span className="truncate">{s}</span>
-                    </label>
-                  ))}
+                      Clear
+                    </button>
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                    {stageOptions.map((s) => (
+                      <label key={s} className="inline-flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={selectedStages.has(s)}
+                          onChange={() => toggleStage(s)}
+                          className="w-4 h-4 rounded"
+                        />
+                        <span className="truncate">{s}</span>
+                      </label>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
 
-          <div className="flex-1" />
+          {/* Right: Formal action button placed to the right below navbar */}
+          <div className="w-full md:w-auto flex justify-end">
+            <button
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-400"
+              aria-label="Add new village"
+            >
+              Guidline
+            </button>
+          </div>
         </div>
       </div>
 
       {/* Villages Grid */}
-      <main className="max-w-6xl mx-auto p-6">
+      <main className="max-w-10xl mx-8 p-8">
         {listLoading ? (
           <div className="text-center py-12">Loading villages…</div>
         ) : listError ? (
           <div className="text-center py-6 text-red-600">{listError}</div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-8">
             {filteredVillages.map((v, i) => (
               <VillageCard
                 key={v.villageId ?? i}
