@@ -6,8 +6,6 @@ import datetime as dt
 from functools import wraps
 
 from flask import Flask, request, jsonify
-from flask_cors import CORS
-from pymongo import MongoClient, ASCENDING, DESCENDING
 from config import db,JWT_EXPIRE_MIN,JWT_SECRET
 from werkzeug.security import gen_salt
 import bcrypt
@@ -26,18 +24,19 @@ def auth_required(fn):
             token = request.cookies.get("token")
 
         if not token:
-            return jsonify({"error": "Token is missing"}), 401
+            return jsonify({"error":True,"message":"Token is Missing"}), 401
         
         try:
             # You might need to adjust the JWT_SECRET and algorithms based on your configuration
             claims = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+            return fn(claims, *args, **kwargs)
+
         except jwt.ExpiredSignatureError:
-            return jsonify({"error": "Access token expired"}), 401
+            return jsonify({"error":True,"message": "Access token expired"}), 401
         except jwt.InvalidTokenError:
-            return jsonify({"error": "Invalid token"}), 401
+            return jsonify({"error": True,"message":"Invalid token"}), 401
         
-        request.user = claims
-        return fn(*args, **kwargs)
+
     return wrapper
 
 
