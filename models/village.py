@@ -36,7 +36,13 @@ class VillageLog(BaseModel):
     updateTime: str
     updateBy: str
     comments: Optional[str] = None
-
+class Documents(BaseModel):
+    name:str
+    url:HttpUrl
+    currentStage:Optional[str]=None
+    currentSubStage:Optional[str]=None
+    notes:Optional[str]=None
+    
 
 class Village(BaseModel):
     villageId: str
@@ -56,7 +62,7 @@ class Village(BaseModel):
     currentSubStage: str
     kme: HttpUrl
 
-    docs: List[HttpUrl] = []
+    docs: List[Documents] = []
     photos: List[HttpUrl] = []
     logs: List[VillageLog] = []
     familyMasterList:HttpUrl

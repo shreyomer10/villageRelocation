@@ -8,6 +8,7 @@ from utils.helpers import verify_password
 from utils.tokenAuth import auth_required,make_jwt
 
 users = db.users
+operators = db.operators
 
 auth_bp = Blueprint("auth",__name__)
 
@@ -104,3 +105,6 @@ def refresh_token(decoded_data):
             "details": str(e)
         }), 500
  
+
+# @auth_bp.route("/register",method={"POST"})
+# def regitser():

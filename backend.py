@@ -198,26 +198,53 @@ def home():
                         },
                         "response_samples": {
                             "200_success": {
-                                "error": False,
-                                "message": "Successfully fetched village",
-                                "result": {
-                                    "villageId": "V001",
-                                    "name": "Village Alpha",
-                                    "currentStage": 3,
-                                    "currentSubStage": 2,
-                                    "siteOfRelocation": "Location Alpha Site",
-                                    "areaDiverted": 450.75,
-                                    "image": "http://example.com/villages/v001.jpg",
-                                    "updatedAt": "2025-09-06T10:00:00Z",
-                                    "updatedBy": "Admin User",
-                                    "description": "Village description here",
-                                    "totalFamilies": 125,
-                                    "coordinates": {
-                                        "latitude": 23.4567,
-                                        "longitude": 78.9012
+                                    "error": False,
+                                    "message": "Successfully fetched village",
+                                    "result": {
+                                        "currentStage": "1",
+                                        "currentSubStage": "2",
+                                        "district": "District Y",
+                                        "docs": [
+                                        {
+                                            "currentStage": "1",
+                                            "currentSubStage": "2",
+                                            "name": "Panchyat meeting proof",
+                                            "notes": None,
+                                            "url": "https://example.com/lists/village2-families.csv"
+                                        }
+                                        ],
+                                        "familyMasterList": "https://example.com/lists/village2-families.csv",
+                                        "fd": "Forest Division Beta",
+                                        "gramPanchayat": "GP-Rajpur",
+                                        "janpad": "Janpad Two",
+                                        "kme": "https://example.com/kme/v002",
+                                        "lat": "20.789",
+                                        "logs": [
+                                        {
+                                            "comments": "Survey completed",
+                                            "updateBy": "officer1",
+                                            "updateTime": "2025-08-15T08:30:00Z"
+                                        },
+                                        {
+                                            "comments": "Stage 1 approved",
+                                            "updateBy": "officer2",
+                                            "updateTime": "2025-08-20T10:00:00Z"
+                                        }
+                                        ],
+                                        "long": "81.654",
+                                        "name": "Rajpur",
+                                        "photos": [
+                                        "https://example.com/photos/village2-map.png",
+                                        "https://example.com/photos/village2-progress.jpg"
+                                        ],
+                                        "range": "Eastern",
+                                        "sd1": "SD-3",
+                                        "siteOfRelocation": "Block B - Site 3",
+                                        "subD2": "Sub Division B",
+                                        "tehsil": "Tehsil East",
+                                        "villageId": "V002"
                                     }
-                                }
-                            },
+                                    },
                             "404_not_found": {
                                 "error": True,
                                 "message": "Not Found",
