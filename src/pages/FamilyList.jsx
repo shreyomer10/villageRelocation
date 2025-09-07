@@ -45,29 +45,42 @@ export default function FamilyList() {
         }
 
         const token = localStorage.getItem("token");
-        const headers = token ? { Authorization: `Bearer ${token}` } : {};
+        const headers = {
+          'Content-Type': 'application/json',
+          ...(token && { Authorization: `Bearer ${token}` })
+        };
 
         const optParam = optionQueryParam(filterOption);
-        const url =
-          `https://villagerelocation.onrender.com/villages/${encodeURIComponent(
-            storedVillageId
-          )}/beneficiaries` + (optParam ? `?option=${optParam}` : "");
+        // Updated URL to match API documentation
+        const baseUrl = "http://your-domain.com/api/v1"; // Replace with your actual domain
+        const url = `${baseUrl}/family/villages/${encodeURIComponent(
+          storedVillageId
+        )}/beneficiaries${optParam ? `?option=${optParam}` : ""}`;
 
         const res = await fetch(url, {
           method: "GET",
           headers,
           signal: ctrl.signal,
         });
+        
         if (!res.ok) {
           throw new Error(`Failed to fetch beneficiaries (${res.status})`);
         }
+        
         const data = await res.json();
         if (!mounted) return;
-        setBeneficiaries(Array.isArray(data) ? data : []);
+        
+        // Handle API response structure
+        if (data.error === false && data.result) {
+          setBeneficiaries(Array.isArray(data.result) ? data.result : []);
+        } else {
+          throw new Error(data.message || "Failed to fetch beneficiaries");
+        }
       } catch (err) {
         if (!mounted) return;
-        if (err.name !== "AbortError")
+        if (err.name !== "AbortError") {
           setListError(err.message || "Unable to load beneficiaries.");
+        }
       } finally {
         if (mounted) setLoadingList(false);
       }
@@ -96,23 +109,39 @@ export default function FamilyList() {
     const ctrl = new AbortController();
     try {
       const token = localStorage.getItem("token");
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(token && { Authorization: `Bearer ${token}` })
+      };
 
+      // Updated URL to match API documentation
+      const baseUrl = "http://your-domain.com/api/v1"; // Replace with your actual domain
       const res = await fetch(
-        `https://villagerelocation.onrender.com/families/${encodeURIComponent(
-          familyId
-        )}`,
-        { method: "GET", headers, signal: ctrl.signal }
+        `${baseUrl}/family/families/${encodeURIComponent(familyId)}`,
+        { 
+          method: "GET", 
+          headers, 
+          signal: ctrl.signal 
+        }
       );
+      
       if (!res.ok) {
         if (res.status === 404) throw new Error("Family not found");
         throw new Error(`Failed to fetch family (${res.status})`);
       }
+      
       const data = await res.json();
-      setFamilyDetails(data);
+      
+      // Handle API response structure
+      if (data.error === false && data.result) {
+        setFamilyDetails(data.result);
+      } else {
+        throw new Error(data.message || "Failed to fetch family details");
+      }
     } catch (err) {
-      if (err.name !== "AbortError")
+      if (err.name !== "AbortError") {
         setFamilyError(err.message || "Unable to load family.");
+      }
     } finally {
       setFamilyLoading(false);
     }
@@ -169,10 +198,11 @@ export default function FamilyList() {
     <div className="min-h-screen bg-[#f8f0dc] font-sans">
       {/* Header */}
       <div>
-              <MainNavbar 
-              village={storedVillageId}
-              showInNavbar={true} />
-            </div>
+        <MainNavbar 
+          village={storedVillageId}
+          showInNavbar={true} 
+        />
+      </div>
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-6 py-6">

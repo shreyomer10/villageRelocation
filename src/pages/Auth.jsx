@@ -1,4 +1,3 @@
-// Auth.jsx
 import React, { useState, useRef, useEffect, useContext } from "react";
 import { useNavigate } from "react-router-dom";
 import { AuthContext } from "../context/AuthContext"; // adjust path as needed
@@ -6,6 +5,7 @@ import { AuthContext } from "../context/AuthContext"; // adjust path as needed
 export default function Auth() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [role, setRole] = useState("Admin"); // role is required
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
 
@@ -24,64 +24,59 @@ export default function Auth() {
   async function handleSubmit() {
     setError(null);
     const trimmedEmail = email.trim();
-    if (!trimmedEmail || !password) {
-      setError("Please enter email and password.");
+    if (!trimmedEmail || !password || !role) {
+      setError("Please enter email, password, and role.");
       return;
     }
 
     setLoading(true);
     try {
       const res = await fetch(
-        "https://villagerelocation.onrender.com/auth/login",
+        "https://villagerelocation.onrender.com/login",
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
+          credentials: "include", // important for cookie-based login (web)
           body: JSON.stringify({
             email: trimmedEmail,
             password,
+            role, // required by API
+            is_app: false, // mark this as web login
           }),
         }
       );
 
       if (!mountedRef.current) return;
 
-      if (!res.ok) {
-        let errMsg = "Login failed.";
-        try {
-          const payload = await res.json();
-          if (payload && payload.error) errMsg = payload.error;
-        } catch {
-          // ignore JSON parse error
-        }
-        throw new Error(errMsg);
+      const payload = await res.json();
+
+      if (!res.ok || payload.error) {
+        throw new Error(payload?.message || "Login failed.");
       }
 
-      const payload = await res.json();
+      // Handle both web and app style responses
       const user = payload?.user;
-      const token = payload?.token ?? payload?.accessToken;
-      const expiresIn = payload?.expiresIn; // seconds (optional)
-      const expiresAt = payload?.expiresAt; // timestamp or ISO (optional)
-      const refreshToken = payload?.refreshToken ?? payload?.refresh_token;
-
+      const token =
+        payload?.token || // app-style
+        payload?.cookies?.token; // web-style (cookie in response body)
       if (!user || !user.name) {
         throw new Error("Invalid server response.");
       }
-      if (!token) {
-        throw new Error("No token received from server.");
-      }
 
-      // Use the provider's login so timers & storage are handled centrally
-      auth.login({
+      // Call AuthContext.login with full info (name, role, email, token and expiry metadata)
+      await auth.login({
         name: user.name,
-        token,
-        expiresIn,
-        expiresAt,
-        refreshToken,
+        role: user.role,
+        email: user.email,
+        token, // may be undefined if server only sets cookie
+        expiresIn: payload.expiresIn,
+        expiresAt: payload.expiresAt,
+        refreshToken: payload.refreshToken,
       });
 
-      // Navigate to dashboard (no reload)
+      // navigation after login
       navigate("/dashboard");
     } catch (err) {
       if (mountedRef.current) {
@@ -95,6 +90,7 @@ export default function Auth() {
   function fillTest() {
     setEmail("admin@example.com");
     setPassword("Admin@123");
+    setRole("Admin");
   }
 
   return (
@@ -138,6 +134,19 @@ export default function Auth() {
             autoComplete="current-password"
             className="w-full px-4 py-2 text-center border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
           />
+        </div>
+
+        {/* Role Selection */}
+        <div className="mb-4">
+          <select
+            value={role}
+            onChange={(e) => setRole(e.target.value)}
+            className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+          >
+            <option value="Admin">Admin</option>
+            <option value="User">User</option>
+            {/* Add other roles if needed */}
+          </select>
         </div>
 
         {/* Actions */}

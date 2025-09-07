@@ -1,4 +1,3 @@
-// AuthProvider.jsx
 import React, { createContext, useState, useEffect, useCallback, useRef } from "react";
 
 export const AuthContext = createContext({
@@ -25,9 +24,11 @@ const STORAGE_KEYS = {
 };
 
 const REFRESH_BEFORE_MS = 60 * 1000; // refresh 60s before expiry (tweakable)
+const COOKIE_POLL_INTERVAL_MS = 5 * 60 * 1000; // poll every 5 minutes when only cookie auth is available
 
 export function AuthProvider({ children }) {
-  const [user, setUserState] = useState(null); // { name }
+  // user now stores { name, role, email }
+  const [user, setUserState] = useState(null);
   const [villageId, setVillageIdState] = useState(null);
   const [token, setTokenState] = useState(null);
   const [tokenExpiresAt, setTokenExpiresAt] = useState(null); // number (ms)
@@ -40,6 +41,7 @@ export function AuthProvider({ children }) {
   const refreshTimerRef = useRef(null);
   const expiryTimerRef = useRef(null);
   const tickIntervalRef = useRef(null);
+  const cookiePollIntervalRef = useRef(null);
 
   // initialize from localStorage once on mount
   useEffect(() => {
@@ -47,7 +49,7 @@ export function AuthProvider({ children }) {
       const rawUser = localStorage.getItem(STORAGE_KEYS.USER);
       if (rawUser) {
         const parsed = JSON.parse(rawUser);
-        if (parsed?.name) setUserState({ name: parsed.name });
+        if (parsed?.name) setUserState({ name: parsed.name, role: parsed.role, email: parsed.email });
       }
     } catch (e) {
       // ignore
@@ -69,11 +71,11 @@ export function AuthProvider({ children }) {
     if (srf) setRefreshTokenState(srf);
   }, []);
 
-  // persist user -> localStorage when it changes
+  // persist user -> localStorage when it changes (store full user object)
   useEffect(() => {
     if (user && user.name) {
       try {
-        localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify({ name: user.name }));
+        localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(user));
       } catch (e) {}
     } else {
       localStorage.removeItem(STORAGE_KEYS.USER);
@@ -109,7 +111,7 @@ export function AuthProvider({ children }) {
       if (e.key === STORAGE_KEYS.USER) {
         try {
           const val = e.newValue ? JSON.parse(e.newValue) : null;
-          setUserState(val && val.name ? { name: val.name } : null);
+          setUserState(val && val.name ? { name: val.name, role: val.role, email: val.email } : null);
         } catch {
           setUserState(null);
         }
@@ -146,11 +148,15 @@ export function AuthProvider({ children }) {
       clearInterval(tickIntervalRef.current);
       tickIntervalRef.current = null;
     }
+    if (cookiePollIntervalRef.current) {
+      clearInterval(cookiePollIntervalRef.current);
+      cookiePollIntervalRef.current = null;
+    }
   }, []);
 
   // tick for remaining seconds (updates every 1s)
   useEffect(() => {
-    // if there's an existing interval, clear it first
+    // clear previous tick
     if (tickIntervalRef.current) {
       clearInterval(tickIntervalRef.current);
       tickIntervalRef.current = null;
@@ -179,33 +185,34 @@ export function AuthProvider({ children }) {
 
   // function to perform refresh
   const refreshToken = useCallback(async () => {
-    // Try to refresh token via API endpoint
     try {
-      // if there is a refresh token, use it; otherwise send current token
+      // body may include refreshToken if available; otherwise empty
       const body = refreshTokenState ? { refreshToken: refreshTokenState } : {};
       const headers = { "Content-Type": "application/json" };
-      // pass existing token in Authorization header if needed
+      // if we have a bearer token, include it (API supports either cookie or Authorization)
       if (token) headers["Authorization"] = `Bearer ${token}`;
 
-      const res = await fetch("https://villagerelocation.onrender.com/auth/refresh", {
+      // IMPORTANT: include credentials so cookie-based refresh works
+      const res = await fetch("https://villagerelocation.onrender.com/refresh", {
         method: "POST",
         headers,
         body: JSON.stringify(body),
+        credentials: "include",
       });
 
       if (!res.ok) {
-        // refresh failed
-        throw new Error("Refresh failed");
+        // refresh failed -> return false so caller can logout if desired
+        return false;
       }
 
       const payload = await res.json();
-      // Expect payload: { token, expiresIn?, expiresAt?, refreshToken? }
-      const newToken = payload.token;
+      // payload may contain: { token, expiresIn, expiresAt, refreshToken, user }
+      const newToken = payload.token ?? null;
       const expiresIn = payload.expiresIn; // seconds
       const expiresAt = payload.expiresAt; // timestamp or ISO
+      const newRefresh = payload.refreshToken ?? null;
 
-      const newRefresh = payload.refreshToken ?? refreshTokenState ?? null;
-
+      // compute absolute expiry (ms)
       let absExpiry = null;
       if (expiresIn && !isNaN(Number(expiresIn))) {
         absExpiry = Date.now() + Number(expiresIn) * 1000;
@@ -213,19 +220,28 @@ export function AuthProvider({ children }) {
         const asNum = Number(expiresAt);
         absExpiry = !Number.isNaN(asNum) ? asNum : Date.parse(expiresAt);
       }
-      // if server didn't send expiry, set a default short expiry (e.g., 15 minutes) to be safe
-      if (!absExpiry) {
-        absExpiry = Date.now() + 15 * 60 * 1000;
+
+      // If server set no expiry info but did set a token, choose a safe default
+      if (!absExpiry && newToken) {
+        absExpiry = Date.now() + 15 * 60 * 1000; // 15 min fallback
       }
 
-      setTokenState(newToken ?? null);
-      setTokenExpiresAt(absExpiry);
-      setRefreshTokenState(newRefresh);
+      // Update states accordingly (may be null if server uses cookie-only)
+      setTokenState(newToken);
+      if (absExpiry) setTokenExpiresAt(absExpiry);
+      if (newRefresh) setRefreshTokenState(newRefresh);
+
+      // If server returned user info, keep it in sync
+      if (payload.user && payload.user.name) {
+        setUserState({ name: payload.user.name, role: payload.user.role, email: payload.user.email });
+        try {
+          localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify({ name: payload.user.name, role: payload.user.role, email: payload.user.email }));
+        } catch (e) {}
+      }
+
       return true;
     } catch (err) {
-      // refresh failed -> logout
-      // console.warn("Token refresh failed", err);
-      // we'll leave logout to the caller if needed, but return false
+      // treat as refresh failure
       return false;
     }
   }, [token, refreshTokenState]);
@@ -233,13 +249,17 @@ export function AuthProvider({ children }) {
   // start timers whenever tokenExpiresAt changes
   useEffect(() => {
     clearTimers();
-    if (!tokenExpiresAt || !token) return;
+    if (!tokenExpiresAt || !token) {
+      // If there's no token expiry OR no token, we won't schedule the normal refresh/expiry timers.
+      // If we have a known expiry but no token, schedule refresh based on expiry (handled above).
+      // Otherwise, nothing to schedule here.
+      return;
+    }
 
     const now = Date.now();
     const msToExpiry = tokenExpiresAt - now;
     if (msToExpiry <= 0) {
       // expired already
-      // force logout by clearing token (user will be logged out by effect below)
       setTokenState(null);
       setTokenExpiresAt(null);
       setRefreshTokenState(null);
@@ -251,7 +271,6 @@ export function AuthProvider({ children }) {
     refreshTimerRef.current = setTimeout(async () => {
       const ok = await refreshToken();
       if (!ok) {
-        // unsuccessful refresh -> logout
         logout();
       }
     }, refreshAt);
@@ -265,10 +284,42 @@ export function AuthProvider({ children }) {
       clearTimers();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tokenExpiresAt, token, refreshToken, clearTimers]); // refreshToken is stable via useCallback
+  }, [tokenExpiresAt, token, refreshToken, clearTimers]);
+
+  // If we are in cookie-only mode (user exists but no token/expires), poll refresh endpoint periodically
+  useEffect(() => {
+    // clear any existing cookie poll
+    if (cookiePollIntervalRef.current) {
+      clearInterval(cookiePollIntervalRef.current);
+      cookiePollIntervalRef.current = null;
+    }
+
+    const needsCookiePolling = user && !token && !tokenExpiresAt;
+    if (needsCookiePolling) {
+      // try an immediate refresh once
+      (async () => {
+        const ok = await refreshToken();
+        if (!ok) {
+          // continue to poll — maybe server will set expiry later
+        }
+      })();
+
+      // set interval to poll periodically
+      cookiePollIntervalRef.current = setInterval(() => {
+        refreshToken().catch(() => {});
+      }, COOKIE_POLL_INTERVAL_MS);
+    }
+
+    return () => {
+      if (cookiePollIntervalRef.current) {
+        clearInterval(cookiePollIntervalRef.current);
+        cookiePollIntervalRef.current = null;
+      }
+    };
+  }, [user, token, tokenExpiresAt, refreshToken]);
 
   // safe setters (wrapped with useCallback so consumers can pass stable refs)
-  const setUser = useCallback((u) => setUserState(u ? { name: u.name } : null), []);
+  const setUser = useCallback((u) => setUserState(u ? { name: u.name, role: u.role, email: u.email } : null), []);
   const setVillageId = useCallback((id) => setVillageIdState(id ?? null), []);
   // setToken accepts optional expiresIn/expiresAt/refreshToken
   const setToken = useCallback((t, options = {}) => {
@@ -294,9 +345,10 @@ export function AuthProvider({ children }) {
   }, []);
 
   // login helper: accept multiple shapes returned by server
+  // If server doesn't return token (web cookie style), attempt a refresh to obtain expiry/token metadata.
   const login = useCallback(
-    ({ name, token: tok, expiresIn, expiresAt, refreshToken: rToken }) => {
-      if (name) setUserState({ name });
+    async ({ name, role, email, token: tok, expiresIn, expiresAt, refreshToken: rToken }) => {
+      if (name) setUserState({ name, role, email });
       if (tok) {
         setTokenState(tok);
         let absExpiry = null;
@@ -308,15 +360,22 @@ export function AuthProvider({ children }) {
         }
         if (!absExpiry) absExpiry = Date.now() + 15 * 60 * 1000;
         setTokenExpiresAt(absExpiry);
+      } else {
+        // token not provided — likely cookie-based web login; try to refresh immediately to learn expiry/token
+        try {
+          await refreshToken();
+        } catch (e) {
+          // ignore — we still consider login successful; cookies may already be set server-side
+        }
       }
       if (rToken) setRefreshTokenState(rToken);
 
-      // persist user to localStorage too (you did earlier)
+      // persist user to localStorage too (store full object)
       try {
-        if (name) localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify({ name }));
+        if (name) localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify({ name, role, email }));
       } catch (e) {}
     },
-    []
+    [refreshToken]
   );
 
   // logout

@@ -1,126 +1,155 @@
+// src/components/StageProgress.jsx
 import React, { useState } from "react";
+import { stageDefs } from "../config/stages";
 
-export default function StageProgress({ stages = [], currentStage = 0 }) {
-  const [selectedStage, setSelectedStage] = useState(null);
+/**
+ * Props:
+ * - showSubStage (boolean): whether hovering a stage shows sub-stages (default: false)
+ * - currentStage (number): the active stage id/sequence (default: 0)
+ * - currentSubStage (number?): the active sub-stage index (1-based) within the active stage (default: null)
+ */
+export default function StageProgress({
+  showSubStage = false,
+  currentStage = 0,
+  currentSubStage = null,
+}) {
+  const [hoveredStage, setHoveredStage] = useState(null);
 
-  const totalSteps = stages.length || 1;
+  const totalSteps = stageDefs.length || 1;
 
+  // Calculate main progress percentage
   const progressPercent =
     currentStage <= 1
-      ? 0
+      ? 0   
       : ((Math.min(currentStage, totalSteps) - 1) / (totalSteps - 1)) * 100;
 
+  /** Determine sub-stage visual status */
+  const getSubStatus = (stageSeq, subIndex) => {
+    const completedStage = stageSeq < currentStage && currentStage > 0;
+    const activeStage = stageSeq === currentStage;
+
+    if (completedStage) return "completed";
+
+    if (activeStage) {
+      if (currentSubStage == null) return "upcoming";
+      if (subIndex + 1 < currentSubStage) return "completed";
+      if (subIndex + 1 === currentSubStage) return "current";
+      return "upcoming";
+    }
+
+    return "upcoming"; // future stage
+  };
+
   return (
-    <div className="bg-white rounded-2xl p-6 shadow-lg">
-      <h3 className="text-lg font-semibold text-gray-700 text-center mb-6">
-        Stages Of Relocation
-      </h3>
+    <div>
+      {/* Progress bar */}
+      <div className="relative mb-4">
+        {/* Base background bar */}
+        <div className="h-1 bg-gray-200 rounded-full w-full absolute top-5 left-0" />
 
-      {/* Progress Tracker */}
-      <div className="relative max-w-4xl mx-auto px-4">
-        {/* base track */}
-        <div className="h-1 bg-gray-200 rounded-full w-full absolute left-0 top-6" />
-
-        {/* filled track */}
+        {/* Filled progress */}
         <div
-          className="h-1 rounded-full absolute left-0 top-6 transition-all duration-500 ease-out"
+          className="h-1 rounded-full absolute top-5 left-0 transition-all duration-500 ease-out"
           style={{ width: `${progressPercent}%`, backgroundColor: "#16a34a" }}
         />
 
-        {/* steps */}
+        {/* Stage circles */}
         <div className="flex justify-between items-start relative z-10 mt-2">
-          {stages.map((stage, idx) => {
-            const isCompleted = stage.sequence_no < currentStage && currentStage > 0;
-            const isActive = stage.sequence_no === currentStage;
+          {stageDefs.map((stage) => {
+            const seq = stage.stage_id;
+            const completed = seq < currentStage && currentStage > 0;
+            const active = seq === currentStage;
+            const isHovered = hoveredStage === seq;
 
             return (
               <div
-                key={stage.stage_id ?? idx}
-                onClick={() => setSelectedStage(stage)}
-                className="flex flex-col items-center w-full max-w-[120px] cursor-pointer"
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && setSelectedStage(stage)}
-                aria-current={isActive ? "step" : undefined}
-                aria-label={`${stage.name} ${isCompleted ? 'completed' : isActive ? 'current' : 'upcoming'}`}
+                key={stage.stage_id}
+                className="flex flex-col items-center w-full max-w-[110px] relative"
+                onMouseEnter={() => showSubStage && setHoveredStage(seq)}
+                onMouseLeave={() => showSubStage && setHoveredStage(null)}
               >
-                <div className="relative">
+                {/* Stage Circle */}
+                <div
+                  className="flex items-center justify-center w-10 h-10 cursor-pointer"
+                  aria-current={active ? "step" : undefined}
+                  aria-label={`${stage.name} ${
+                    completed ? "completed" : active ? "current" : "upcoming"
+                  }`}
+                >
                   <div
-                    className={`w-12 h-12 rounded-full flex items-center justify-center font-semibold transition-colors duration-200 shadow-sm ` +
-                    (isCompleted
-                      ? "bg-green-600 text-white border-green-600"
-                      : isActive
-                      ? "bg-white text-green-700 border-2 border-green-600 shadow"
-                      : "bg-white text-gray-400 border-2 border-gray-200")}
+                    className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-semibold border-2 transition-colors duration-200 shadow-sm
+                      ${
+                        completed
+                          ? "bg-green-600 text-white border-green-600"
+                          : active
+                          ? "bg-white text-green-700 border-green-600 shadow"
+                          : "bg-white text-gray-400 border-gray-300"
+                      }`}
                   >
-                    {isCompleted ? "✓" : stage.sequence_no}
+                    {completed ? "✓" : seq}
                   </div>
                 </div>
 
-                <p className={`text-xs mt-2 font-medium text-center ${isCompleted || isActive ? 'text-gray-800' : 'text-gray-500'}`}>
-                  {stage.name}
-                </p>
+                {/* Stage Name */}
+                <div className="text-center mt-2">
+                  <div
+                    className={`text-xs font-medium ${
+                      completed || active ? "text-gray-800" : "text-gray-400"
+                    }`}
+                  >
+                    {stage.name}
+                  </div>
+                </div>
+
+                {/* Sub-stages on hover */}
+                {showSubStage &&
+                  isHovered &&
+                  Array.isArray(stage.subStages) &&
+                  stage.subStages.length > 0 && (
+                    <div className="absolute top-14 bg-white border border-gray-200 rounded-lg shadow-lg p-2 w-48 z-50">
+                      <ul className="space-y-1">
+                        {stage.subStages.map((sub, idx) => {
+                          const status = getSubStatus(seq, idx);
+
+                          return (
+                            <li
+                              key={`${seq}-${sub.id}`} // ✅ safe unique key
+                              className={`text-xs p-1 rounded transition-colors duration-200 ${
+                                status === "completed"
+                                  ? "bg-green-100 text-green-700 font-medium"
+                                  : status === "current"
+                                  ? "bg-green-200 text-green-800 font-semibold"
+                                  : "text-gray-600"
+                              }`}
+                            >
+                              {sub.name}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  )}
               </div>
             );
           })}
         </div>
-
-        {/* Legend */}
-        <div className="mt-5 flex gap-4 items-center text-sm text-gray-600 justify-center">
-          <div className="flex items-center gap-2">
-            <span className="inline-block w-3 h-3 rounded-full bg-green-600" />
-            Completed
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="inline-block w-3 h-3 rounded-full border border-green-600 bg-white" />
-            Current
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="inline-block w-3 h-3 rounded-full border border-gray-300 bg-white" />
-            Upcoming
-          </div>
-        </div>
       </div>
 
-      {/* Current Stage Info */}
-      <div className="text-center mt-6 font-medium">
-        Current Stage: {stages.find((s) => s.sequence_no === currentStage)?.name ?? `Step ${currentStage}`}
-      </div>
-      <p className="text-xs text-center text-gray-500 mt-2">Click on a stage to view details</p>
-
-      {/* Modal */}
-      {selectedStage && (
-        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-lg p-6 w-11/12 sm:w-96 relative">
-            <button
-              className="absolute top-2 right-2 text-gray-500 hover:text-gray-700"
-              onClick={() => setSelectedStage(null)}
-              aria-label="Close"
-            >
-              ✕
-            </button>
-            <h2 className="text-lg font-semibold mb-4">{selectedStage.name}</h2>
-            <p className="text-sm text-gray-600 mb-4">{selectedStage.description}</p>
-            <div className="space-y-2">
-              {(selectedStage.files || []).length === 0 && (
-                <div className="text-xs text-gray-500">No supporting files available.</div>
-              )}
-              {(selectedStage.files || []).map((file, index) => (
-                <a
-                  key={index}
-                  href={file}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="block text-blue-600 hover:underline text-sm"
-                >
-                  View File {index + 1}
-                </a>
-              ))}
-            </div>
-          </div>
+      {/* Legend */}
+      <div className="mt-4 flex gap-4 items-center text-sm text-gray-600">
+        <div className="flex items-center gap-2">
+          <span className="inline-block w-3 h-3 rounded-full bg-green-600" />
+          Completed
         </div>
-      )}
+        <div className="flex items-center gap-2">
+          <span className="inline-block w-3 h-3 rounded-full border border-green-600 bg-white" />
+          Current
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="inline-block w-3 h-3 rounded-full border border-gray-300 bg-white" />
+          Upcoming
+        </div>
+      </div>
     </div>
   );
 }
-

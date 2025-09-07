@@ -1,4 +1,3 @@
-// src/components/MainNavbar.jsx
 import React, { useEffect, useRef, useState, useContext } from "react";
 import { AuthContext } from "../context/AuthContext"; // adjust path to where your provider lives
 
@@ -6,26 +5,24 @@ export default function MainNavbar({
   logoUrl = "/images/logo.png",
   brandDevanagari = "माटी",
   brandLatin = "MAATI",
-  // legacy prop fallback: you can still pass this (e.g. 36) but when using AuthContext
-  // the component will prefer tokenRemaining from context for the timer.
   durationSeconds = 36,
-  onRefreshToken, // optional callback from parent
-  onLogout, // optional callback from parent
+  onRefreshToken,
+  onLogout,
   name = "",
   village = "",
   showWelcome = false,
   showInNavbar = false,
   showVillageInNavbar = false,
   rightContent = null,
-  refreshBeforeSeconds = 60, // when to auto-call onRefreshToken (if provided)
+  refreshBeforeSeconds = 60,
 }) {
-  // try to use AuthContext if present — allows automatic timer & actions
   const auth = useContext(AuthContext);
 
-  // If auth exists, prefer its values; otherwise use props
-  const ctxUser = auth?.user ?? null;
+  // Context values
+  const ctxUser = auth?.user ?? null; // { name, role, email }
   const ctxVillage = auth?.villageId ?? null;
   const ctxRemaining = typeof auth?.tokenRemaining === "number" ? auth.tokenRemaining : null;
+  const ctxExpiresAt = auth?.tokenExpiresAt ?? null; // ms timestamp
   const ctxForceRefresh = auth?.forceRefresh ?? null;
   const ctxLogout = auth?.logout ?? null;
 
@@ -35,30 +32,56 @@ export default function MainNavbar({
   const menuRef = useRef(null);
   const adminButtonRef = useRef(null);
 
-  // track if we've already auto-triggered onRefreshToken for the current token cycle
-  const autoRefreshTriggeredRef = useRef(false);
+  // refs to always-read latest context values inside interval
+  const ctxRemainingRef = useRef(ctxRemaining);
+  const ctxExpiresAtRef = useRef(ctxExpiresAt);
+  const ctxUserRef = useRef(ctxUser);
+  const calledRefreshRef = useRef(false);
 
-  // Initialize remaining from context if available, else from prop
   useEffect(() => {
-    if (ctxRemaining !== null) {
-      setRemaining(ctxRemaining);
-    } else {
-      setRemaining(durationSeconds);
-    }
-  }, [ctxRemaining, durationSeconds]);
-
-  // If there's no context-provided tick, maintain a fallback local tick only
-  useEffect(() => {
-    // if context drives remaining, we do not run the local interval
-    if (ctxRemaining !== null) return;
-
-    const t = setInterval(() => {
-      setRemaining((r) => (r <= 0 ? 0 : r - 1));
-    }, 1000);
-    return () => clearInterval(t);
+    ctxRemainingRef.current = ctxRemaining;
   }, [ctxRemaining]);
+  useEffect(() => {
+    ctxExpiresAtRef.current = ctxExpiresAt;
+  }, [ctxExpiresAt]);
+  useEffect(() => {
+    ctxUserRef.current = ctxUser;
+  }, [ctxUser]);
 
-  // listen for clicks outside menu to close it
+  // If there is NO remaining and NO expiresAt but we do have a logged-in user, attempt one forced refresh
+  useEffect(() => {
+    if (!ctxUserRef.current) return; // not logged in
+    if ((ctxRemainingRef.current == null && ctxExpiresAtRef.current == null) && !calledRefreshRef.current) {
+      calledRefreshRef.current = true;
+      if (ctxForceRefresh) {
+        ctxForceRefresh().catch(() => {});
+      }
+    }
+  }, [ctxForceRefresh]);
+
+  // single interval to compute remaining (reads latest refs)
+  useEffect(() => {
+    // immediate compute
+    const compute = () => {
+      if (typeof ctxRemainingRef.current === "number") return ctxRemainingRef.current;
+      if (ctxExpiresAtRef.current) return Math.max(0, Math.ceil((ctxExpiresAtRef.current - Date.now()) / 1000));
+      return null;
+    };
+
+    const initial = compute();
+    if (initial != null) setRemaining(initial);
+    else setRemaining((r) => (r == null ? durationSeconds : r));
+
+    const iv = setInterval(() => {
+      const val = compute();
+      if (val != null) setRemaining(val);
+      else setRemaining((r) => (r == null ? durationSeconds : Math.max(0, r - 1)));
+    }, 1000);
+
+    return () => clearInterval(iv);
+  }, [durationSeconds]);
+
+  // click outside menu to close
   useEffect(() => {
     function handleClick(e) {
       if (
@@ -75,20 +98,15 @@ export default function MainNavbar({
     return () => document.removeEventListener("mousedown", handleClick);
   }, [menuOpen]);
 
-  // auto-refresh hook: when remaining drops below threshold, call onRefreshToken once.
+  // auto-refresh behavior (call once per cycle)
+  const autoRefreshTriggeredRef = useRef(false);
   useEffect(() => {
-    // reset trigger whenever remaining jumps back up (new login/new token)
-    if (ctxRemaining !== null) {
-      if (ctxRemaining > refreshBeforeSeconds + 5) {
-        // assume a new token started or refreshed
-        autoRefreshTriggeredRef.current = false;
-      }
-    } else {
-      // if using fallback prop timer, reset trigger when it resets to full duration
-      if (remaining >= durationSeconds - 1) autoRefreshTriggeredRef.current = false;
-    }
+    // reset trigger on new token (jump up)
+    const cur = typeof ctxRemaining === "number" ? ctxRemaining : (ctxExpiresAt ? Math.max(0, Math.ceil((ctxExpiresAt - Date.now()) / 1000)) : null);
+    if (cur == null) autoRefreshTriggeredRef.current = false;
+    if (cur != null && cur > refreshBeforeSeconds + 5) autoRefreshTriggeredRef.current = false;
 
-    const currentRemaining = ctxRemaining !== null ? ctxRemaining : remaining;
+    const currentRemaining = typeof ctxRemaining === "number" ? ctxRemaining : remaining;
 
     if (
       currentRemaining !== null &&
@@ -96,26 +114,18 @@ export default function MainNavbar({
       currentRemaining > 0 &&
       !autoRefreshTriggeredRef.current
     ) {
-      // call provided callback first (preserve existing prop behavior)
       if (typeof onRefreshToken === "function") {
         try {
           onRefreshToken();
-        } catch (err) {
-          // swallow errors from parent callback
-          // optionally you can console.error(err);
-        }
+        } catch (err) {}
         autoRefreshTriggeredRef.current = true;
       } else if (ctxForceRefresh) {
-        // else if auth context exposes forceRefresh, call that
-        ctxForceRefresh().catch(() => {
-          // ignore - the provider will handle failed refresh and logout
-        });
+        ctxForceRefresh().catch(() => {});
         autoRefreshTriggeredRef.current = true;
       }
     }
-  }, [ctxRemaining, remaining, refreshBeforeSeconds, durationSeconds, onRefreshToken, ctxForceRefresh]);
+  }, [ctxRemaining, ctxExpiresAt, remaining, refreshBeforeSeconds, durationSeconds, onRefreshToken, ctxForceRefresh]);
 
-  // format time helper
   function formatTime(sec) {
     if (sec == null) return "--:--";
     if (sec <= 0) return "Session expired";
@@ -127,42 +137,28 @@ export default function MainNavbar({
     return `${s} sec`;
   }
 
-  // compute progress: prefer using provided durationSeconds as total window.
-  // if ctxRemaining is larger than durationSeconds, cap to 1.
-  const displayRemaining = ctxRemaining !== null ? ctxRemaining : remaining;
+  const displayRemaining = remaining == null ? 0 : remaining;
   const total = Math.max(1, durationSeconds);
-  const progress = Math.max(0, Math.min(1, displayRemaining / total));
+  const progress = displayRemaining != null ? Math.max(0, Math.min(1, displayRemaining / total)) : 0;
 
-  // actions
   const handleRefreshPage = () => window.location.reload();
 
   const handleRefreshToken = async () => {
-    // prefer parent callback
+    setMenuOpen(false);
     if (typeof onRefreshToken === "function") {
       try {
-        setMenuOpen(false);
         onRefreshToken();
-        // mark as triggered so auto-refresh doesn't immediately re-trigger
         autoRefreshTriggeredRef.current = true;
-      } catch (err) {
-        // ignore
-      }
+      } catch (err) {}
       return;
     }
-
-    // else prefer auth.forceRefresh()
     if (ctxForceRefresh) {
-      setMenuOpen(false);
       try {
         await ctxForceRefresh();
         autoRefreshTriggeredRef.current = true;
-      } catch (err) {
-        // provider handles failures (e.g. logout)
-      }
+      } catch (err) {}
       return;
     }
-
-    // fallback: reload page (last resort)
     window.location.reload();
   };
 
@@ -183,8 +179,8 @@ export default function MainNavbar({
     window.location.href = "/login";
   };
 
-  // center content: prefer showInNavbar over showVillageInNavbar
   const displayName = ctxUser?.name ?? name;
+  const displayRole = ctxUser?.role ?? null;
   const displayVillage = ctxVillage ?? village;
 
   const centerContent = (() => {
@@ -210,33 +206,27 @@ export default function MainNavbar({
     <header className="w-full select-none">
       <div className="bg-[#a7dec0]">
         <div className="max-w-8xl mx-auto px-4">
-          {/* top row: left and right stay in flow; center is absolutely centered */}
           <div className="relative flex items-center justify-between py-2 min-h-[64px]">
-            {/* LEFT: logo + welcome */}
             <div className="flex items-center gap-3">
               <img src={logoUrl} alt="logo" className="w-14 h-14 object-contain" />
-
               <div>
                 {showWelcome && displayName ? (
                   <div className="text-lg font-semibold text-black leading-tight">
-                    Welcome {displayName}
+                    Welcome {displayName} {displayRole ? `(${displayRole})` : null}
                   </div>
                 ) : null}
               </div>
             </div>
 
-            {/* CENTER: absolutely centered to header (visually centered regardless of left/right width) */}
             {centerContent && (
               <div
                 className="absolute left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2 z-10 pointer-events-auto"
                 style={{ width: "72%", maxWidth: 900 }}
               >
-                {/* truncate on very small screens to avoid overlap; show full on md+ */}
                 <div className="mx-auto text-center truncate">{centerContent}</div>
               </div>
             )}
 
-            {/* RIGHT: brand + optional slot + admin */}
             <div className="flex items-center justify-end gap-4">
               <div className="text-right">
                 <div className="text-[#4a3529] font-bold text-xl leading-none">{brandDevanagari}</div>
@@ -264,6 +254,17 @@ export default function MainNavbar({
                   <div ref={menuRef} className="absolute right-0 mt-2 w-44 bg-white rounded-lg shadow-lg ring-1 ring-black/5 z-50">
                     <ul className="py-1">
                       <li>
+                        <div className="px-3 py-2 text-xs text-gray-500">Signed in as</div>
+                      </li>
+                      <li>
+                        <div className="px-3 py-2 text-sm font-medium">{displayName}</div>
+                      </li>
+                      {displayRole ? (
+                        <li>
+                          <div className="px-3 py-2 text-sm text-gray-600">Role: {displayRole}</div>
+                        </li>
+                      ) : null}
+                      <li>
                         <button onClick={() => { handleRefreshPage(); setMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50">Refresh page</button>
                       </li>
                       <li>
@@ -286,8 +287,8 @@ export default function MainNavbar({
         <div className="max-w-7xl mx-auto px-4">
           <div className="flex items-center justify-center py-1 relative">
             <div className="text-sm text-[#4a6b54] z-10">
-              Login Expires in:{" "}
-              <span className={displayRemaining <= 10 ? "animate-pulse font-semibold text-red-600" : "font-medium"}>
+              Login Expires in: {" "}
+              <span className={displayRemaining !== null && displayRemaining <= 10 ? "animate-pulse font-semibold text-red-600" : "font-medium"}>
                 {formatTime(displayRemaining)}
               </span>
             </div>

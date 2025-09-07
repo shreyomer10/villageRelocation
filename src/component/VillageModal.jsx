@@ -1,191 +1,354 @@
-import React from "react";
-import { Calendar, CheckCircle, Clock, X } from "lucide-react";
+import React, { useEffect, useState, useRef, useContext } from "react";
+import { useNavigate } from "react-router-dom";
+import { X } from "lucide-react";
+import { stageDefs } from "../config/stages";
+import StageProgress from "./StageProgress";
+import { AuthContext } from "../context/AuthContext";
 
-// A clean, formal horizontal stepper modal for village relocation progress.
-// - Stage descriptions are not shown on the progress bar (only stage headings below each step)
-// - A filled progress line shows completion up to the current step
-// - Accessible aria attributes and responsive layout
+export default function VillageModal({
+  open = false,
+  village = null,
+  onClose = () => {},
+  onOpenProfile = null,
+  onSaveVillage = null,
+}) {
+  const navigate = useNavigate();
+  const { setSelectedVillageId } = useContext(AuthContext) || {};
 
-const stageDefs = [
-  { stage_id: 1, name: "Gram Sabha Consent", description: "Initial consent", sequence_no: 1 },
-  { stage_id: 2, name: "Diversion of Land", description: "Collect family consent", sequence_no: 2 },
-  { stage_id: 3, name: "Budget & Eligibility", description: "Identify land", sequence_no: 3 },
-  { stage_id: 4, name: "Option 1 execution", description: "Approve funds", sequence_no: 4 },
-  { stage_id: 5, name: "Option 2 execution", description: "Handover", sequence_no: 5 },
-];
+  const [editableUpdatedBy, setEditableUpdatedBy] = useState("");
+  const [liveUpdatedBy, setLiveUpdatedBy] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
+  const [saveStatus, setSaveStatus] = useState(""); // '', 'Saving…', 'Saved', 'Error'
+  const saveTimerRef = useRef(null);
 
-export default function VillageModal({ open, onClose, village, loading, onOpenProfile }) {
-  if (!open) return null;
-
-  const statusToSequence = {
-    "Gram Panchayat Meeting": 1,
-    "Gram Sabha Meeting": 1,
-    "Consent Collected": 2,
-    "Relocation In progress": 4,
-    "In progress": 3
+  // Helper: determine canonical village id from various possible fields
+  const getVillageId = (v) => {
+    if (!v) return null;
+    return v.villageId ?? v.id ?? v._id ?? null;
   };
 
-  const currentSequence =
-    typeof village?.currentStage === "number"
-      ? village.currentStage
-      : typeof village?.sequence_no === "number"
-      ? village.sequence_no
-      : statusToSequence[village?.status] ?? 0;
+  // Helper: create a storage-safe key for the current folder/path
+  const getStoragePathKey = () => {
+    try {
+      // Use location pathname as "folder" context. e.g. "/villages/list" -> "_villages_list"
+      const path = window.location && window.location.pathname ? window.location.pathname : "root";
+      const safe = path.replace(/\//g, "_") || "_root";
+      return safe;
+    } catch (e) {
+      return "root";
+    }
+  };
 
-  const totalSteps = stageDefs.length;
+  // Save village id locally for this "folder" (path). Also maintain a small recent list.
+  const saveVillageIdLocally = (id) => {
+    if (!id) return;
+    try {
+      const pathKey = getStoragePathKey();
+      const singleKey = `selectedVillageId:${pathKey}`;
+      const recentKey = `recentVillageIds:${pathKey}`;
 
-  // Progress percent: 0% when at 0 or 1, and 100% when at last step.
-  const progressPercent =
-    currentSequence <= 1
-      ? 0
-      : ((Math.min(currentSequence, totalSteps) - 1) / (totalSteps - 1)) * 100;
+      // store single value
+      localStorage.setItem(singleKey, String(id));
+
+      // store recent list (most recent first), keep up to 10
+      const raw = localStorage.getItem(recentKey);
+      let recent = [];
+      try {
+        recent = raw ? JSON.parse(raw) : [];
+        if (!Array.isArray(recent)) recent = [];
+      } catch (e) {
+        recent = [];
+      }
+
+      // remove existing entry for this id
+      recent = recent.filter((r) => String(r?.id) !== String(id));
+      recent.unshift({ id: String(id), ts: Date.now() });
+
+      if (recent.length > 10) recent = recent.slice(0, 10);
+      localStorage.setItem(recentKey, JSON.stringify(recent));
+    } catch (e) {
+      // localStorage might be disabled -> ignore silently but warn in dev
+      // eslint-disable-next-line no-console
+      console.warn("saveVillageIdLocally failed:", e);
+    }
+  };
+
+  // put village id into context (if setter exists). support multiple id field names.
+  useEffect(() => {
+    if (!open) return;
+    const id = getVillageId(village);
+    if (id && typeof setSelectedVillageId === "function") {
+      try {
+        setSelectedVillageId(id);
+      } catch (e) {
+        // swallow to avoid breaking UI if context setter misbehaves
+        // eslint-disable-next-line no-console
+        console.warn("setSelectedVillageId threw:", e);
+      }
+    }
+
+    // store villageId locally per-folder/path whenever modal opens or village changes
+    if (id) {
+      saveVillageIdLocally(id);
+    }
+  }, [village, open, setSelectedVillageId]);
+
+  // initialize fields when village changes
+  useEffect(() => {
+    if (village) {
+      const initial = village.updatedBy ?? village.lastUpdatedBy ?? village.lastUpdatedby ?? "";
+      setEditableUpdatedBy(initial);
+      setLiveUpdatedBy(initial);
+      setSaveError(null);
+      setSaveStatus("");
+    }
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+    };
+  }, [village]);
+
+  // prevent body scrolling while modal is open
+  useEffect(() => {
+    if (open) {
+      const prev = document.body.style.overflow;
+      document.body.style.overflow = "hidden";
+      return () => {
+        document.body.style.overflow = prev;
+      };
+    }
+    return;
+  }, [open]);
+
+  // close on Escape
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  if (!village) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+        <div className="bg-white rounded-md shadow w-full max-w-2xl p-4 border border-gray-200 relative">
+          <button
+            onClick={onClose}
+            className="absolute right-3 top-3 p-1 rounded hover:bg-gray-100"
+            aria-label="Close"
+          >
+            <X className="w-4 h-4" />
+          </button>
+          <div className="py-8 text-center text-gray-600">No details available.</div>
+          <div className="mt-2 flex justify-end">
+            <button
+              onClick={onClose}
+              className="px-3 py-1.5 rounded border border-gray-200 hover:bg-gray-50 text-sm"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const currentSeq = village.currentStage ?? 0;
+  const currentSub = village.currentSubStage ?? null;
+
+  const updatedOn = village.lastUpdatedOn ?? village.updatedAt ?? village.date ?? "-";
+  const areaDiverted = village.areaDiverted ?? "-";
+  const siteOfRelocation = village.siteOfRelocation ?? village.areaOfRelocation ?? "-";
+
+  const doAutoSave = async (value) => {
+    const original = village.updatedBy ?? village.lastUpdatedBy ?? village.lastUpdatedby ?? "";
+    if (value === original) {
+      setSaveStatus("Saved");
+      saveTimerRef.current = setTimeout(() => setSaveStatus(""), 1500);
+      return;
+    }
+
+    if (typeof onSaveVillage !== "function") {
+      setSaveStatus("Saved");
+      saveTimerRef.current = setTimeout(() => setSaveStatus(""), 1500);
+      return;
+    }
+
+    setSaving(true);
+    setSaveError(null);
+    setSaveStatus("Saving…");
+    try {
+      await onSaveVillage({
+        villageId: getVillageId(village),
+        updatedBy: value,
+      });
+      setSaving(false);
+      setSaveStatus("Saved");
+      saveTimerRef.current = setTimeout(() => setSaveStatus(""), 1500);
+    } catch (err) {
+      setSaving(false);
+      const msg = err?.message ?? String(err ?? "Save failed");
+      setSaveError(msg);
+      setSaveStatus("Error");
+    }
+  };
+
+  const handleInputChange = (e) => {
+    const val = e.target.value;
+    setEditableUpdatedBy(val);
+    setLiveUpdatedBy(val);
+    setSaveStatus("");
+    setSaveError(null);
+
+    // debounce/save after small delay (simple approach)
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => doAutoSave(val), 800);
+  };
+
+  const handleOpenProfile = (v) => {
+    try {
+      if (typeof onOpenProfile === "function") onOpenProfile(v);
+    } catch (e) {
+      // keep UI responsive even if callback throws
+      // eslint-disable-next-line no-console
+      console.warn("onOpenProfile threw:", e);
+    } finally {
+      try {
+        navigate("/home");
+      } catch (e) {
+        // ignore navigation errors in tests
+      }
+    }
+  };
+
+  const stageDef = stageDefs.find((s) => s.stage_id === currentSeq) ?? null;
+  const subStages = Array.isArray(stageDef?.subStages) ? stageDef.subStages : [];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl p-6 relative">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onMouseDown={(e) => {
+        // close when clicking the overlay (but not when clicking inner content)
+        if (e.target === e.currentTarget) onClose();
+      }}
+      role="dialog"
+      aria-modal="true"
+    >
+      <div
+        className="bg-white rounded-md shadow w-full max-w-2xl p-4 border border-gray-200 relative"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        {/* Close Button */}
         <button
           onClick={onClose}
-          className="absolute right-4 top-4 p-2 rounded-md hover:bg-gray-100"
+          className="absolute right-3 top-3 p-1 rounded hover:bg-gray-100"
           aria-label="Close"
         >
-          <X />
+          <X className="w-4 h-4" />
         </button>
 
-        {loading ? (
-          <div className="py-12 text-center">Loading village details…</div>
-        ) : (
-          <>
-            <h2 className="text-2xl font-semibold mb-1">{village?.name ?? "-"}</h2>
-            <p className="text-sm text-gray-600 mb-6">
-              Village ID: {village?.villageId ?? village?.village_id ?? "-"}
-            </p>
+        {/* Header */}
+        <header className="mb-3">
+          <h2 className="text-base font-semibold text-gray-800">{village.name}</h2>
+          <p className="text-xs text-gray-600">
+            Village ID: {getVillageId(village)}
+          </p>
+        </header>
 
-            {/* Formal Stepper / Progress */}
-            <div className="mb-6">
-              <div className="relative">
-                {/* base track */}
-                <div className="h-1 bg-gray-200 rounded-full w-full absolute top-5 left-0" />
+        {/* Stage Progress */}
+        <div className="mb-4">
+          <StageProgress currentStage={currentSeq} currentSubStage={currentSub} />
+        </div>
 
-                {/* filled track */}
-                <div
-                  className="h-1 rounded-full absolute top-5 left-0 transition-all duration-500 ease-out"
-                  style={{ width: `${progressPercent}%`, backgroundColor: "#16a34a" }}
-                />
+        {/* Main Content */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+          {/* Sub-stages */}
+          <div className="md:col-span-1 bg-gray-50 p-3 rounded">
+            <div className="font-medium text-sm text-gray-700 mb-2">Sub-stages</div>
+            {subStages.length === 0 ? (
+              <div className="text-gray-500 text-xs">No stage selected</div>
+            ) : (
+              <ul className="space-y-2 text-sm">
+                {subStages.map((sub) => {
+                  const done = currentSub !== null && Number(sub.id) <= Number(currentSub);
+                  return (
+                    <li key={sub.id} className="flex items-center gap-2">
+                      <span
+                        className={`inline-flex items-center justify-center w-4 h-4 text-xs rounded-full flex-shrink-0 ${
+                          done ? "bg-green-600 text-white" : "border border-gray-300 text-gray-500"
+                        }`}
+                      >
+                        {done ? "✓" : sub.id}
+                      </span>
+                      <span className={done ? "text-gray-800 text-sm" : "text-gray-500 text-sm"}>
+                        {sub.name}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
 
-                {/* Steps */}
-                <div className="flex justify-between items-start relative z-10 mt-2">
-                  {stageDefs.map((stage) => {
-                    const seq = stage.sequence_no;
-                    const completed = seq < currentSequence && currentSequence > 0;
-                    const active = seq === currentSequence;
-
-                    return (
-                      <div key={stage.stage_id} className="flex flex-col items-center w-full max-w-[80px]">
-                        <div
-                          className={`flex items-center justify-center rounded-full border-2 w-10 h-10 font-semibold shadow-sm transition-colors duration-200`
-                          }
-                          aria-current={active ? "step" : undefined}
-                          aria-label={`${stage.name} ${completed ? 'completed' : active ? 'current' : 'upcoming'}`}
-                        >
-                          {/* circle appearance */}
-                          <div
-                            className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-semibold ` +
-                              (completed
-                                ? "bg-green-600 text-white border-green-600"
-                                : active
-                                ? "bg-white text-green-700 border-green-600 shadow"
-                                : "bg-white text-gray-400 border-gray-300")}
-                          >
-                            {completed ? "✓" : seq}
-                          </div>
-                        </div>
-
-                        {/* Stage name below number - short and formal */}
-                        <div className="text-center mt-2">
-                          <div className={`text-xs font-medium ${completed || active ? 'text-gray-800' : 'text-gray-400'}`}>
-                            {stage.name}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+          {/* Village Details */}
+          <div className="md:col-span-2 p-3 rounded border border-gray-100">
+            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-y-2 gap-x-4 text-sm">
+              <div>
+                <dt className="text-xs text-gray-500 uppercase">Last updated</dt>
+                <dd className="text-gray-700">{updatedOn}</dd>
               </div>
-
-              {/* Small legend beneath the progress for clarity */}
-              <div className="mt-4 flex gap-4 items-center text-sm text-gray-600">
-                <div className="flex items-center gap-2">
-                  <span className="inline-block w-3 h-3 rounded-full bg-green-600" />
-                  Completed
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="inline-block w-3 h-3 rounded-full border border-green-600 bg-white" />
-                  Current
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="inline-block w-3 h-3 rounded-full border border-gray-300 bg-white" />
-                  Upcoming
-                </div>
+              <div>
+                <dt className="text-xs text-gray-500 uppercase">Area diverted (ha)</dt>
+                <dd className="text-gray-700">{areaDiverted}</dd>
               </div>
-            </div>
-
-            {/* Info Section */}
-            <div className="flex gap-6 mb-4 flex-wrap">
-              <div className="flex items-center gap-2">
-                <CheckCircle className="w-5 h-5 text-green-600" />
-                <div>
-                  <div className="text-xs text-gray-500">Status</div>
-                  <div className="text-sm font-medium">
-                    {village?.status ??
-                      (currentSequence > 0
-                        ? stageDefs.find((s) => s.sequence_no === currentSequence)?.name ?? `Step ${currentSequence}`
-                        : "N/A")}
+              <div>
+                <dt className="text-xs text-gray-500 uppercase">Site of relocation</dt>
+                <dd className="text-gray-700">{siteOfRelocation}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-gray-500 uppercase">Updated by</dt>
+                <dd className="text-gray-700">
+                  {liveUpdatedBy || "-"}
+                  {/* simple inline edit input (optional) */}
+                  <div className="mt-1">
+                    <input
+                      value={editableUpdatedBy}
+                      onChange={handleInputChange}
+                      className="border px-2 py-1 text-sm rounded w-full"
+                      placeholder="Edit updated by"
+                    />
+                    <div className="text-xs mt-1">
+                      {saveStatus && <span>{saveStatus}{saveError ? `: ${saveError}` : ""}</span>}
+                    </div>
                   </div>
-                </div>
+                </dd>
               </div>
+            </dl>
+          </div>
+        </div>
 
-              <div className="flex items-center gap-2">
-                <Calendar className="w-5 h-5 text-gray-600" />
-                <div>
-                  <div className="text-xs text-gray-500">Last update</div>
-                  <div className="text-sm font-medium">{village?.lastUpdatedOn ?? "-"}</div>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <Clock className="w-5 h-5 text-gray-600" />
-                <div>
-                  <div className="text-xs text-gray-500">Current Step</div>
-                  <div className="text-sm font-medium">
-                    {currentSequence > 0 ? `Step ${currentSequence}` : "Not started"}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="text-sm text-gray-700">
-              <p className="mt-2">
-                <span className="font-medium">Area of relocation:</span> {village?.areaOfRelocation ?? "-"}
-              </p>
-            </div>
-
-            {/* Footer Buttons */}
-            <div className="mt-6 flex justify-end gap-3">
-              <button
-                className="px-4 py-2 rounded-lg border border-gray-200 hover:bg-gray-50"
-                onClick={onClose}
-              >
-                Close
-              </button>
-              <button
-                onClick={onOpenProfile}
-                className="px-4 py-2 rounded-lg bg-green-600 text-white hover:bg-green-700"
-              >
-                Open Profile
-              </button>
-            </div>
-          </>
-        )}
+        {/* Actions */}
+        <div className="pt-2 border-t border-gray-100 flex items-center justify-end gap-2 mt-1">
+          <button
+            onClick={() => handleOpenProfile(village)}
+            className="px-3 py-1.5 rounded-md bg-indigo-600 text-white text-sm hover:bg-indigo-700"
+          >
+            Open Profile
+          </button>
+          <button
+            onClick={onClose}
+            className="px-3 py-1.5 rounded-md border border-gray-300 bg-white text-sm text-gray-700 hover:bg-gray-50"
+          >
+            Close
+          </button>
+        </div>
       </div>
     </div>
   );
