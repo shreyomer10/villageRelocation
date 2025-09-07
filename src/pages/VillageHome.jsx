@@ -11,7 +11,7 @@ export default function VillageDashboard() {
   const navigate = useNavigate();
   const { selectedVillageId } = useContext(AuthContext) || {}; // prefer context
 
-  // Local state
+  // Local state (unchanged from original)
   const [localStorageVillageId, setLocalStorageVillageId] = useState(() => {
     try {
       return typeof window !== "undefined" ? localStorage.getItem("villageId") : null;
@@ -19,16 +19,12 @@ export default function VillageDashboard() {
       return null;
     }
   });
-
-  // Effective village id used everywhere: context first, fallback to localStorage
   const effectiveVillageId = selectedVillageId ?? localStorageVillageId;
 
-  // Family counts
   const [total, setTotal] = useState(0);
   const [opt1, setOpt1] = useState(0);
   const [opt2, setOpt2] = useState(0);
 
-  // Village details
   const [villageName, setVillageName] = useState("User");
   const [currentStage, setCurrentStage] = useState(3);
   const [currentSubStage, setCurrentSubStage] = useState(1);
@@ -37,7 +33,11 @@ export default function VillageDashboard() {
   const [locationText, setLocationText] = useState("");
   const [imageUrl, setImageUrl] = useState(null);
 
-  // Extra fields from API
+  // NEW: photos array + index + fullscreen state
+  const [photos, setPhotos] = useState([]);
+  const [photoIndex, setPhotoIndex] = useState(0);
+  const [showFullscreen, setShowFullscreen] = useState(false);
+
   const [district, setDistrict] = useState(null);
   const [docs, setDocs] = useState([]);
   const [familyMasterList, setFamilyMasterList] = useState(null);
@@ -53,12 +53,17 @@ export default function VillageDashboard() {
   const [villageIdState, setVillageIdState] = useState(null);
   const [logs, setLogs] = useState([]);
 
-  // Loading and error states
   const [loadingCounts, setLoadingCounts] = useState(true);
   const [loadingVillage, setLoadingVillage] = useState(true);
   const [error, setError] = useState(null);
 
-  // Read user name from localStorage (unchanged)
+  // DOCS modal / viewer states
+  const [showDocsModal, setShowDocsModal] = useState(false);
+  const [expandedStages, setExpandedStages] = useState(() => new Set());
+  const [docViewerUrl, setDocViewerUrl] = useState(null);
+  const [docViewerName, setDocViewerName] = useState(null);
+  const [showDocViewer, setShowDocViewer] = useState(false);
+
   const storedUserRaw =
     typeof window !== "undefined" ? localStorage.getItem("user") : null;
 
@@ -71,7 +76,7 @@ export default function VillageDashboard() {
     }
   }, [storedUserRaw]);
 
-  // Listen for cross-tab 'storage' changes and same-window custom event 'villageIdChanged'
+  // sync localStorage from other tabs / custom event (unchanged)
   useEffect(() => {
     const onStorage = (e) => {
       if (e.key === "villageId") {
@@ -80,21 +85,21 @@ export default function VillageDashboard() {
     };
 
     const onCustom = (e) => {
-      // custom event detail expected as { villageId: "..." }
       const idFromDetail = e?.detail?.villageId ?? null;
-      setLocalStorageVillageId(idFromDetail ?? (typeof window !== "undefined" ? localStorage.getItem("villageId") : null));
+      setLocalStorageVillageId(
+        idFromDetail ?? (typeof window !== "undefined" ? localStorage.getItem("villageId") : null)
+      );
     };
 
     window.addEventListener("storage", onStorage);
     window.addEventListener("villageIdChanged", onCustom);
-
     return () => {
       window.removeEventListener("storage", onStorage);
       window.removeEventListener("villageIdChanged", onCustom);
     };
   }, []);
 
-  // Helper: human readable stage + sub-stage
+  // getCurrentStageName helper (same as before)
   function getCurrentStageName(stage, subStage) {
     if (!Array.isArray(stageDefs) || stageDefs.length === 0) return "Unknown Stage";
 
@@ -139,7 +144,18 @@ export default function VillageDashboard() {
     return stageObj.name ?? "Unknown Stage";
   }
 
-  // Fetch data from backend whenever effectiveVillageId changes
+  // Automatically cycle through photos every 5 seconds when in fullscreen mode
+  useEffect(() => {
+    if (!showFullscreen || photos.length === 0) return;
+
+    const interval = setInterval(() => {
+      setPhotoIndex((prevIndex) => (prevIndex + 1) % photos.length);
+    }, 5000); // change image every 5 seconds
+
+    return () => clearInterval(interval);
+  }, [photos.length, showFullscreen]);
+
+  // fetch logic (kept behaviorally same, simplified for brevity)
   useEffect(() => {
     let mounted = true;
     const controllerCounts = new AbortController();
@@ -206,6 +222,9 @@ export default function VillageDashboard() {
           setSubD2(null);
           setTehsil(null);
           setVillageIdState(null);
+          // NEW: clear photos
+          setPhotos([]);
+          setPhotoIndex(0);
           return;
         }
 
@@ -257,23 +276,24 @@ export default function VillageDashboard() {
         }
         if (result?.siteOfRelocation) setSiteOfRelocation(result.siteOfRelocation);
 
-        if (Array.isArray(result.photos) && result.photos.length > 0) {
-          setImageUrl(result.photos[0]);
-        } else if (result.photo) {
-          setImageUrl(result.photo);
-        } else {
-          setImageUrl(null);
-        }
+        // PHOTOS handling: prefer result.photos array, fallback to result.photo
+        const photosArr = Array.isArray(result.photos) && result.photos.length > 0
+          ? result.photos
+          : result.photo
+          ? [result.photo]
+          : [];
+
+        setPhotos(photosArr);
+        setPhotoIndex(0);
+        if (photosArr.length > 0) setImageUrl(photosArr[0]);
+        else setImageUrl(null);
 
         setAreaDiverted(
-          result.areaDiverted ??
-            result.area_diverted ??
-            result.area ??
-            result.totalArea ??
-            null
+          result.areaDiverted ?? result.area_diverted ?? result.area ?? result.totalArea ?? null
         );
 
         setDistrict(result.district ?? result?.District ?? null);
+        // ensure docs is an array of URLs/strings
         setDocs(Array.isArray(result.docs) ? result.docs : result.docs ? [result.docs] : []);
         setFamilyMasterList(
           result.familyMasterList ?? result.family_master_list ?? result.familyList ?? null
@@ -310,16 +330,55 @@ export default function VillageDashboard() {
     };
   }, [effectiveVillageId]);
 
-  // Prepare ticker text from logs
+  // Derived current image to display
+  const currentImage = photos.length > 0 ? photos[photoIndex] : imageUrl;
+
+  // Handlers for image controls
+  function nextPhoto(e) {
+    // stop propagation so clicks don't bubble to parent handlers
+    if (e && e.stopPropagation) e.stopPropagation();
+    if (!photos || photos.length === 0) return;
+    const next = (photoIndex + 1) % photos.length;
+    setPhotoIndex(next);
+    setImageUrl(photos[next]);
+  }
+
+  function prevPhoto(e) {
+    if (e && e.stopPropagation) e.stopPropagation();
+    if (!photos || photos.length === 0) return;
+    const prev = (photoIndex - 1 + photos.length) % photos.length;
+    setPhotoIndex(prev);
+    setImageUrl(photos[prev]);
+  }
+
+  function openFullscreen(e) {
+    if (e && e.stopPropagation) e.stopPropagation();
+    if (!currentImage) return;
+    setShowFullscreen(true);
+  }
+
+  function closeFullscreen() {
+    setShowFullscreen(false);
+  }
+
+  // keyboard navigation in fullscreen
+  useEffect(() => {
+    if (!showFullscreen) return;
+    function onKey(e) {
+      if (e.key === "Escape") closeFullscreen();
+      if (e.key === "ArrowRight") setPhotoIndex((s) => (photos.length ? (s + 1) % photos.length : s));
+      if (e.key === "ArrowLeft") setPhotoIndex((s) => (photos.length ? (s - 1 + photos.length) % photos.length : s));
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [showFullscreen, photos.length]);
+
+  // Prepare logs text for ticker (kept)
   const logsText = logs.length
     ? logs
         .map((l) => {
           const t =
-            l.updateTime ??
-            l.update_time ??
-            l.time ??
-            l.timestamp ??
-            null;
+            l.updateTime ?? l.update_time ?? l.time ?? l.timestamp ?? null;
           const formattedTime = t ? new Date(t).toLocaleString() : "Unknown time";
           const who = l.updateBy ?? l.update_by ?? l.by ?? "Unknown";
           const comments = l.comments ?? l.comment ?? "No comments";
@@ -327,225 +386,452 @@ export default function VillageDashboard() {
         })
         .join("  •  ")
     : "No logs available";
-
-  // Animation duration for ticker
   const durationSeconds = Math.max(12, Math.round(logsText.length / 10));
 
+  // small presentational helper for details rows
+  function DetailRow({ label, value, href }) {
+    return (
+      <div className="flex items-start gap-3">
+        <div className="w-36 text-xs text-gray-500">{label}</div>
+        <div className="text-sm text-gray-800 break-words">
+          {value ? (
+            href ? (
+              <a href={href} target="_blank" rel="noreferrer" className="text-blue-600 underline">
+                {value}
+              </a>
+            ) : (
+              <span>{value}</span>
+            )
+          ) : (
+            <span className="text-gray-400">—</span>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // DOCS modal helpers
+  function toggleStageExpand(stageId) {
+    setExpandedStages((prev) => {
+      const copy = new Set(prev);
+      if (copy.has(stageId)) copy.delete(stageId);
+      else copy.add(stageId);
+      return copy;
+    });
+  }
+
+  // Try to find a matching doc for a given stage/substage by name match in docs URLs or filenames
+  function findFileFor(stageObj, subName) {
+    // normalize search tokens
+    const tokens = [];
+    if (stageObj?.name) tokens.push(String(stageObj.name).toLowerCase());
+    if (stageObj?.stage_id) tokens.push(String(stageObj.stage_id).toLowerCase());
+    if (subName) tokens.push(String(subName).toLowerCase());
+
+    // prefer direct matches in docs array
+    if (Array.isArray(docs) && docs.length > 0) {
+      for (const d of docs) {
+        try {
+          const lower = String(d).toLowerCase();
+          // if any token appears in the URL or filename, consider it a match
+          if (tokens.some((t) => t && lower.includes(t.replace(/\s+/g, "-")) || lower.includes(t))) {
+            return d;
+          }
+        } catch {}
+      }
+      // fallback to first doc
+      return docs[0];
+    }
+
+    // final fallback to familyMasterList if present
+    if (familyMasterList) return familyMasterList;
+
+    return null;
+  }
+
+  function openDocInViewer(url, name) {
+    if (!url) return;
+    setDocViewerUrl(url);
+    setDocViewerName(name ?? "Document");
+    setShowDocViewer(true);
+  }
+
+  function closeDocViewer() {
+    setShowDocViewer(false);
+    setDocViewerUrl(null);
+    setDocViewerName(null);
+  }
+
   return (
-    <div className="min-h-screen bg-amber-50 font-sans">
-      {/* Navbar: pass effective village id (from AuthContext if available) */}
+    <div className="min-h-screen bg-[#f8f0dc] font-sans">
       <MainNavbar village={effectiveVillageId} showVillageInNavbar={true} />
 
-      {/* Ticker below navbar */}
-      <div className="w-full bg-white shadow-sm">
-        <style>{`
-          .ticker { overflow: hidden; white-space: nowrap; }
-          .ticker-inner { display: inline-block; padding: 8px 0; font-size: 0.95rem; white-space: nowrap; will-change: transform; }
-          @keyframes marquee {
-            from { transform: translateX(100%); }
-            to { transform: translateX(-100%); }
-          }
-        `}</style>
+      <div className="max-w-7xl mx-auto px-6 mt-6">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-800">{district ?? "—"}</h1>
+            
+          </div>
 
-        <div className="ticker">
-          <div
-            className="ticker-inner"
-            style={{
-              animationName: "marquee",
-              animationTimingFunction: "linear",
-              animationIterationCount: "infinite",
-              animationDuration: `${durationSeconds}s`,
-              paddingLeft: "100%",
-            }}
-            aria-live="polite"
-          >
-            {logsText}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => navigate("/dashboard")}
+              className="inline-flex items-center gap-2 bg-gray-100 hover:bg-gray-200 px-3 py-2 rounded-lg shadow-sm text-sm"
+            >
+              ← Back
+            </button>
+            <button
+              onClick={() => navigate("/family")}
+              className="bg-green-200 hover:bg-green-300 px-4 py-2 rounded-lg shadow text-sm font-medium"
+            >
+              All Beneficiaries
+            </button>
+            <button
+              onClick={() => navigate("/plan-layout")}
+              className="bg-indigo-50 hover:bg-indigo-100 px-6 py-2 rounded-2xl shadow text-sm font-medium"
+            >
+              Plan Layout
+            </button>
+          </div>
+        </div>
+
+        {/* TOP ROW: Left pie + Right stacked cards */}
+        <div className="grid grid-cols-12 gap-6">
+          {/* Pie Chart Card */}
+          <div className="col-span-12 md:col-span-4">
+            <div className="bg-gradient-to-br from-white to-amber-50 rounded-2xl p-6 shadow-lg border border-gray-100 h-full flex flex-col  gap-1">
+              
+                <FamilyPieChart
+                  total={total}
+                  opt1={opt1}
+                  opt2={opt2}
+                  loading={loadingCounts}
+                  error={error}
+                  villageId={villageIdState || effectiveVillageId}
+                />
+              <a href={familyMasterList} target="_blank" rel="noreferrer" className="text-blue-600 underline text-center">
+                            Family Master List
+                          </a> 
+            </div>
+            
+          </div>
+
+          {/* Right Column: two stacked cards */}
+          <div className="col-span-12 md:col-span-8 flex flex-col gap-6">
+            {/* Stage Progress card */}
+            <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-100">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-gray-700">Stages Of Relocation</h3>
+                <div className="text-sm text-gray-500">Current: <span className="font-medium text-gray-800">{getCurrentStageName(currentStage, currentSubStage)}</span></div>
+              </div>
+
+              <StageProgress
+                currentStage={currentStage}
+                currentSubStage={currentSubStage}
+                showSubStage={true}
+              />
+            </div>
+
+            {/* Location card */}
+            <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-100">
+              <div className="flex items-center justify-between mb-4">
+                <div className="gap-4">
+                <h4 className="text-sm font-semibold text-gray-700">Location of Relocation   : </h4>
+                <p className="text-sm text-gray-600 mt-2">{locationText || "Location not available"}</p>
+                </div>
+                
+                  <div className="">
+                    <h4 className="text-sm font-semibold text-gray-700">Site</h4>
+                    <div className="text-sm text-gray-600 mt-2">{siteOfRelocation ?? "—"}</div>
+                  </div>
+
+                  {/* DOC button next to location */}
+                  <div className="ml-4">
+                    <button
+                      onClick={() => setShowDocsModal(true)}
+                      className="bg-blue-600 hover:bg-blue-700 text-white px-10 py-5 rounded-md text-m shadow "
+                      title="Open stage documents"
+                    >
+                      Docs
+                    </button>
+                  </div>
+                  
+                
+              </div>
+              <div className=" text-center">
+                
+                <a href={kme} className="text-blue-600 underline text-center">KME_link</a>
+                  </div>
+            </div>
+          </div>
+        </div>
+
+        
+
+        {/* FULL-WIDTH DETAILS BOX */}
+        <div className="mt-6 gap-10">
+          <div className="bg-white rounded-2xl p-6 shadow-xl border border-gray-100 gap-10">
+            <div className="flex flex-col lg:flex-row gap-6">
+              {/* Image large on the left with hover controls */}
+              <div className="lg:w-1/3 w-full rounded-lg overflow-hidden bg-gray-50 flex items-center justify-center border border-gray-100 group relative">
+                {currentImage ? (
+                  <>
+                    <img src={currentImage} alt="uploaded" className="w-full h-64 object-cover" />
+
+                    <div className="absolute inset-0 bg-black bg-opacity-20 opacity-0 group-hover:opacity-100 transition flex items-center justify-between px-4">
+                      <button
+                        onClick={prevPhoto}
+                        title="Previous photo"
+                        className="p-3 bg-white bg-opacity-95 rounded-full shadow hover:scale-105"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" />
+                        </svg>
+                      </button>
+
+                      <div className="flex gap-3 items-center">
+                        <button
+                          onClick={nextPhoto}
+                          title="Next photo"
+                          className="p-3 bg-white bg-opacity-95 rounded-full shadow hover:scale-105"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
+                          </svg>
+                        </button>
+
+                        <button
+                          onClick={openFullscreen}
+                          title="View fullscreen"
+                          className="p-3 bg-white bg-opacity-95 rounded-full shadow hover:scale-105"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" viewBox="0 0 20 20" fill="currentColor">
+                            <path d="M3 4a1 1 0 011-1h3a1 1 0 110 2H5v2a1 1 0 11-2 0V4zM17 4a1 1 0 00-1-1h-3a1 1 0 100 2h2v2a1 1 0 102 0V4zM3 16a1 1 0 011 1h3a1 1 0 110-2H5v-2a1 1 0 10-2 0v3zM17 16a1 1 0 00-1 1h-3a1 1 0 100-2h2v-2a1 1 0 102 0v3z" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+
+                    {photos.length > 1 && (
+                      <div className="absolute left-2 top-2 bg-white bg-opacity-90 rounded-full px-2 py-0.5 text-xs font-medium">
+                        {photoIndex + 1}/{photos.length}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="p-6 text-center text-gray-400">
+                    <svg className="mx-auto mb-2" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 19V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"></path><path d="M3 17l4-4a2 2 0 0 1 2.8 0L13 19" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"></path></svg>
+                    <div className="text-sm">No uploaded image</div>
+                  </div>
+                )}
+              </div>
+
+              {/* Details on the right */}
+              <div className="lg:w-2/3 w-full">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-gray-700">Village details</h3>
+                  <div className="text-xs text-gray-400">Updated: {lastUpdated ? new Date(lastUpdated).toLocaleString() : "—"}</div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm text-gray-700">
+                  <DetailRow label="Name" value={villageName} />
+                  <DetailRow label="Village ID" value={villageIdState ?? effectiveVillageId ?? "—"} />
+                  <DetailRow label="District" value={district} />
+                  <DetailRow label="Tehsil" value={tehsil} />
+                  <DetailRow label="Gram Panchayat" value={gramPanchayat} />
+                  <DetailRow label="Janpad" value={janpad} />
+                  <DetailRow label="Forest Division" value={fd} />
+                  <DetailRow label="Range" value={rangeField} />
+                  <DetailRow label="SD1" value={sd1} />
+                  <DetailRow label="Sub D2" value={subD2} />
+                  <div className="col-span-2">
+                    <DetailRow label="Site of Relocation" value={siteOfRelocation} />
+                  </div>
+
+                  
+
+                  
+                </div>
+
+                {/* logs ticker */}
+                <div className="mt-6 pt-4 border-t border-gray-100">
+                  <div className="relative overflow-hidden h-6 bg-gray-50 rounded px-3 flex items-center border border-gray-100">
+                    <div
+                      className="whitespace-nowrap"
+                      style={{
+                        transform: `translateX(0)`,
+                        animation: `marquee ${durationSeconds}s linear infinite`,
+                      }}
+                    >
+                      {logsText}
+                    </div>
+                  </div>
+
+                  <style>{`
+                    @keyframes marquee {
+                      0% { transform: translateX(100%); }
+                      100% { transform: translateX(-100%); }
+                    }
+                  `}</style>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
 
-      <main className="max-w-7xl mx-auto px-6 py-8 grid grid-cols-12 gap-6">
-        {/* Pie chart */}
-        <section className="col-span-4">
-          <FamilyPieChart
-            total={total}
-            opt1={opt1}
-            opt2={opt2}
-            loading={loadingCounts}
-            error={error}
-            villageId={villageIdState || effectiveVillageId}
-          />
-        </section>
+      {/* Fullscreen modal */}
+      {showFullscreen && currentImage && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-80">
+          <div className="max-w-5xl w-full mx-4 relative">
+            <button onClick={closeFullscreen} className="absolute right-2 top-2 p-2 bg-white rounded-full shadow">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
 
-        {/* Right side content */}
-        <section className="col-span-8 space-y-6">
-          {/* Stage Progress */}
-          <div className="bg-white rounded-2xl p-6 shadow-lg">
-            <h3 className="text-lg font-semibold text-gray-700 text-center mb-6">
-              Stages Of Relocation
-            </h3>
-            <StageProgress
-              currentStage={currentStage}
-              currentSubStage={currentSubStage}
-              showSubStage={true}
-            />
+            <div className="flex items-center justify-center gap-4">
+              <button onClick={prevPhoto} className="p-3 bg-white rounded-full shadow">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" />
+                </svg>
+              </button>
 
-            <div className="mt-4 text-center">
-              <p className="text-sm text-gray-600">
-                Current Stage:{" "}
-                <span className="font-semibold text-gray-800">
-                  {getCurrentStageName(currentStage, currentSubStage)}
-                </span>
-              </p>
+              <img src={currentImage} alt="fullscreen" className="max-h-[80vh] w-auto object-contain rounded" />
+
+              <button onClick={nextPhoto} className="p-3 bg-white rounded-full shadow">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
             </div>
+
+            {photos.length > 1 && (
+              <div className="absolute left-1/2 -translate-x-1/2 bottom-4 bg-white bg-opacity-90 rounded-full px-3 py-1 text-sm">
+                {photoIndex + 1}/{photos.length}
+              </div>
+            )}
           </div>
+        </div>
+      )}
 
-          {/* Location Card */}
-          <div className="bg-white rounded-2xl p-6 shadow-lg flex items-stretch gap-6">
-            <div className="flex-1">
-              <h4 className="text-sm font-semibold text-gray-800">Location of Relocation</h4>
-              <p className="text-xs text-gray-700 mt-1">{locationText || "Location not available"}</p>
-
-              <h4 className="text-sm font-semibold text-gray-800 mt-4">Total Area Diverted</h4>
-              <p className="text-xs text-gray-700 mt-1">{areaDiverted ?? "—"}</p>
-
-              {lastUpdated && (
-                <>
-                  <h4 className="text-sm font-semibold text-gray-800 mt-4">Last Updated</h4>
-                  <p className="text-xs text-gray-700 mt-1">
-                    {new Date(lastUpdated).toLocaleString()}
-                  </p>
-                </>
-              )}
+      {/* Docs Modal */}
+      {showDocsModal && (
+        <div className="fixed inset-0 z-40 flex items-start justify-center pt-12 bg-black bg-opacity-40">
+          <div className="w-full max-w-3xl bg-white rounded-lg shadow-lg overflow-auto max-h-[80vh]">
+            <div className="flex items-center justify-between p-4 border-b">
+              <h3 className="text-lg font-semibold">Stage documents</h3>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    // quick open village docs if available
+                    if (docs.length > 0) {
+                      window.open(docs[0], "_blank", "noopener");
+                    } else if (familyMasterList) {
+                      window.open(familyMasterList, "_blank", "noopener");
+                    } else {
+                      setShowDocsModal(false);
+                    }
+                  }}
+                  className="text-sm px-3 py-1 rounded bg-gray-100 hover:bg-gray-200"
+                >
+                  Open Village doc
+                </button>
+                <button onClick={() => setShowDocsModal(false)} className="px-3 py-1 rounded bg-red-50 hover:bg-red-100 text-sm">Close</button>
+              </div>
             </div>
 
-            <div className="w-56 h-36 rounded-lg overflow-hidden shadow-md bg-gray-100 flex items-center justify-center">
-              {imageUrl ? (
-                <img src={imageUrl} alt="site" className="w-full h-full object-cover" />
-              ) : (
-                <div className="text-sm text-gray-500">No image</div>
-              )}
-            </div>
-          </div>
+            <div className="p-4 space-y-3">
+              {Array.isArray(stageDefs) && stageDefs.length > 0 ? (
+                stageDefs.map((s, idx) => {
+                  const sid = s?.stage_id ?? s?.id ?? s?.stageId ?? idx;
+                  const isExpanded = expandedStages.has(String(sid));
+                  const subStages = s?.subStages ?? s?.sub_stages ?? s?.subStage ?? [];
 
-          {/* Village Details Card */}
-          <div className="bg-white rounded-2xl p-6 shadow-lg">
-            <h4 className="text-sm font-semibold text-gray-800 mb-3">Village details</h4>
-            <div className="grid grid-cols-2 gap-3 text-xs text-gray-700">
-              <div>
-                <div className="font-medium text-gray-800">Name</div>
-                <div>{villageName}</div>
-              </div>
-              <div>
-                <div className="font-medium text-gray-800">Village ID</div>
-                <div>{villageIdState ?? effectiveVillageId ?? "—"}</div>
-              </div>
-              <div>
-                <div className="font-medium text-gray-800">District</div>
-                <div>{district ?? "—"}</div>
-              </div>
-              <div>
-                <div className="font-medium text-gray-800">Tehsil</div>
-                <div>{tehsil ?? "—"}</div>
-              </div>
-              <div>
-                <div className="font-medium text-gray-800">Gram Panchayat</div>
-                <div>{gramPanchayat ?? "—"}</div>
-              </div>
-              <div>
-                <div className="font-medium text-gray-800">Janpad</div>
-                <div>{janpad ?? "—"}</div>
-              </div>
-              <div>
-                <div className="font-medium text-gray-800">Forest Division</div>
-                <div>{fd ?? "—"}</div>
-              </div>
-              <div>
-                <div className="font-medium text-gray-800">Range</div>
-                <div>{rangeField ?? "—"}</div>
-              </div>
-              <div>
-                <div className="font-medium text-gray-800">SD1</div>
-                <div>{sd1 ?? "—"}</div>
-              </div>
-              <div>
-                <div className="font-medium text-gray-800">Sub D2</div>
-                <div>{subD2 ?? "—"}</div>
-              </div>
-
-              <div className="col-span-2">
-                <div className="font-medium text-gray-800">Site of Relocation</div>
-                <div>{siteOfRelocation ?? "—"}</div>
-              </div>
-
-              <div className="col-span-2">
-                <div className="font-medium text-gray-800">Family master list</div>
-                <div>
-                  {familyMasterList ? (
-                    <a
-                      href={familyMasterList}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-blue-600 underline"
-                    >
-                      Download
-                    </a>
-                  ) : (
-                    "—"
-                  )}
-                </div>
-              </div>
-
-              <div className="col-span-2">
-                <div className="font-medium text-gray-800">Docs</div>
-                <div className="flex flex-col gap-1">
-                  {docs.length > 0 ? (
-                    docs.map((d, i) => (
-                      <a
-                        key={i}
-                        href={d}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-blue-600 underline text-xs"
+                  return (
+                    <div key={String(sid)} className="border rounded-md">
+                      <button
+                        onClick={() => toggleStageExpand(String(sid))}
+                        className="w-full text-left px-4 py-3 flex items-center justify-between bg-gray-50 hover:bg-gray-100"
                       >
-                        Document {i + 1}
-                      </a>
-                    ))
-                  ) : (
-                    <span>—</span>
-                  )}
-                </div>
-              </div>
+                        <div>
+                          <div className="font-medium">{s?.name ?? s?.title ?? `Stage ${sid}`}</div>
+                          {s?.description && <div className="text-xs text-gray-500">{s.description}</div>}
+                        </div>
+                        <div className="text-sm text-gray-600">{isExpanded ? "−" : "+"}</div>
+                      </button>
 
-              <div className="col-span-2">
-                <div className="font-medium text-gray-800">KME</div>
-                <div>
-                  {kme ? (
-                    <a href={kme} target="_blank" rel="noreferrer" className="text-blue-600 underline">
-                      {kme}
-                    </a>
-                  ) : (
-                    "—"
-                  )}
-                </div>
-              </div>
+                      {isExpanded && (
+                        <div className="p-3 bg-white">
+                          {Array.isArray(subStages) && subStages.length > 0 ? (
+                            <div className="space-y-2">
+                              {subStages.map((ss, sidx) => {
+                                const subName = typeof ss === "object" ? ss?.name ?? ss?.title ?? String(ss?.id ?? sidx + 1) : String(ss);
+                                const matched = findFileFor(s, subName);
+                                return (
+                                  <div key={sidx} className="flex items-center justify-between gap-3 px-2 py-2 border rounded">
+                                    <div className="text-sm">{subName}</div>
+                                    <div className="flex items-center gap-2">
+                                      {matched ? (
+                                        <>
+                                          <button
+                                            onClick={() => openDocInViewer(matched, `${s?.name ?? "Stage"} - ${subName}`)}
+                                            className="text-sm px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
+                                          >
+                                            View file
+                                          </button>
+                                          <a href={matched} target="_blank" rel="noreferrer" className="text-sm px-2 py-1 rounded bg-gray-50 hover:bg-gray-100 underline">
+                                            Open in new tab
+                                          </a>
+                                        </>
+                                      ) : (
+                                        <div className="text-sm text-gray-400">No file</div>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div className="text-sm text-gray-500">No sub-stages defined for this stage.</div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="text-gray-500">No stages configured.</div>
+              )}
             </div>
           </div>
+        </div>
+      )}
 
-          {/* Buttons */}
-          <div className="flex gap-40 justify-center">
-            <button
-              onClick={() => navigate("/family")}
-              className="bg-green-200 hover:bg-green-300 px-20 py-2 rounded-2xl shadow text-sm font-medium"
-            >
-              All Beneficiaries
-            </button>
-            <button className="bg-green-200 hover:bg-green-300 px-20 py-2 rounded-2xl shadow text-sm font-medium">
-              Plan Layout
-            </button>
+      {/* Doc Viewer Modal (iframe if possible) */}
+      {showDocViewer && docViewerUrl && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-80 p-4">
+          <div className="w-full max-w-5xl bg-white rounded-lg shadow-lg overflow-hidden">
+            <div className="flex items-center justify-between p-3 border-b">
+              <div className="text-sm font-medium">{docViewerName}</div>
+              <div className="flex items-center gap-2">
+                <a href={docViewerUrl} target="_blank" rel="noreferrer" className="text-sm px-3 py-1 rounded bg-gray-100 hover:bg-gray-200">Open in new tab</a>
+                <button onClick={closeDocViewer} className="px-3 py-1 rounded bg-red-50 hover:bg-red-100 text-sm">Close</button>
+              </div>
+            </div>
+
+            <div className="h-[80vh] bg-gray-50 flex items-center justify-center">
+              {/* Try embedding in iframe; if external source blocks embedding the user can open in new tab */}
+              <iframe
+                src={docViewerUrl}
+                title={docViewerName}
+                className="w-full h-full"
+                style={{ border: "none", minHeight: "60vh" }}
+              />
+            </div>
           </div>
-        </section>
-      </main>
+        </div>
+      )}
     </div>
   );
 }

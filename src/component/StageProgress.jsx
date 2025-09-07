@@ -136,7 +136,7 @@ export default function StageProgress({
       </div>
 
       {/* Legend */}
-      <div className="mt-4 flex gap-4 items-center text-sm text-gray-600">
+      <div className="mt-4 flex gap-4 justify-center text-sm text-gray-600">
         <div className="flex items-center gap-2">
           <span className="inline-block w-3 h-3 rounded-full bg-green-600" />
           Completed

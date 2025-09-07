@@ -254,7 +254,7 @@ export default function VillageModal({
             onClick={() => handleOpenProfile(village)}
             className="w-full sm:w-auto text-sm px-3 py-1.5 rounded-md bg-gradient-to-r from-indigo-600 to-indigo-500 text-white shadow-sm hover:opacity-95"
           >
-            Open Profile
+            view Details
           </button>
           <button
             onClick={closeModal}

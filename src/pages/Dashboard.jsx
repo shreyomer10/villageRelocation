@@ -282,7 +282,7 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-[rgb(245,242,236)]">
+    <div className="min-h-screen bg-[#f8f0dc] font-sans">
       <MainNavbar name={username} showWelcome={true} />
 
       <div className="px-6 py-6">

@@ -7,10 +7,11 @@ export const AuthContext = createContext({
   setVillageId: () => {},
   village: null,
   setVillage: () => {},
+  villageName: null,
   token: null,
   tokenExpiresAt: null, // timestamp (ms)
   tokenRemaining: null, // seconds
-  refreshToken: null,
+  refreshToken: null, // function to manually refresh
   setToken: () => {},
   login: async () => {},
   logout: () => {},
@@ -21,14 +22,14 @@ const STORAGE_KEYS = {
   USER: "user",
   VILLAGE: "villageId",
   SELECTED_VILLAGE: "selectedVillage",
+  VILLAGE_NAME: "villageName",
   TOKEN: "token",
   TOKEN_EXPIRY: "tokenExpiry", // number (ms)
   REFRESH_TOKEN: "refreshToken",
 };
 
-const REFRESH_BEFORE_MS = 60 * 1000; // refresh 60s before expiry (tweakable)
-const COOKIE_POLL_INTERVAL_MS = 5 * 60 * 1000; // poll every 5 minutes when only cookie auth is available
-
+// NOTE: automatic pre-expiry refresh has been removed intentionally.
+// Refresh will only occur when the UI calls refreshToken() or forceRefresh().
 export function AuthProvider({ children }) {
   // user now stores { name, role, email }
   const [user, setUserState] = useState(null);
@@ -36,6 +37,7 @@ export function AuthProvider({ children }) {
   // villageId (string) and full village object (optional)
   const [villageId, setVillageIdState] = useState(null);
   const [village, setVillageState] = useState(null);
+  const [villageName, setVillageNameState] = useState(null);
 
   const [token, setTokenState] = useState(null);
   const [tokenExpiresAt, setTokenExpiresAt] = useState(null); // number (ms)
@@ -45,10 +47,8 @@ export function AuthProvider({ children }) {
   const [tokenRemaining, setTokenRemaining] = useState(null);
 
   // timer refs
-  const refreshTimerRef = useRef(null);
   const expiryTimerRef = useRef(null);
   const tickIntervalRef = useRef(null);
-  const cookiePollIntervalRef = useRef(null);
 
   // initialize from localStorage once on mount
   useEffect(() => {
@@ -69,19 +69,26 @@ export function AuthProvider({ children }) {
       const sel = localStorage.getItem(STORAGE_KEYS.SELECTED_VILLAGE);
       if (sel) {
         const parsed = JSON.parse(sel);
-        if (parsed && (parsed.villageId || parsed.village_id)) {
+        if (parsed) {
           setVillageState(parsed);
-          // ensure villageId is kept in sync
           const id =
             parsed.villageId ??
             parsed.village_id ??
+            parsed.id ??
             (parsed.villageId === 0 ? "0" : null);
           if (id) setVillageIdState(String(id));
+
+          // Try to extract a name from common fields
+          const name = parsed.villageName ?? parsed.name ?? parsed.village_name ?? parsed.title ?? null;
+          if (name) setVillageNameState(String(name));
         }
       }
     } catch (e) {
       // ignore parse errors
     }
+
+    const vn = localStorage.getItem(STORAGE_KEYS.VILLAGE_NAME);
+    if (vn) setVillageNameState(vn);
 
     const st = localStorage.getItem(STORAGE_KEYS.TOKEN);
     if (st) setTokenState(st);
@@ -129,6 +136,14 @@ export function AuthProvider({ children }) {
     } catch (e) {}
   }, [village]);
 
+  // persist village name
+  useEffect(() => {
+    try {
+      if (villageName) localStorage.setItem(STORAGE_KEYS.VILLAGE_NAME, villageName);
+      else localStorage.removeItem(STORAGE_KEYS.VILLAGE_NAME);
+    } catch (e) {}
+  }, [villageName]);
+
   // persist token + expiry + refreshToken
   useEffect(() => {
     try {
@@ -172,13 +187,21 @@ export function AuthProvider({ children }) {
         try {
           const val = e.newValue ? JSON.parse(e.newValue) : null;
           setVillageState(val);
-          if (val && (val.villageId || val.village_id)) {
-            const id = val.villageId ?? val.village_id;
+          if (val && (val.villageId || val.village_id || val.id)) {
+            const id = val.villageId ?? val.village_id ?? val.id;
             setVillageIdState(String(id));
           }
+          // keep villageName in sync
+          const name = val ? (val.villageName ?? val.name ?? val.village_name ?? val.title ?? null) : null;
+          setVillageNameState(name ? String(name) : null);
         } catch {
           setVillageState(null);
+          setVillageNameState(null);
         }
+      }
+
+      if (e.key === STORAGE_KEYS.VILLAGE_NAME) {
+        setVillageNameState(e.newValue);
       }
 
       if (e.key === STORAGE_KEYS.TOKEN) {
@@ -198,10 +221,6 @@ export function AuthProvider({ children }) {
 
   // ---- token timers management ----
   const clearTimers = useCallback(() => {
-    if (refreshTimerRef.current) {
-      clearTimeout(refreshTimerRef.current);
-      refreshTimerRef.current = null;
-    }
     if (expiryTimerRef.current) {
       clearTimeout(expiryTimerRef.current);
       expiryTimerRef.current = null;
@@ -210,13 +229,9 @@ export function AuthProvider({ children }) {
       clearInterval(tickIntervalRef.current);
       tickIntervalRef.current = null;
     }
-    if (cookiePollIntervalRef.current) {
-      clearInterval(cookiePollIntervalRef.current);
-      cookiePollIntervalRef.current = null;
-    }
   }, []);
 
-  // tick for remaining seconds (updates every 1s)
+  // tick for remaining seconds (updates every 1s) — keeps running after reload as long as tokenExpiresAt exists
   useEffect(() => {
     // clear previous tick
     if (tickIntervalRef.current) {
@@ -245,7 +260,7 @@ export function AuthProvider({ children }) {
     };
   }, [tokenExpiresAt]);
 
-  // function to perform refresh
+  // function to perform refresh (exposed; only runs when called)
   const refreshToken = useCallback(
     async () => {
       try {
@@ -269,7 +284,7 @@ export function AuthProvider({ children }) {
         }
 
         const payload = await res.json();
-        // payload may contain: { token, expiresIn, expiresAt, refreshToken, user }
+        // payload may contain: { token, expiresIn, expiresAt, refreshToken, user, selectedVillage }
         const newToken = payload.token ?? null;
         const expiresIn = payload.expiresIn; // seconds
         const expiresAt = payload.expiresAt; // timestamp or ISO
@@ -302,6 +317,19 @@ export function AuthProvider({ children }) {
           } catch (e) {}
         }
 
+        // If server returned selectedVillage, sync it (and extract name)
+        if (payload.selectedVillage) {
+          const sv = payload.selectedVillage;
+          setVillageState(sv);
+          const id = sv.villageId ?? sv.village_id ?? sv.id ?? null;
+          if (id !== null && id !== undefined) setVillageIdState(String(id));
+          const name = sv.villageName ?? sv.name ?? sv.village_name ?? sv.title ?? null;
+          setVillageNameState(name ? String(name) : null);
+          try {
+            localStorage.setItem(STORAGE_KEYS.SELECTED_VILLAGE, JSON.stringify(sv));
+          } catch (e) {}
+        }
+
         return true;
       } catch (err) {
         // treat as refresh failure
@@ -311,36 +339,24 @@ export function AuthProvider({ children }) {
     [token, refreshTokenState]
   );
 
-  // start timers whenever tokenExpiresAt changes
+  // start expiry timer whenever tokenExpiresAt changes (we only schedule logout at expiry)
   useEffect(() => {
+    // clear previous timers
     clearTimers();
-    if (!tokenExpiresAt || !token) {
-      // If there's no token expiry OR no token, we won't schedule the normal refresh/expiry timers.
-      // If we have a known expiry but no token, schedule refresh based on expiry (handled above).
-      // Otherwise, nothing to schedule here.
+    if (!tokenExpiresAt) {
       return;
     }
 
     const now = Date.now();
     const msToExpiry = tokenExpiresAt - now;
     if (msToExpiry <= 0) {
-      // expired already
-      setTokenState(null);
-      setTokenExpiresAt(null);
-      setRefreshTokenState(null);
+      // already expired
+      // ensure logout is performed
+      logout();
       return;
     }
 
-    const refreshAt = Math.max(0, msToExpiry - REFRESH_BEFORE_MS);
-    // schedule refresh
-    refreshTimerRef.current = setTimeout(async () => {
-      const ok = await refreshToken();
-      if (!ok) {
-        logout();
-      }
-    }, refreshAt);
-
-    // schedule expiry logout
+    // schedule expiry logout only (no automatic refresh)
     expiryTimerRef.current = setTimeout(() => {
       logout();
     }, msToExpiry);
@@ -349,39 +365,7 @@ export function AuthProvider({ children }) {
       clearTimers();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tokenExpiresAt, token, refreshToken, clearTimers]);
-
-  // If we are in cookie-only mode (user exists but no token/expires), poll refresh endpoint periodically
-  useEffect(() => {
-    // clear any existing cookie poll
-    if (cookiePollIntervalRef.current) {
-      clearInterval(cookiePollIntervalRef.current);
-      cookiePollIntervalRef.current = null;
-    }
-
-    const needsCookiePolling = user && !token && !tokenExpiresAt;
-    if (needsCookiePolling) {
-      // try an immediate refresh once
-      (async () => {
-        const ok = await refreshToken();
-        if (!ok) {
-          // continue to poll — maybe server will set expiry later
-        }
-      })();
-
-      // set interval to poll periodically
-      cookiePollIntervalRef.current = setInterval(() => {
-        refreshToken().catch(() => {});
-      }, COOKIE_POLL_INTERVAL_MS);
-    }
-
-    return () => {
-      if (cookiePollIntervalRef.current) {
-        clearInterval(cookiePollIntervalRef.current);
-        cookiePollIntervalRef.current = null;
-      }
-    };
-  }, [user, token, tokenExpiresAt, refreshToken]);
+  }, [tokenExpiresAt]);
 
   // safe setters (wrapped with useCallback so consumers can pass stable refs)
   const setUser = useCallback((u) => setUserState(u ? { name: u.name, role: u.role, email: u.email } : null), []);
@@ -389,16 +373,18 @@ export function AuthProvider({ children }) {
   // setVillageId setter (string)
   const setVillageId = useCallback((id) => {
     setVillageIdState(id ?? null);
-    // if id is cleared, also clear village object for consistency
+    // if id is cleared, also clear village object and name for consistency
     if (!id) {
       setVillageState(null);
+      setVillageNameState(null);
       try {
         localStorage.removeItem(STORAGE_KEYS.SELECTED_VILLAGE);
+        localStorage.removeItem(STORAGE_KEYS.VILLAGE_NAME);
       } catch (e) {}
     }
   }, []);
 
-  // setVillage: accepts full village object or null. keeps villageId in sync
+  // setVillage: accepts full village object or null. keeps villageId and villageName in sync
   const setVillage = useCallback((v) => {
     if (v && typeof v === "object") {
       setVillageState(v);
@@ -406,14 +392,19 @@ export function AuthProvider({ children }) {
       if (id !== undefined && id !== null) {
         setVillageIdState(String(id));
       }
+      // extract common name fields and persist
+      const name = v.villageName ?? v.name ?? v.village_name ?? v.title ?? null;
+      setVillageNameState(name ? String(name) : null);
       try {
         localStorage.setItem(STORAGE_KEYS.SELECTED_VILLAGE, JSON.stringify(v));
       } catch (e) {}
     } else {
       setVillageState(null);
       setVillageIdState(null);
+      setVillageNameState(null);
       try {
         localStorage.removeItem(STORAGE_KEYS.SELECTED_VILLAGE);
+        localStorage.removeItem(STORAGE_KEYS.VILLAGE_NAME);
       } catch (e) {}
     }
   }, []);
@@ -442,9 +433,9 @@ export function AuthProvider({ children }) {
   }, []);
 
   // login helper: accept multiple shapes returned by server
-  // If server doesn't return token (web cookie style), attempt a refresh to obtain expiry/token metadata.
+  // NOTE: we DO NOT auto-call refreshToken here; refresh only happens when user clicks the refresh action
   const login = useCallback(
-    async ({ name, role, email, token: tok, expiresIn, expiresAt, refreshToken: rToken }) => {
+    async ({ name, role, email, token: tok, expiresIn, expiresAt, refreshToken: rToken, selectedVillage }) => {
       if (name) setUserState({ name, role, email });
       if (tok) {
         setTokenState(tok);
@@ -457,22 +448,21 @@ export function AuthProvider({ children }) {
         }
         if (!absExpiry) absExpiry = Date.now() + 15 * 60 * 1000;
         setTokenExpiresAt(absExpiry);
-      } else {
-        // token not provided — likely cookie-based web login; try to refresh immediately to learn expiry/token
-        try {
-          await refreshToken();
-        } catch (e) {
-          // ignore — we still consider login successful; cookies may already be set server-side
-        }
       }
+      // do not attempt automatic refresh for cookie-only logins
       if (rToken) setRefreshTokenState(rToken);
 
       // persist user to localStorage too (store full object)
       try {
         if (name) localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify({ name, role, email }));
       } catch (e) {}
+
+      // if login payload included selectedVillage, sync it
+      if (selectedVillage) {
+        setVillage(selectedVillage);
+      }
     },
-    [refreshToken]
+    [setVillage]
   );
 
   // logout
@@ -480,6 +470,7 @@ export function AuthProvider({ children }) {
     setUserState(null);
     setVillageIdState(null);
     setVillageState(null);
+    setVillageNameState(null);
     setTokenState(null);
     setTokenExpiresAt(null);
     setRefreshTokenState(null);
@@ -488,6 +479,7 @@ export function AuthProvider({ children }) {
       localStorage.removeItem(STORAGE_KEYS.USER);
       localStorage.removeItem(STORAGE_KEYS.VILLAGE);
       localStorage.removeItem(STORAGE_KEYS.SELECTED_VILLAGE);
+      localStorage.removeItem(STORAGE_KEYS.VILLAGE_NAME);
       localStorage.removeItem(STORAGE_KEYS.TOKEN);
       localStorage.removeItem(STORAGE_KEYS.TOKEN_EXPIRY);
       localStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
@@ -501,6 +493,7 @@ export function AuthProvider({ children }) {
     return ok;
   }, [refreshToken, logout]);
 
+  // context value: expose refreshToken() function (manual), and forceRefresh()
   const value = {
     user,
     setUser,
@@ -508,11 +501,13 @@ export function AuthProvider({ children }) {
     setVillageId,
     village,
     setVillage,
+    villageName,
     token,
     setToken,
     tokenExpiresAt,
     tokenRemaining,
-    refreshToken: refreshTokenState,
+    // expose manual refresh function (callable from UI). This is NOT the refresh token string.
+    refreshToken, // function: call to attempt refresh
     login,
     logout,
     forceRefresh,

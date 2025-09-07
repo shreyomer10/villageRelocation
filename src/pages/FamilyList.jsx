@@ -1,5 +1,6 @@
 // src/pages/FamilyList.jsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef, useCallback } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { SlidersHorizontal } from "lucide-react";
 import FamilyModal from "../component/FamilyModal";
 import MainNavbar from "../component/MainNavbar";
@@ -28,22 +29,51 @@ function FamilyCard({ family, onView }) {
 }
 
 export default function FamilyList() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+
+  // villageId precedence: query param -> localStorage
+  const queryVillageId = searchParams.get("villageId");
+  const [storedVillageId, setStoredVillageId] = useState(() =>
+    typeof window !== "undefined" ? localStorage.getItem("villageId") : null
+  );
+  const effectiveVillageId = queryVillageId ?? storedVillageId;
+
+  // Re-fetch key for refresh button
+  const [reloadKey, setReloadKey] = useState(0);
+
+  // filter option state: "All" | "Option 1" | "Option 2"
+  const openParam = (searchParams.get("open") ?? "").toLowerCase();
+  const normalizedOpen =
+    openParam === "option1" || openParam === "1" || openParam === "option-1"
+      ? "Option 1"
+      : openParam === "option2" || openParam === "2" || openParam === "option-2"
+      ? "Option 2"
+      : openParam === "all"
+      ? "All"
+      : null;
+  const [filterOption, setFilterOption] = useState(normalizedOpen ?? "All");
+
+  // lists + loading + error
   const [beneficiaries, setBeneficiaries] = useState([]);
   const [loadingList, setLoadingList] = useState(true);
   const [listError, setListError] = useState(null);
 
-  const [filterOption, setFilterOption] = useState("All");
+  // search
   const [search, setSearch] = useState("");
 
-  // selected family id for modal
+  // selected family id for modal (accept 0 as valid)
   const [selectedFamilyId, setSelectedFamilyId] = useState(null);
 
-  // track villageId from localStorage
-  const [storedVillageId, setStoredVillageId] = useState(() =>
-    typeof window !== "undefined" ? localStorage.getItem("villageId") : null
-  );
+  // filter dropdown state and refs for accessibility
+  const [filterMenuOpen, setFilterMenuOpen] = useState(false);
+  const filterBtnRef = useRef(null);
+  const optionAllRef = useRef(null);
+  const option1Ref = useRef(null);
+  const option2Ref = useRef(null);
+  const menuRef = useRef(null);
 
-  // listen for changes to villageId in localStorage
+  // listen for localStorage villageId changes (other tabs)
   useEffect(() => {
     function onStorage(e) {
       if (e.key === "villageId") setStoredVillageId(e.newValue);
@@ -55,14 +85,44 @@ export default function FamilyList() {
     return () => {};
   }, []);
 
+  // keep filterOption in sync with query param when it changes externally
+  useEffect(() => {
+    const open = (searchParams.get("open") ?? "").toLowerCase();
+    if (open === "option1" || open === "1" || open === "option-1") {
+      setFilterOption("Option 1");
+      // close the menu and focus the corresponding control
+      setFilterMenuOpen(false);
+      setTimeout(() => option1Ref.current?.focus(), 0);
+    } else if (open === "option2" || open === "2" || open === "option-2") {
+      setFilterOption("Option 2");
+      setFilterMenuOpen(false);
+      setTimeout(() => option2Ref.current?.focus(), 0);
+    } else if (open === "all") {
+      setFilterOption("All");
+      setFilterMenuOpen(false);
+      setTimeout(() => optionAllRef.current?.focus(), 0);
+    } else if (open === "filter") {
+      // open the filter menu (user navigation asked to open the filter pane)
+      setFilterMenuOpen(true);
+      // focus first item in the menu on next tick
+      setTimeout(() => optionAllRef.current?.focus(), 0);
+    } else {
+      // default to All
+      setFilterOption("All");
+      setFilterMenuOpen(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  // helper: transform filter option to API param
   function optionQueryParam(opt) {
     if (!opt || opt === "All") return "";
-    if (opt === "Option 1") return "1";
-    if (opt === "Option 2") return "2";
+    if (opt === "Option 1" || String(opt).toLowerCase() === "option1") return "1";
+    if (opt === "Option 2" || String(opt).toLowerCase() === "option2") return "2";
     return "";
   }
 
-  // fetch beneficiaries
+  // fetch beneficiaries when filterOption or village changes or reloadKey changes
   useEffect(() => {
     let mounted = true;
     const ctrl = new AbortController();
@@ -72,13 +132,14 @@ export default function FamilyList() {
       setListError(null);
 
       try {
-        if (!storedVillageId) {
+        if (!effectiveVillageId) {
           throw new Error(
             "No village selected. Please select a village from the dashboard."
           );
         }
 
-        const token = localStorage.getItem("token");
+        const token =
+          typeof window !== "undefined" ? localStorage.getItem("token") : null;
         const headers = token
           ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }
           : { "Content-Type": "application/json" };
@@ -86,7 +147,7 @@ export default function FamilyList() {
         const optParam = optionQueryParam(filterOption);
         const url =
           `https://villagerelocation.onrender.com/villages/${encodeURIComponent(
-            storedVillageId
+            effectiveVillageId
           )}/beneficiaries` + (optParam ? `?option=${optParam}` : "");
 
         const res = await fetch(url, {
@@ -110,7 +171,6 @@ export default function FamilyList() {
         }
 
         const list = Array.isArray(data.result) ? data.result : [];
-
         if (!mounted) return;
         setBeneficiaries(list);
       } catch (err) {
@@ -123,11 +183,24 @@ export default function FamilyList() {
     }
 
     loadList();
+
     return () => {
       mounted = false;
       ctrl.abort();
     };
-  }, [filterOption, storedVillageId]);
+  }, [filterOption, effectiveVillageId, reloadKey]);
+
+  // click outside to close filter menu
+  useEffect(() => {
+    function onDocClick(e) {
+      if (!menuRef.current) return;
+      if (!menuRef.current.contains(e.target) && !filterBtnRef.current?.contains(e.target)) {
+        setFilterMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, []);
 
   // filter by search
   const filteredFamilies = beneficiaries.filter((f) => {
@@ -136,13 +209,12 @@ export default function FamilyList() {
     return name.toLowerCase().includes(search.toLowerCase());
   });
 
+  // view family (open modal)
   const handleViewFamily = (familyId) => {
-    // accept 0 as a valid id, so check for null/undefined only
     if (familyId === undefined || familyId === null) {
       console.error("No familyId provided to modal");
       return;
     }
-    console.log("Opening modal for familyId:", familyId);
     setSelectedFamilyId(familyId);
   };
 
@@ -150,20 +222,43 @@ export default function FamilyList() {
     setSelectedFamilyId(null);
   };
 
-  if (!storedVillageId) {
+  // update URL (open query param) when user clicks a filter option
+  const onSelectFilterOption = useCallback(
+    (opt) => {
+      setFilterOption(opt);
+      setFilterMenuOpen(false);
+      // keep villageId in URL if present
+      const qp = new URLSearchParams(Object.fromEntries(searchParams.entries()));
+      qp.set("open", opt === "All" ? "all" : opt === "Option 1" ? "option1" : "option2");
+      if (effectiveVillageId) qp.set("villageId", effectiveVillageId);
+      setSearchParams(qp, { replace: true });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [effectiveVillageId, searchParams]
+  );
+
+  // special handler to open-only the filter panel (ie. open=filter)
+  const openFilterPanel = useCallback(() => {
+    const qp = new URLSearchParams(Object.fromEntries(searchParams.entries()));
+    qp.set("open", "filter");
+    if (effectiveVillageId) qp.set("villageId", effectiveVillageId);
+    setSearchParams(qp, { replace: true });
+    setFilterMenuOpen(true);
+    setTimeout(() => optionAllRef.current?.focus(), 0);
+  }, [effectiveVillageId, searchParams, setSearchParams]);
+
+  const refresh = () => setReloadKey((k) => k + 1);
+
+  // If no village -> show select-village UI
+  if (!effectiveVillageId) {
     return (
       <div className="min-h-screen bg-[#f8f0dc] font-sans">
         <header className="bg-[#a7dec0] shadow-md">
           <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
             <div className="flex items-center gap-4">
-              <img
-                src="/images/logo.png"
-                alt="logo"
-                className="w-16 h-16 object-contain"
-              />
+              <img src="/images/logo.png" alt="logo" className="w-16 h-16 object-contain" />
               <h1 className="text-2xl font-bold text-black">
-                Tilai Dabra Beneficiaries -{" "}
-                <span className="text-green-800">Family List</span>
+                Tilai Dabra Beneficiaries - <span className="text-green-800">Family List</span>
               </h1>
             </div>
             <div className="text-right">
@@ -188,7 +283,7 @@ export default function FamilyList() {
     <div className="min-h-screen bg-[#f8f0dc] font-sans">
       {/* Header */}
       <div>
-        <MainNavbar village={storedVillageId} showInNavbar={true} />
+        <MainNavbar village={effectiveVillageId} showInNavbar={true} />
       </div>
 
       {/* Main Content */}
@@ -203,52 +298,83 @@ export default function FamilyList() {
             className="px-4 py-2 border rounded-md shadow-sm w-64 focus:outline-none focus:ring-2 focus:ring-green-400"
           />
 
-          <div className="flex items-center gap-3">
-            <button className="p-2 bg-white border rounded-lg shadow hover:bg-gray-50">
-              <SlidersHorizontal size={18} />
-            </button>
-
+          <div className="relative flex items-center gap-3">
             <button
-              onClick={() => setFilterOption("All")}
-              className={`px-4 py-1 rounded-lg shadow ${
-                filterOption === "All"
-                  ? "bg-black text-white"
-                  : "bg-white hover:bg-gray-100"
-              }`}
+              onClick={() => navigate("/home")}
+              className="inline-flex items-center gap-2 bg-gray-100 hover:bg-gray-200 px-3 py-2 rounded-lg shadow-sm text-sm"
             >
-              All Families
+              ← Back
             </button>
+            {/* Filter button that toggles a dropdown */}
+            <div className="relative">
+              <button
+                ref={filterBtnRef}
+                onClick={() => {
+                  // if menu already open, close it; otherwise open and set URL to open=filter
+                  if (filterMenuOpen) {
+                    setFilterMenuOpen(false);
+                  } else {
+                    openFilterPanel();
+                  }
+                }}
+                aria-haspopup="true"
+                aria-expanded={filterMenuOpen}
+                className="inline-flex items-center gap-2 p-2 bg-white border rounded-lg shadow hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-green-400"
+              >
+                <SlidersHorizontal size={18} />
+                <span className="sr-only">Open filter</span>
+                <span className="hidden sm:inline">Filter</span>
+              </button>
 
-            <button
-              onClick={() => setFilterOption("Option 1")}
-              className={`px-4 py-1 rounded-lg shadow ${
-                filterOption === "Option 1"
-                  ? "bg-black text-white"
-                  : "bg-white hover:bg-gray-100"
-              }`}
-            >
-              Option 1 Families
-            </button>
+              {filterMenuOpen && (
+                <div
+                  ref={menuRef}
+                  role="menu"
+                  aria-label="Filter options"
+                  className="absolute right-0 mt-2 w-40 bg-white border rounded-lg shadow-lg z-50 py-2"
+                >
+                  <button
+                    ref={optionAllRef}
+                    role="menuitem"
+                    onClick={() => onSelectFilterOption("All")}
+                    className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-100 focus:outline-none ${
+                      filterOption === "All" ? "font-semibold" : ""
+                    }`}
+                  >
+                    All Families
+                  </button>
+                  <button
+                    ref={option1Ref}
+                    role="menuitem"
+                    onClick={() => onSelectFilterOption("Option 1")}
+                    className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-100 focus:outline-none ${
+                      filterOption === "Option 1" ? "font-semibold" : ""
+                    }`}
+                  >
+                    Option 1 Families
+                  </button>
+                  <button
+                    ref={option2Ref}
+                    role="menuitem"
+                    onClick={() => onSelectFilterOption("Option 2")}
+                    className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-100 focus:outline-none ${
+                      filterOption === "Option 2" ? "font-semibold" : ""
+                    }`}
+                  >
+                    Option 2 Families
+                  </button>
+                </div>
+              )}
+            </div>
 
-            <button
-              onClick={() => setFilterOption("Option 2")}
-              className={`px-4 py-1 rounded-lg shadow ${
-                filterOption === "Option 2"
-                  ? "bg-black text-white"
-                  : "bg-white hover:bg-gray-100"
-              }`}
-            >
-              Option 2 Families
-            </button>
+            
           </div>
         </div>
 
         {/* Errors / Loading */}
         {listError && <div className="text-sm text-red-600 mb-4">{listError}</div>}
         {loadingList ? (
-          <div className="py-8 text-center text-sm text-gray-600">
-            Loading families…
-          </div>
+          <div className="py-8 text-center text-sm text-gray-600">Loading families…</div>
         ) : (
           <>
             {filteredFamilies.length === 0 ? (
@@ -257,7 +383,7 @@ export default function FamilyList() {
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-6">
                 {filteredFamilies.map((family) => (
                   <FamilyCard
-                    key={family.familyId ?? family.id}
+                    key={family.familyId ?? family.id ?? family._id}
                     family={family}
                     onView={handleViewFamily}
                   />

@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState, useContext } from "react";
+import { useNavigate } from "react-router-dom";
 import { AuthContext } from "../context/AuthContext"; // adjust path to where your provider lives
 
 export default function MainNavbar({
   logoUrl = "/images/logo.png",
   brandDevanagari = "माटी",
   brandLatin = "MAATI",
-  durationSeconds = 36,
+  durationSeconds = 900, // token lifetime (default 15 min)
   onRefreshToken,
   onLogout,
   name = "",
@@ -17,26 +18,40 @@ export default function MainNavbar({
   refreshBeforeSeconds = 60,
 }) {
   const auth = useContext(AuthContext);
+  const navigate = useNavigate();
 
   // Context values
-  const ctxUser = auth?.user ?? null; // { name, role, email }
-  const ctxVillage = auth?.villageId ?? null;
+  const ctxUser = auth?.user ?? null;
+  // Prefer explicit villageName; fallback to common fields or ID
+  const ctxVillage =
+    auth?.villageName ??
+    auth?.village?.villageName ??
+    auth?.village?.name ??
+    auth?.village?.village_name ??
+    auth?.village?.title ??
+    auth?.villageId ??
+    null;
+
   const ctxRemaining = typeof auth?.tokenRemaining === "number" ? auth.tokenRemaining : null;
-  const ctxExpiresAt = auth?.tokenExpiresAt ?? null; // ms timestamp
+  const ctxExpiresAt = auth?.tokenExpiresAt ?? null;
   const ctxForceRefresh = auth?.forceRefresh ?? null;
   const ctxLogout = auth?.logout ?? null;
 
-  // UI state
+  // Local state
   const [menuOpen, setMenuOpen] = useState(false);
-  const [remaining, setRemaining] = useState(durationSeconds);
-  const menuRef = useRef(null);
-  const adminButtonRef = useRef(null);
+  const [menuMode, setMenuMode] = useState(null); // null | 'refresh' | 'logout'
+  const [remaining, setRemaining] = useState(null);
+  const [progressFilled, setProgressFilled] = useState(false);
+  const [toast, setToast] = useState({ visible: false, text: "", important: false });
 
-  // refs to always-read latest context values inside interval
+  // Refs
   const ctxRemainingRef = useRef(ctxRemaining);
   const ctxExpiresAtRef = useRef(ctxExpiresAt);
   const ctxUserRef = useRef(ctxUser);
+  const autoRefreshTriggeredRef = useRef(false);
   const calledRefreshRef = useRef(false);
+  const lastShownMinuteRef = useRef(null);
+  const toastTimerRef = useRef(null);
 
   useEffect(() => {
     ctxRemainingRef.current = ctxRemaining;
@@ -48,68 +63,83 @@ export default function MainNavbar({
     ctxUserRef.current = ctxUser;
   }, [ctxUser]);
 
-  // If there is NO remaining and NO expiresAt but we do have a logged-in user, attempt one forced refresh
+  // Force refresh if no token info but logged in
   useEffect(() => {
-    if (!ctxUserRef.current) return; // not logged in
-    if ((ctxRemainingRef.current == null && ctxExpiresAtRef.current == null) && !calledRefreshRef.current) {
+    if (!ctxUserRef.current) return;
+    if (!ctxRemainingRef.current && !ctxExpiresAtRef.current && !calledRefreshRef.current) {
       calledRefreshRef.current = true;
-      if (ctxForceRefresh) {
-        ctxForceRefresh().catch(() => {});
-      }
+      ctxForceRefresh?.().catch(() => {});
     }
   }, [ctxForceRefresh]);
 
-  // single interval to compute remaining (reads latest refs)
+  // Timer interval to update remaining time
   useEffect(() => {
-    // immediate compute
-    const compute = () => {
-      if (typeof ctxRemainingRef.current === "number") return ctxRemainingRef.current;
-      if (ctxExpiresAtRef.current) return Math.max(0, Math.ceil((ctxExpiresAtRef.current - Date.now()) / 1000));
+    const computeRemaining = () => {
+      if (ctxExpiresAtRef.current) {
+        const ms = ctxExpiresAtRef.current - Date.now();
+        return Math.max(0, Math.ceil(ms / 1000));
+      }
+      if (typeof ctxRemainingRef.current === "number")
+        return Math.max(0, Math.ceil(ctxRemainingRef.current));
       return null;
     };
 
-    const initial = compute();
-    if (initial != null) setRemaining(initial);
-    else setRemaining((r) => (r == null ? durationSeconds : r));
-
+    setRemaining(computeRemaining());
     const iv = setInterval(() => {
-      const val = compute();
-      if (val != null) setRemaining(val);
-      else setRemaining((r) => (r == null ? durationSeconds : Math.max(0, r - 1)));
+      const val = computeRemaining();
+      setRemaining(val !== null ? val : (prev) => (typeof prev === "number" && prev > 0 ? prev - 1 : prev));
     }, 1000);
-
     return () => clearInterval(iv);
-  }, [durationSeconds]);
+  }, []);
 
-  // auto-refresh behavior (call once per cycle)
-  const autoRefreshTriggeredRef = useRef(false);
   useEffect(() => {
-    // reset trigger on new token (jump up)
-    const cur = typeof ctxRemaining === "number" ? ctxRemaining : (ctxExpiresAt ? Math.max(0, Math.ceil((ctxExpiresAt - Date.now()) / 1000)) : null);
-    if (cur == null) autoRefreshTriggeredRef.current = false;
-    if (cur != null && cur > refreshBeforeSeconds + 5) autoRefreshTriggeredRef.current = false;
-
-    const currentRemaining = typeof ctxRemaining === "number" ? ctxRemaining : remaining;
-
-    if (
-      currentRemaining !== null &&
-      currentRemaining <= refreshBeforeSeconds &&
-      currentRemaining > 0 &&
-      !autoRefreshTriggeredRef.current
-    ) {
-      if (typeof onRefreshToken === "function") {
-        try {
-          onRefreshToken();
-        } catch (err) {}
-        autoRefreshTriggeredRef.current = true;
-      } else if (ctxForceRefresh) {
-        ctxForceRefresh().catch(() => {});
-        autoRefreshTriggeredRef.current = true;
-      }
+    if (remaining !== null && !progressFilled) {
+      setTimeout(() => setProgressFilled(true), 100);
     }
-  }, [ctxRemaining, ctxExpiresAt, remaining, refreshBeforeSeconds, durationSeconds, onRefreshToken, ctxForceRefresh]);
+  }, [remaining, progressFilled]);
 
-  function formatTime(sec) {
+  // Minute-based toast notifications
+  useEffect(() => {
+    let minutes = null;
+    if (ctxExpiresAtRef.current) {
+      const ms = ctxExpiresAtRef.current - Date.now();
+      minutes = ms <= 0 ? 0 : Math.ceil(ms / 60000);
+    } else if (typeof remaining === "number") {
+      minutes = Math.ceil(remaining / 60);
+    }
+
+    if (minutes === null) return;
+
+    if (typeof remaining === "number" && remaining > durationSeconds - 5) {
+      lastShownMinuteRef.current = null;
+    }
+
+    if (minutes !== lastShownMinuteRef.current) {
+      lastShownMinuteRef.current = minutes;
+      if (minutes <= 0) showToast("Session expired", true);
+      else if (minutes <= 3) showToast(`${minutes} min left — refresh token recommended`, true);
+      else showToast(`${minutes} min left`, false);
+    }
+  }, [remaining, ctxExpiresAt]);
+
+  function showToast(text, important = false) {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToast({ visible: true, text, important });
+    toastTimerRef.current = setTimeout(() => setToast((t) => ({ ...t, visible: false })), 4500);
+  }
+
+  // Auto-refresh trigger
+  useEffect(() => {
+    const cur = typeof ctxRemaining === "number" ? ctxRemaining : remaining;
+    if (cur == null || cur > refreshBeforeSeconds + 5) autoRefreshTriggeredRef.current = false;
+
+    if (cur !== null && cur <= refreshBeforeSeconds && cur > 0 && !autoRefreshTriggeredRef.current) {
+      autoRefreshTriggeredRef.current = true;
+      onRefreshToken?.() ?? ctxForceRefresh?.();
+    }
+  }, [ctxRemaining, ctxExpiresAt, remaining, refreshBeforeSeconds, onRefreshToken, ctxForceRefresh]);
+
+  const formatTime = (sec) => {
     if (sec == null) return "--:--";
     if (sec <= 0) return "Session expired";
     const hrs = Math.floor(sec / 3600);
@@ -118,53 +148,57 @@ export default function MainNavbar({
     if (hrs > 0) return `${hrs} hr ${mins} min ${s} sec`;
     if (mins > 0) return `${mins} min ${s} sec`;
     return `${s} sec`;
-  }
-
-  const displayRemaining = remaining == null ? 0 : remaining;
-  const total = Math.max(1, durationSeconds);
-  const progress = displayRemaining != null ? Math.max(0, Math.min(1, displayRemaining / total)) : 0;
-
-  const handleRefreshPage = () => window.location.reload();
-
-  const handleRefreshToken = async () => {
-    setMenuOpen(false);
-    if (typeof onRefreshToken === "function") {
-      try {
-        onRefreshToken();
-        autoRefreshTriggeredRef.current = true;
-      } catch (err) {}
-      return;
-    }
-    if (ctxForceRefresh) {
-      try {
-        await ctxForceRefresh();
-        autoRefreshTriggeredRef.current = true;
-      } catch (err) {}
-      return;
-    }
-    window.location.reload();
   };
 
-  const handleLogout = () => {
-    setMenuOpen(false);
-    if (typeof onLogout === "function") {
-      onLogout();
-      return;
+  const displayRemaining = typeof remaining === "number" ? remaining : null;
+  const getProgressColor = () => {
+    if (displayRemaining === null) return "#10b981";
+    if (displayRemaining <= 180) return "#ef4444";
+    if (displayRemaining <= 300) {
+      const progress = (300 - displayRemaining) / 120;
+      const green = Math.round(16 + (239 - 16) * progress);
+      const red = Math.round(185 - 185 * progress);
+      const blue = Math.round(129 - 61 * progress);
+      return `rgb(${green}, ${red}, ${blue})`;
     }
-    if (ctxLogout) {
-      ctxLogout();
-      return;
-    }
-    try {
-      localStorage.clear();
-      sessionStorage.clear();
-    } catch (e) {}
-    window.location.href = "/login";
+    return "#10b981";
   };
 
   const displayName = ctxUser?.name ?? name;
   const displayRole = ctxUser?.role ?? null;
   const displayVillage = ctxVillage ?? village;
+
+  const openConfirm = (mode) => {
+    setMenuMode(mode);
+    setMenuOpen(true);
+  };
+
+  const performRefresh = async () => {
+    setMenuOpen(false);
+    setMenuMode(null);
+    autoRefreshTriggeredRef.current = true;
+    try {
+      await (onRefreshToken?.() ?? ctxForceRefresh?.());
+    } catch {}
+  };
+
+  const performLogout = () => {
+    setMenuOpen(false);
+    setMenuMode(null);
+    try {
+      if (onLogout) return onLogout();
+      if (ctxLogout) return ctxLogout();
+      localStorage.clear();
+      sessionStorage.clear();
+    } catch {}
+    window.location.href = "/login";
+  };
+
+  useEffect(() => {
+    const onKey = (e) => e.key === "Escape" && setMenuOpen(false);
+    if (menuOpen) document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [menuOpen]);
 
   const centerContent = (() => {
     if (showInNavbar && displayVillage) {
@@ -176,40 +210,30 @@ export default function MainNavbar({
       );
     }
     if (showVillageInNavbar && displayVillage) {
-      return (
-        <div className="text-2xl font-bold text-green-800 text-center whitespace-nowrap">
-          {displayVillage}
-        </div>
-      );
+      return <div className="text-2xl font-bold text-green-800 text-center whitespace-nowrap">{displayVillage}</div>;
     }
     return null;
   })();
 
-  // close on escape
-  useEffect(() => {
-    function onKey(e) {
-      if (e.key === "Escape") setMenuOpen(false);
-    }
-    if (menuOpen) document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [menuOpen]);
-
   return (
     <header className="w-full select-none">
+      {/* Navbar top section */}
       <div className="bg-[#a7dec0]">
         <div className="max-w-8xl mx-auto px-4">
           <div className="relative flex items-center justify-between py-2 min-h-[64px]">
             <div className="flex items-center gap-3">
-              <img src={logoUrl} alt="logo" className="w-14 h-14 object-contain" />
-              <div>
-                {showWelcome && displayName ? (
-                  <div className="text-lg font-semibold text-black leading-tight">
-                    Welcome {displayName} {displayRole ? `(${displayRole})` : null}
-                  </div>
-                ) : null}
-              </div>
+              <img
+                onClick={() => navigate("/dashboard")}
+                src={logoUrl}
+                alt="logo"
+                className="w-14 h-14 object-contain cursor-pointer"
+              />
+              {showWelcome && displayName && (
+                <div className="text-lg font-semibold text-black leading-tight">
+                  Welcome {displayName} {displayRole ? `(${displayRole})` : ""}
+                </div>
+              )}
             </div>
-
             {centerContent && (
               <div
                 className="absolute left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2 z-10 pointer-events-auto"
@@ -218,113 +242,185 @@ export default function MainNavbar({
                 <div className="mx-auto text-center truncate">{centerContent}</div>
               </div>
             )}
-
             <div className="flex items-center justify-end gap-4">
               <div className="text-right">
                 <div className="text-[#4a3529] font-bold text-xl leading-none">{brandDevanagari}</div>
                 <div className="text-xs text-[#4a3529] tracking-wider">{brandLatin}</div>
               </div>
-
               {rightContent && <div className="mr-2">{rightContent}</div>}
+              <button
+                onClick={() => setMenuOpen(!menuOpen)}
+                className="focus:outline-none p-1 rounded-full hover:bg-white/30 transition"
+                title="Account Menu"
+              >
+                <div className="w-8 h-8 rounded-full bg-white/90 border border-[#4a3529] flex items-center justify-center">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-[#4a3529]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                    <circle cx="12" cy="7" r="4" />
+                  </svg>
+                </div>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
 
-              <div className="relative">
-                <button
-                  ref={adminButtonRef}
-                  onClick={() => setMenuOpen((v) => !v)}
-                  className="focus:outline-none p-1 rounded-full hover:bg-white/30 transition"
-                  title="Account"
+      {/* Progress bar */}
+      <div className="bg-transparent border-t">
+        <div className="flex items-center justify-between py-1">
+          <div className="flex w-full items-center truncate">
+            <div className="relative w-full h-6 overflow-hidden border bg-gray-100">
+              <div
+                className={`absolute left-0 top-0 bottom-0 transition-all duration-1000 ease-out ${progressFilled ? "w-full" : "w-0"}`}
+                style={{ backgroundColor: getProgressColor(), zIndex: 1 }}
+              />
+              <div className="relative z-10 h-full overflow-hidden">
+                <div
+                  className={`text-scroll whitespace-nowrap font-semibold text-white px-3 ${progressFilled ? "animate-scroll" : "opacity-0"}`}
                 >
-                  <div className="w-8 h-8 rounded-full bg-white/90 border border-[#4a3529] flex items-center justify-center">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-[#4a3529]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                      <circle cx="12" cy="7" r="4" />
-                    </svg>
-                  </div>
-                </button>
+                  Login expires in: {formatTime(displayRemaining)} • Session Status: Active •
+                </div>
               </div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* slim expiry row */}
-      <div className="bg-[#eaf9ee]">
-        <div className="max-w-7xl mx-auto px-4">
-          <div className="flex items-center justify-center py-1 relative">
-            <div className="text-sm text-[#4a6b54] z-10">
-              Login Expires in: {" "}
-              <span className={displayRemaining !== null && displayRemaining <= 10 ? "animate-pulse font-semibold text-red-600" : "font-medium"}>
-                {formatTime(displayRemaining)}
-              </span>
-            </div>
-            <div className="absolute left-4 right-4 bottom-0 h-0.5 bg-[#dff6de] rounded overflow-hidden">
-              <div
-                style={{
-                  width: `${progress * 100}%`,
-                  transition: "width 1s linear",
-                  height: "100%",
-                  background: displayRemaining <= 0 ? "#f87171" : "#68d391",
-                }}
-              />
+      {/* Scroll animation */}
+      <style>{`
+        .text-scroll { transform: translateX(100%); }
+        .animate-scroll { animation: scroll-left-to-right 15s linear infinite; }
+        @keyframes scroll-left-to-right { from { transform: translateX(100%);} to { transform: translateX(-100%);} }
+        .transition-all { transition-property: all; transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1); }
+      `}</style>
+
+      {/* Toast */}
+      <div className="fixed top-4 right-4 z-60">
+        {toast.visible && (
+          <div
+            className={`max-w-xs shadow-lg rounded-2xl p-3 border ${
+              toast.important ? "bg-red-50 border-red-200" : "bg-white border-gray-100"
+            }`}
+          >
+            <div className="flex items-start gap-3">
+              <div className="text-sm leading-tight break-words">{toast.text}</div>
+              {toast.important && (
+                <div className="ml-auto flex items-center gap-2">
+                  <button
+                    onClick={() => openConfirm("refresh")}
+                    className="text-xs px-3 py-1 rounded bg-red-600 text-white shadow-sm"
+                  >
+                    Refresh
+                  </button>
+                </div>
+              )}
             </div>
           </div>
-        </div>
+        )}
       </div>
 
-      {/* Sidebar + overlay */}
-      {/* Overlay */}
+      {/* Sidebar Overlay */}
       <div
         aria-hidden={!menuOpen}
-        className={`fixed inset-0 z-40 transition-opacity ${menuOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"}`}
+        className={`fixed inset-0 z-40 transition-opacity ${
+          menuOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+        }`}
         onClick={() => setMenuOpen(false)}
       >
         <div className="absolute inset-0 bg-black/30" />
       </div>
 
-      {/* Sidebar panel */}
+      {/* Sidebar Menu */}
       <aside
-        ref={menuRef}
         role="dialog"
         aria-modal="true"
-        aria-label="Account menu"
-        className={`fixed top-0 right-0 z-50 h-full w-80 max-w-full transform transition-transform duration-300 ease-in-out bg-white shadow-2xl ${menuOpen ? "translate-x-0" : "translate-x-full"}`}
+        aria-label="Account Menu"
+        className={`fixed top-0 right-0 z-50 h-full w-80 max-w-full transform transition-transform duration-300 ease-in-out bg-white shadow-2xl ${
+          menuOpen ? "translate-x-0" : "translate-x-full"
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between p-4 border-b">
-          <div className="text-sm font-medium">Account</div>
-          <div>
-            <button onClick={() => setMenuOpen(false)} className="p-2 rounded hover:bg-gray-100 focus:outline-none">
-              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-gray-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                <path d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
+          <div className="text-sm font-medium">
+            {menuMode === "refresh" ? "Token Refresh" : menuMode === "logout" ? "Sign Out" : "Account Menu"}
           </div>
+          <button
+            onClick={() => setMenuOpen(false)}
+            className="p-2 rounded hover:bg-gray-100 focus:outline-none"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-gray-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
         </div>
 
         <div className="p-4 overflow-auto h-full pb-20">
-          <div className="text-xs text-gray-500 mb-2">Signed in as</div>
-          <div className="text-sm font-medium mb-3">{displayName}</div>
-          {displayRole ? <div className="text-sm text-gray-600 mb-4">Role: {displayRole}</div> : null}
-
-          <div className="space-y-2">
-            <button onClick={() => { handleRefreshPage(); }} className="w-full text-left px-3 py-2 rounded hover:bg-gray-50 border">Refresh page</button>
-            <button onClick={handleRefreshToken} className="w-full text-left px-3 py-2 rounded hover:bg-gray-50 border">Refresh token</button>
-            <button onClick={handleLogout} className="w-full text-left px-3 py-2 rounded text-red-600 hover:bg-gray-50 border">Logout</button>
-          </div>
-
-          <div className="mt-6 text-xs text-gray-500">
-            <div>Login Expires in: <span className={displayRemaining !== null && displayRemaining <= 10 ? "animate-pulse font-semibold text-red-600" : "font-medium"}>{formatTime(displayRemaining)}</span></div>
-            <div className="mt-3 text-xs text-gray-400">Tip: Token will auto-refresh when it gets near expiry.</div>
-          </div>
-
-          {/* Place for extra account links or debug info */}
-          <div className="mt-6 text-xs text-gray-500">
-            <div className="font-semibold">Village</div>
-            <div className="truncate">{displayVillage ?? "-"}</div>
-          </div>
-
-          {/* Right content copy (if desired inside sidebar) */}
-          {rightContent ? <div className="mt-6">{rightContent}</div> : null}
+          {menuMode === "refresh" ? (
+            <>
+              <div className="text-lg font-medium mb-4">Do you want to refresh your session token now?</div>
+              <div className="space-y-2">
+                <button onClick={performRefresh} className="w-full text-left px-3 py-2 rounded bg-green-600 text-white">
+                  Confirm Refresh
+                </button>
+                <button
+                  onClick={() => setMenuMode(null)}
+                  className="w-full text-left px-3 py-2 rounded border"
+                >
+                  Back
+                </button>
+              </div>
+              <div className="mt-6 text-xs text-gray-400">
+                Auto-refresh will also occur automatically when token gets near expiry.
+              </div>
+            </>
+          ) : menuMode === "logout" ? (
+            <>
+              <div className="text-lg font-medium mb-4">Are you sure you want to sign out?</div>
+              <div className="space-y-2">
+                <button onClick={performLogout} className="w-full text-left px-3 py-2 rounded bg-red-600 text-white">
+                  Confirm Logout
+                </button>
+                <button
+                  onClick={() => setMenuMode(null)}
+                  className="w-full text-left px-3 py-2 rounded border"
+                >
+                  Back
+                </button>
+              </div>
+              <div className="mt-6 text-xs text-gray-400">
+                You will be redirected to the login page after logout.
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="space-y-2">
+                <div className="text-sm text-gray-500 mb-4">Account Actions</div>
+                <button
+                  onClick={() => setMenuMode("refresh")}
+                  className="w-full text-left px-3 py-2 rounded border hover:bg-gray-50 flex items-center gap-2"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                    <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/>
+                    <path d="M21 3v5h-5"/>
+                    <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>
+                    <path d="M3 21v-5h5"/>
+                  </svg>
+                  Refresh Token
+                </button>
+                <button
+                  onClick={() => setMenuMode("logout")}
+                  className="w-full text-left px-3 py-2 rounded border hover:bg-gray-50 flex items-center gap-2 text-red-600"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                    <path d="M16 17l5-5-5-5M21 12H9"/>
+                    <path d="M12 19H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h7"/>
+                  </svg>
+                  Logout
+                </button>
+              </div>
+              <div className="mt-8 text-xs text-gray-400">Version 1.0.0</div>
+            </>
+          )}
         </div>
       </aside>
     </header>
