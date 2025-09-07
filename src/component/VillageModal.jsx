@@ -1,6 +1,6 @@
-import React, { useEffect, useState, useRef, useContext, useCallback } from "react";
+import React, { useEffect, useState, useContext, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { X } from "lucide-react";
+import { X, MapPin, Calendar, Layers, User } from "lucide-react";
 import { stageDefs } from "../config/stages";
 import StageProgress from "./StageProgress";
 import { AuthContext } from "../context/AuthContext";
@@ -15,12 +15,7 @@ export default function VillageModal({
   const navigate = useNavigate();
   const { setSelectedVillageId } = useContext(AuthContext) || {};
 
-  const [editableUpdatedBy, setEditableUpdatedBy] = useState("");
-  const [liveUpdatedBy, setLiveUpdatedBy] = useState("");
   const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState(null);
-  const [saveStatus, setSaveStatus] = useState(""); // '', 'Saving…', 'Saved', 'Error'
-  const saveTimerRef = useRef(null);
 
   // Helper to close the modal and clear selectedVillageId in context/localStorage
   const closeModal = useCallback(() => {
@@ -75,23 +70,6 @@ export default function VillageModal({
     };
   }, [village, open, setSelectedVillageId]);
 
-  // initialize fields when village changes
-  useEffect(() => {
-    if (village) {
-      const initial = village.updatedBy ?? village.lastUpdatedBy ?? village.lastUpdatedby ?? "";
-      setEditableUpdatedBy(initial);
-      setLiveUpdatedBy(initial);
-      setSaveError(null);
-      setSaveStatus("");
-    }
-    return () => {
-      if (saveTimerRef.current) {
-        clearTimeout(saveTimerRef.current);
-        saveTimerRef.current = null;
-      }
-    };
-  }, [village]);
-
   // prevent body scrolling while modal is open
   useEffect(() => {
     if (open) {
@@ -118,20 +96,20 @@ export default function VillageModal({
 
   if (!village) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-        <div className="bg-white rounded-md shadow w-full max-w-2xl p-4 border border-gray-200 relative">
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <div className="bg-white rounded-xl shadow-md w-full max-w-2xl p-4 border border-gray-100 relative">
           <button
             onClick={closeModal}
-            className="absolute right-3 top-3 p-1 rounded hover:bg-gray-100"
+            className="absolute right-3 top-3 p-1 rounded-full hover:bg-gray-100"
             aria-label="Close"
           >
             <X className="w-4 h-4" />
           </button>
-          <div className="py-8 text-center text-gray-600">No details available.</div>
-          <div className="mt-2 flex justify-end">
+          <div className="py-8 text-center text-gray-600 text-sm">No details available.</div>
+          <div className="mt-3 flex justify-end">
             <button
               onClick={closeModal}
-              className="px-3 py-1.5 rounded border border-gray-200 hover:bg-gray-50 text-sm"
+              className="px-3 py-1.5 rounded-md border border-gray-200 hover:bg-gray-50 text-sm"
             >
               Close
             </button>
@@ -148,47 +126,11 @@ export default function VillageModal({
   const areaDiverted = village.areaDiverted ?? "-";
   const siteOfRelocation = village.siteOfRelocation ?? village.areaOfRelocation ?? "-";
 
-  const doAutoSave = async (value) => {
-    const original = village.updatedBy ?? village.lastUpdatedBy ?? village.lastUpdatedby ?? "";
-    if (value === original) {
-      setSaveStatus("Saved");
-      saveTimerRef.current = setTimeout(() => setSaveStatus(""), 1500);
-      return;
-    }
-
-    if (typeof onSaveVillage !== "function") {
-      setSaveStatus("Saved");
-      saveTimerRef.current = setTimeout(() => setSaveStatus(""), 1500);
-      return;
-    }
-
-    setSaving(true);
-    setSaveError(null);
-    setSaveStatus("Saving…");
-    try {
-      await onSaveVillage({ villageId: village.villageId ?? village.id ?? village._id, updatedBy: value });
-      setSaving(false);
-      setSaveStatus("Saved");
-      saveTimerRef.current = setTimeout(() => setSaveStatus(""), 1500);
-    } catch (err) {
-      setSaving(false);
-      const msg = err?.message ?? String(err ?? "Save failed");
-      setSaveError(msg);
-      setSaveStatus("Error");
-    }
-  };
-
-  const handleInputChange = (e) => {
-    const val = e.target.value;
-    setEditableUpdatedBy(val);
-    setLiveUpdatedBy(val);
-    setSaveStatus("");
-    setSaveError(null);
-
-    // debounce/save after small delay (simple approach)
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => doAutoSave(val), 800);
-  };
+  const stageDef = stageDefs.find((s) => s.stage_id === currentSeq) ?? null;
+  const subStages = Array.isArray(stageDef?.subStages) ? stageDef.subStages : [];
+  const stageName = stageDef?.name ?? "Unknown stage";
+  const subStageObj = subStages.find((s) => String(s.id) === String(currentSub)) ?? null;
+  const subStageName = subStageObj?.name ?? null;
 
   const handleOpenProfile = (v) => {
     try {
@@ -206,12 +148,9 @@ export default function VillageModal({
     }
   };
 
-  const stageDef = stageDefs.find((s) => s.stage_id === currentSeq) ?? null;
-  const subStages = Array.isArray(stageDef?.subStages) ? stageDef.subStages : [];
-
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
       onMouseDown={(e) => {
         // close when clicking the overlay (but not when clicking inner content)
         if (e.target === e.currentTarget) closeModal();
@@ -219,107 +158,114 @@ export default function VillageModal({
       role="dialog"
       aria-modal="true"
     >
-      <div className="bg-white rounded-md shadow w-full max-w-2xl p-4 border border-gray-200 relative" onMouseDown={(e)=>e.stopPropagation()}>
+      <div
+        className="bg-white rounded-xl shadow-md w-full max-w-2xl p-4 border border-transparent relative transform transition-all"
+        onMouseDown={(e) => e.stopPropagation()}
+        style={{ maxHeight: "85vh", overflowY: "auto" }}
+      >
         {/* Close Button */}
         <button
           onClick={closeModal}
-          className="absolute right-3 top-3 p-1 rounded hover:bg-gray-100"
+          className="absolute right-3 top-3 p-1 rounded-full hover:bg-gray-100"
           aria-label="Close"
         >
           <X className="w-4 h-4" />
         </button>
 
         {/* Header */}
-        <header className="mb-3">
-          <h2 className="text-base font-semibold text-gray-800">{village.name}</h2>
-          <p className="text-xs text-gray-600">Village ID: {village.villageId ?? village.id ?? village._id}</p>
-        </header>
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <div className="flex items-center gap-2">
+            
+            <div>
+              <h2 className="text-md font-semibold text-gray-900">{village.name}</h2>
+              <p className="text-xs text-gray-500">ID: {village.villageId ?? village.id ?? village._id}</p>
+            </div>
+          </div>
 
-        {/* Stage Progress */}
-        <div className="mb-4">
-          <StageProgress currentStage={currentSeq} currentSubStage={currentSub} />
+          
         </div>
 
-        {/* Main Content */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-          {/* Sub-stages */}
-          <div className="md:col-span-1 bg-gray-50 p-3 rounded">
-            <div className="font-medium text-sm text-gray-700 mb-2">Sub-stages</div>
-            {subStages.length === 0 ? (
-              <div className="text-gray-500 text-xs">No stage selected</div>
-            ) : (
-              <ul className="space-y-2 text-sm">
-                {subStages.map((sub) => {
-                  const done = currentSub !== null && Number(sub.id) <= Number(currentSub);
-                  return (
-                    <li key={sub.id} className="flex items-center gap-2">
-                      <span
-                        className={`inline-flex items-center justify-center w-4 h-4 text-xs rounded-full flex-shrink-0 ${
-                          done ? "bg-green-600 text-white" : "border border-gray-300 text-gray-500"
-                        }`}
-                      >
-                        {done ? "✓" : sub.id}
-                      </span>
-                      <span className={done ? "text-gray-800 text-sm" : "text-gray-500 text-sm"}>{sub.name}</span>
-                    </li>
-                  );
-                })}
-              </ul>
+        {/* Stage Progress - compact */}
+        <div className="mb-4">
+          <div className="mx-auto mx-w-auto">
+            <StageProgress  currentStage={currentSeq} currentSubStage={currentSub} />
+            <div className="mt-2 text-center">
+  <h1 className="text-lg font-semibold">
+    Current Stage: <span className="text-indigo-700">{stageName}</span>
+    {subStageName && (
+      <span className="text-gray-400 text-sm ml-2">({subStageName})</span>
+    )}
+  </h1>
+</div>
+
+          </div>
+        </div>
+
+        {/* Main Content - compact layout */}
+        <div className="gap-3 mb-3">
+          <div className="bg-gradient-to-br from-white to-gray-50 border border-gray-100 rounded-lg p-3 shadow-sm">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+              <div className="flex items-start gap-2">
+                <Calendar className="w-7 h-7 text-gray-500 mt-1" />
+                <div>
+                  <dt className="text-xs text-gray-400 uppercase">Last updated</dt>
+                  <dd className="text-gray-800 font-medium">{updatedOn}</dd>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-2">
+                <MapPin className="w-7 h-7 text-gray-500 mt-1" />
+                <div>
+                  <dt className="text-xs text-gray-400 uppercase">Site</dt>
+                  <dd className="text-gray-800 font-medium">{siteOfRelocation}</dd>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-2">
+                <Layers className="w-7 h-7 text-gray-500 mt-1" />
+                <div>
+                  <dt className="text-xs text-gray-400 uppercase">Area (ha)</dt>
+                  <dd className="text-gray-800 font-medium">{areaDiverted}</dd>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-2">
+                <User className="w-7 h-7 text-gray-500 mt-1" />
+                <div>
+                  <dt className="text-xs text-gray-400 uppercase">Updated by</dt>
+                  <dd className="text-gray-800 font-medium">{village.updatedBy ?? village.lastUpdatedBy ?? village.lastUpdatedby ?? "-"}</dd>
+                </div>
+              </div>
+            </div>
+
+            {village.notes && (
+              <div className="mt-3 p-2 rounded-md bg-white border border-gray-100 text-xs text-gray-600">
+                {village.notes}
+              </div>
             )}
           </div>
 
-          {/* Village Details */}
-          <div className="md:col-span-2 p-3 rounded border border-gray-100">
-            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-y-2 gap-x-4 text-sm">
-              <div>
-                <dt className="text-xs text-gray-500 uppercase">Last updated</dt>
-                <dd className="text-gray-700">{updatedOn}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-gray-500 uppercase">Area diverted (ha)</dt>
-                <dd className="text-gray-700">{areaDiverted}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-gray-500 uppercase">Site of relocation</dt>
-                <dd className="text-gray-700">{siteOfRelocation}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-gray-500 uppercase">Updated by</dt>
-                <dd className="text-gray-700">
-                  {liveUpdatedBy || "-"}
-                  {/* simple inline edit input (optional) */}
-                  <div className="mt-1">
-                    <input
-                      value={editableUpdatedBy}
-                      onChange={handleInputChange}
-                      className="border px-2 py-1 text-sm rounded w-full"
-                      placeholder="Edit updated by"
-                    />
-                    <div className="text-xs mt-1">
-                      {saveStatus && <span>{saveStatus}{saveError ? `: ${saveError}` : ""}</span>}
-                    </div>
-                  </div>
-                </dd>
-              </div>
-            </dl>
-          </div>
+          
         </div>
 
-        {/* Actions */}
-        <div className="pt-2 border-t border-gray-100 flex items-center justify-end gap-2 mt-1">
+        {/* Buttons below village details */}
+        <div className="mt-2 flex flex-col sm:flex-row sm:justify-center gap-2">
           <button
             onClick={() => handleOpenProfile(village)}
-            className="px-3 py-1.5 rounded-md bg-indigo-600 text-white text-sm hover:bg-indigo-700"
+            className="w-full sm:w-auto text-sm px-3 py-1.5 rounded-md bg-gradient-to-r from-indigo-600 to-indigo-500 text-white shadow-sm hover:opacity-95"
           >
             Open Profile
           </button>
           <button
             onClick={closeModal}
-            className="px-3 py-1.5 rounded-md border border-gray-300 bg-white text-sm text-gray-700 hover:bg-gray-50"
+            className="w-full sm:w-auto text-sm px-3 py-1.5 rounded-md border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
           >
             Close
           </button>
         </div>
+
+        {/* Footer small note */}
+        <div className="text-xs text-gray-400 text-right mt-3">Last synced: {updatedOn}</div>
       </div>
     </div>
   );

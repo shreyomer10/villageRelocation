@@ -81,23 +81,6 @@ export default function MainNavbar({
     return () => clearInterval(iv);
   }, [durationSeconds]);
 
-  // click outside menu to close
-  useEffect(() => {
-    function handleClick(e) {
-      if (
-        menuOpen &&
-        menuRef.current &&
-        !menuRef.current.contains(e.target) &&
-        adminButtonRef.current &&
-        !adminButtonRef.current.contains(e.target)
-      ) {
-        setMenuOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [menuOpen]);
-
   // auto-refresh behavior (call once per cycle)
   const autoRefreshTriggeredRef = useRef(false);
   useEffect(() => {
@@ -202,6 +185,15 @@ export default function MainNavbar({
     return null;
   })();
 
+  // close on escape
+  useEffect(() => {
+    function onKey(e) {
+      if (e.key === "Escape") setMenuOpen(false);
+    }
+    if (menuOpen) document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [menuOpen]);
+
   return (
     <header className="w-full select-none">
       <div className="bg-[#a7dec0]">
@@ -249,33 +241,6 @@ export default function MainNavbar({
                     </svg>
                   </div>
                 </button>
-
-                {menuOpen && (
-                  <div ref={menuRef} className="absolute right-0 mt-2 w-44 bg-white rounded-lg shadow-lg ring-1 ring-black/5 z-50">
-                    <ul className="py-1">
-                      <li>
-                        <div className="px-3 py-2 text-xs text-gray-500">Signed in as</div>
-                      </li>
-                      <li>
-                        <div className="px-3 py-2 text-sm font-medium">{displayName}</div>
-                      </li>
-                      {displayRole ? (
-                        <li>
-                          <div className="px-3 py-2 text-sm text-gray-600">Role: {displayRole}</div>
-                        </li>
-                      ) : null}
-                      <li>
-                        <button onClick={() => { handleRefreshPage(); setMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50">Refresh page</button>
-                      </li>
-                      <li>
-                        <button onClick={handleRefreshToken} className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50">Refresh token</button>
-                      </li>
-                      <li>
-                        <button onClick={handleLogout} className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-gray-50">Logout</button>
-                      </li>
-                    </ul>
-                  </div>
-                )}
               </div>
             </div>
           </div>
@@ -305,6 +270,63 @@ export default function MainNavbar({
           </div>
         </div>
       </div>
+
+      {/* Sidebar + overlay */}
+      {/* Overlay */}
+      <div
+        aria-hidden={!menuOpen}
+        className={`fixed inset-0 z-40 transition-opacity ${menuOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"}`}
+        onClick={() => setMenuOpen(false)}
+      >
+        <div className="absolute inset-0 bg-black/30" />
+      </div>
+
+      {/* Sidebar panel */}
+      <aside
+        ref={menuRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Account menu"
+        className={`fixed top-0 right-0 z-50 h-full w-80 max-w-full transform transition-transform duration-300 ease-in-out bg-white shadow-2xl ${menuOpen ? "translate-x-0" : "translate-x-full"}`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between p-4 border-b">
+          <div className="text-sm font-medium">Account</div>
+          <div>
+            <button onClick={() => setMenuOpen(false)} className="p-2 rounded hover:bg-gray-100 focus:outline-none">
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-gray-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <div className="p-4 overflow-auto h-full pb-20">
+          <div className="text-xs text-gray-500 mb-2">Signed in as</div>
+          <div className="text-sm font-medium mb-3">{displayName}</div>
+          {displayRole ? <div className="text-sm text-gray-600 mb-4">Role: {displayRole}</div> : null}
+
+          <div className="space-y-2">
+            <button onClick={() => { handleRefreshPage(); }} className="w-full text-left px-3 py-2 rounded hover:bg-gray-50 border">Refresh page</button>
+            <button onClick={handleRefreshToken} className="w-full text-left px-3 py-2 rounded hover:bg-gray-50 border">Refresh token</button>
+            <button onClick={handleLogout} className="w-full text-left px-3 py-2 rounded text-red-600 hover:bg-gray-50 border">Logout</button>
+          </div>
+
+          <div className="mt-6 text-xs text-gray-500">
+            <div>Login Expires in: <span className={displayRemaining !== null && displayRemaining <= 10 ? "animate-pulse font-semibold text-red-600" : "font-medium"}>{formatTime(displayRemaining)}</span></div>
+            <div className="mt-3 text-xs text-gray-400">Tip: Token will auto-refresh when it gets near expiry.</div>
+          </div>
+
+          {/* Place for extra account links or debug info */}
+          <div className="mt-6 text-xs text-gray-500">
+            <div className="font-semibold">Village</div>
+            <div className="truncate">{displayVillage ?? "-"}</div>
+          </div>
+
+          {/* Right content copy (if desired inside sidebar) */}
+          {rightContent ? <div className="mt-6">{rightContent}</div> : null}
+        </div>
+      </aside>
     </header>
   );
 }
