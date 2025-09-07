@@ -1,10 +1,11 @@
 // File: src/pages/Dashboard.jsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useContext } from "react";
 import { useNavigate } from "react-router-dom";
 import { Search, Sliders, Calendar, CheckCircle } from "lucide-react";
 import MainNavbar from "../component/MainNavbar";
 import VillageModal from "../component/VillageModal";
 import { stageDefs } from "../config/stages";
+import { AuthContext } from "../context/AuthContext"; // <- added
 
 const VillageCard = ({ village, onOpen }) => {
   const { name, villageId, status = "N/A", date, lastUpdatedOn } = village;
@@ -61,6 +62,10 @@ export default function Dashboard() {
   const [selectedVillage, setSelectedVillage] = useState(null);
 
   const stageOptions = stageDefs.map((s) => s.name).concat(["N/A"]);
+
+  // AuthContext hookup: we'll update village info here when a card is clicked or when we save
+  const auth = useContext(AuthContext) || {};
+  const { setVillageId, setVillage } = auth;
 
   function normalizeListItem(item = {}) {
     // village id (try several shapes)
@@ -138,8 +143,18 @@ export default function Dashboard() {
 
         setVillages(normalized);
 
+        // persist the first village id locally and update AuthContext if available
         if (normalized.length > 0 && normalized[0].villageId) {
-          localStorage.setItem("villageId", normalized[0].villageId);
+          const firstId = String(normalized[0].villageId);
+          localStorage.setItem("villageId", firstId);
+
+          if (typeof setVillageId === "function") {
+            try {
+              setVillageId(firstId);
+            } catch (e) {
+              // ignore if context setter does something unexpected
+            }
+          }
         }
       } catch (err) {
         if (!mounted) return;
@@ -154,7 +169,8 @@ export default function Dashboard() {
     return () => {
       mounted = false;
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally only run on mount
 
   const toggleStage = (s) => {
     const next = new Set(selectedStages);
@@ -196,6 +212,21 @@ export default function Dashboard() {
       // merge server response
       setVillages((prevList) => prevList.map((v) => (v.villageId === id ? { ...v, ...updatedFromServer } : v)));
 
+      // update AuthContext and localStorage for the updated village
+      try {
+        if (typeof setVillageId === "function") setVillageId(String(updatedFromServer.villageId));
+        if (typeof setVillage === "function") setVillage(updatedFromServer);
+      } catch (e) {
+        // swallow any unexpected context errors
+      }
+
+      try {
+        localStorage.setItem("villageId", String(updatedFromServer.villageId ?? id));
+        localStorage.setItem("selectedVillage", JSON.stringify(updatedFromServer));
+      } catch (e) {
+        // localStorage can fail in some environments; ignore
+      }
+
       return updatedFromServer;
     } catch (err) {
       return Promise.reject(err);
@@ -207,7 +238,23 @@ export default function Dashboard() {
       setListError("Village id missing");
       return;
     }
+
     setSelectedVillage(village);
+
+    // update AuthContext (if setters exist) and store locally for later use
+    try {
+      if (typeof setVillageId === "function") setVillageId(String(village.villageId));
+      if (typeof setVillage === "function") setVillage(village);
+    } catch (e) {
+      // don't break UI if context setter behaves differently
+    }
+
+    try {
+      localStorage.setItem("villageId", String(village.villageId));
+      localStorage.setItem("selectedVillage", JSON.stringify(village));
+    } catch (e) {
+      // ignore storage errors
+    }
   };
 
   const closeModal = () => setSelectedVillage(null);

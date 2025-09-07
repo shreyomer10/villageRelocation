@@ -1,9 +1,31 @@
 // src/pages/FamilyList.jsx
 import React, { useEffect, useState } from "react";
 import { SlidersHorizontal } from "lucide-react";
-import FamilyCard from "../component/FamilyCard";
 import FamilyModal from "../component/FamilyModal";
 import MainNavbar from "../component/MainNavbar";
+
+// Inline FamilyCard component
+function FamilyCard({ family, onView }) {
+  return (
+    <div className="bg-[#f0f4ff] rounded-xl p-4 shadow-md text-center hover:shadow-lg transition">
+      <img
+        src={family.mukhiyaPhoto || "/images/default-avatar.png"}
+        alt={family.mukhiyaName || "Mukhiya"}
+        onError={(e) => (e.currentTarget.src = "/images/default-avatar.png")}
+        className="w-24 h-24 mx-auto rounded-full object-cover border mb-3"
+      />
+      <h3 className="font-semibold text-gray-800">
+        {family.mukhiyaName || "Unknown"}
+      </h3>
+      <button
+        onClick={() => onView(family.familyId ?? family.id)}
+        className="mt-3 px-4 py-1 text-sm bg-indigo-500 hover:bg-indigo-600 text-white rounded-md shadow"
+      >
+        View Family
+      </button>
+    </div>
+  );
+}
 
 export default function FamilyList() {
   const [beneficiaries, setBeneficiaries] = useState([]);
@@ -13,15 +35,25 @@ export default function FamilyList() {
   const [filterOption, setFilterOption] = useState("All");
   const [search, setSearch] = useState("");
 
+  // selected family id for modal
   const [selectedFamilyId, setSelectedFamilyId] = useState(null);
-  const [familyLoading, setFamilyLoading] = useState(false);
-  const [familyError, setFamilyError] = useState(null);
-  const [familyDetails, setFamilyDetails] = useState(null);
 
-  const storedVillageId =
-    typeof window !== "undefined"
-      ? localStorage.getItem("villageId")
-      : null;
+  // track villageId from localStorage
+  const [storedVillageId, setStoredVillageId] = useState(() =>
+    typeof window !== "undefined" ? localStorage.getItem("villageId") : null
+  );
+
+  // listen for changes to villageId in localStorage
+  useEffect(() => {
+    function onStorage(e) {
+      if (e.key === "villageId") setStoredVillageId(e.newValue);
+    }
+    if (typeof window !== "undefined") {
+      window.addEventListener("storage", onStorage);
+      return () => window.removeEventListener("storage", onStorage);
+    }
+    return () => {};
+  }, []);
 
   function optionQueryParam(opt) {
     if (!opt || opt === "All") return "";
@@ -30,6 +62,7 @@ export default function FamilyList() {
     return "";
   }
 
+  // fetch beneficiaries
   useEffect(() => {
     let mounted = true;
     const ctrl = new AbortController();
@@ -37,6 +70,7 @@ export default function FamilyList() {
     async function loadList() {
       setLoadingList(true);
       setListError(null);
+
       try {
         if (!storedVillageId) {
           throw new Error(
@@ -45,42 +79,44 @@ export default function FamilyList() {
         }
 
         const token = localStorage.getItem("token");
-        const headers = {
-          'Content-Type': 'application/json',
-          ...(token && { Authorization: `Bearer ${token}` })
-        };
+        const headers = token
+          ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }
+          : { "Content-Type": "application/json" };
 
         const optParam = optionQueryParam(filterOption);
-        // Updated URL to match API documentation
-        const baseUrl = "http://your-domain.com/api/v1"; // Replace with your actual domain
-        const url = `${baseUrl}/family/villages/${encodeURIComponent(
-          storedVillageId
-        )}/beneficiaries${optParam ? `?option=${optParam}` : ""}`;
+        const url =
+          `https://villagerelocation.onrender.com/villages/${encodeURIComponent(
+            storedVillageId
+          )}/beneficiaries` + (optParam ? `?option=${optParam}` : "");
 
         const res = await fetch(url, {
           method: "GET",
           headers,
           signal: ctrl.signal,
         });
-        
+
         if (!res.ok) {
-          throw new Error(`Failed to fetch beneficiaries (${res.status})`);
+          let bodyText = "";
+          try {
+            const tmp = await res.json();
+            bodyText = tmp && tmp.message ? `: ${tmp.message}` : "";
+          } catch {}
+          throw new Error(`Failed to fetch beneficiaries (${res.status})${bodyText}`);
         }
-        
+
         const data = await res.json();
-        if (!mounted) return;
-        
-        // Handle API response structure
-        if (data.error === false && data.result) {
-          setBeneficiaries(Array.isArray(data.result) ? data.result : []);
-        } else {
-          throw new Error(data.message || "Failed to fetch beneficiaries");
+        if (data && data.error) {
+          throw new Error(data.message || "Unable to load beneficiaries.");
         }
+
+        const list = Array.isArray(data.result) ? data.result : [];
+
+        if (!mounted) return;
+        setBeneficiaries(list);
       } catch (err) {
         if (!mounted) return;
-        if (err.name !== "AbortError") {
+        if (err.name !== "AbortError")
           setListError(err.message || "Unable to load beneficiaries.");
-        }
       } finally {
         if (mounted) setLoadingList(false);
       }
@@ -93,66 +129,25 @@ export default function FamilyList() {
     };
   }, [filterOption, storedVillageId]);
 
+  // filter by search
   const filteredFamilies = beneficiaries.filter((f) => {
     if (!f) return false;
     const name = (f.mukhiyaName || "").toString();
     return name.toLowerCase().includes(search.toLowerCase());
   });
 
-  const handleViewFamily = async (familyId) => {
-    if (!familyId) return;
-    setSelectedFamilyId(familyId);
-    setFamilyLoading(true);
-    setFamilyError(null);
-    setFamilyDetails(null);
-
-    const ctrl = new AbortController();
-    try {
-      const token = localStorage.getItem("token");
-      const headers = {
-        'Content-Type': 'application/json',
-        ...(token && { Authorization: `Bearer ${token}` })
-      };
-
-      // Updated URL to match API documentation
-      const baseUrl = "http://your-domain.com/api/v1"; // Replace with your actual domain
-      const res = await fetch(
-        `${baseUrl}/family/families/${encodeURIComponent(familyId)}`,
-        { 
-          method: "GET", 
-          headers, 
-          signal: ctrl.signal 
-        }
-      );
-      
-      if (!res.ok) {
-        if (res.status === 404) throw new Error("Family not found");
-        throw new Error(`Failed to fetch family (${res.status})`);
-      }
-      
-      const data = await res.json();
-      
-      // Handle API response structure
-      if (data.error === false && data.result) {
-        setFamilyDetails(data.result);
-      } else {
-        throw new Error(data.message || "Failed to fetch family details");
-      }
-    } catch (err) {
-      if (err.name !== "AbortError") {
-        setFamilyError(err.message || "Unable to load family.");
-      }
-    } finally {
-      setFamilyLoading(false);
+  const handleViewFamily = (familyId) => {
+    // accept 0 as a valid id, so check for null/undefined only
+    if (familyId === undefined || familyId === null) {
+      console.error("No familyId provided to modal");
+      return;
     }
-
-    return () => ctrl.abort();
+    console.log("Opening modal for familyId:", familyId);
+    setSelectedFamilyId(familyId);
   };
 
   const closeModal = () => {
     setSelectedFamilyId(null);
-    setFamilyDetails(null);
-    setFamilyError(null);
   };
 
   if (!storedVillageId) {
@@ -172,12 +167,8 @@ export default function FamilyList() {
               </h1>
             </div>
             <div className="text-right">
-              <div className="text-[#4a3529] font-bold text-2xl leading-none">
-                माटी
-              </div>
-              <div className="text-sm text-[#4a3529] tracking-wider">
-                MAATI
-              </div>
+              <div className="text-[#4a3529] font-bold text-2xl leading-none">माटी</div>
+              <div className="text-sm text-[#4a3529] tracking-wider">MAATI</div>
             </div>
           </div>
         </header>
@@ -185,8 +176,7 @@ export default function FamilyList() {
         <main className="max-w-7xl mx-auto px-6 py-6">
           <div className="bg-white rounded-xl p-6 shadow text-center">
             <p className="text-sm text-gray-700">
-              No village selected. Please select a village from the dashboard
-              first.
+              No village selected. Please select a village from the dashboard first.
             </p>
           </div>
         </main>
@@ -198,10 +188,7 @@ export default function FamilyList() {
     <div className="min-h-screen bg-[#f8f0dc] font-sans">
       {/* Header */}
       <div>
-        <MainNavbar 
-          village={storedVillageId}
-          showInNavbar={true} 
-        />
+        <MainNavbar village={storedVillageId} showInNavbar={true} />
       </div>
 
       {/* Main Content */}
@@ -257,9 +244,7 @@ export default function FamilyList() {
         </div>
 
         {/* Errors / Loading */}
-        {listError && (
-          <div className="text-sm text-red-600 mb-4">{listError}</div>
-        )}
+        {listError && <div className="text-sm text-red-600 mb-4">{listError}</div>}
         {loadingList ? (
           <div className="py-8 text-center text-sm text-gray-600">
             Loading families…
@@ -272,7 +257,7 @@ export default function FamilyList() {
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-6">
                 {filteredFamilies.map((family) => (
                   <FamilyCard
-                    key={family.familyId}
+                    key={family.familyId ?? family.id}
                     family={family}
                     onView={handleViewFamily}
                   />
@@ -283,12 +268,12 @@ export default function FamilyList() {
         )}
       </main>
 
-      {/* Modal */}
-      {selectedFamilyId && (
+      {/* Modal: render if selectedFamilyId is NOT null/undefined (accept 0 as valid id). Pass open prop and a key to force remount when id changes */}
+      {selectedFamilyId !== null && (
         <FamilyModal
-          familyDetails={familyDetails}
-          familyLoading={familyLoading}
-          familyError={familyError}
+          key={String(selectedFamilyId)}
+          isopen={true}
+          familyId={selectedFamilyId}
           onClose={closeModal}
         />
       )}

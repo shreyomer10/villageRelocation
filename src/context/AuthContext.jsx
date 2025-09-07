@@ -5,6 +5,8 @@ export const AuthContext = createContext({
   setUser: () => {},
   villageId: null,
   setVillageId: () => {},
+  village: null,
+  setVillage: () => {},
   token: null,
   tokenExpiresAt: null, // timestamp (ms)
   tokenRemaining: null, // seconds
@@ -18,6 +20,7 @@ export const AuthContext = createContext({
 const STORAGE_KEYS = {
   USER: "user",
   VILLAGE: "villageId",
+  SELECTED_VILLAGE: "selectedVillage",
   TOKEN: "token",
   TOKEN_EXPIRY: "tokenExpiry", // number (ms)
   REFRESH_TOKEN: "refreshToken",
@@ -29,7 +32,11 @@ const COOKIE_POLL_INTERVAL_MS = 5 * 60 * 1000; // poll every 5 minutes when only
 export function AuthProvider({ children }) {
   // user now stores { name, role, email }
   const [user, setUserState] = useState(null);
+
+  // villageId (string) and full village object (optional)
   const [villageId, setVillageIdState] = useState(null);
+  const [village, setVillageState] = useState(null);
+
   const [token, setTokenState] = useState(null);
   const [tokenExpiresAt, setTokenExpiresAt] = useState(null); // number (ms)
   const [refreshTokenState, setRefreshTokenState] = useState(null);
@@ -58,6 +65,24 @@ export function AuthProvider({ children }) {
     const sv = localStorage.getItem(STORAGE_KEYS.VILLAGE);
     if (sv) setVillageIdState(sv);
 
+    try {
+      const sel = localStorage.getItem(STORAGE_KEYS.SELECTED_VILLAGE);
+      if (sel) {
+        const parsed = JSON.parse(sel);
+        if (parsed && (parsed.villageId || parsed.village_id)) {
+          setVillageState(parsed);
+          // ensure villageId is kept in sync
+          const id =
+            parsed.villageId ??
+            parsed.village_id ??
+            (parsed.villageId === 0 ? "0" : null);
+          if (id) setVillageIdState(String(id));
+        }
+      }
+    } catch (e) {
+      // ignore parse errors
+    }
+
     const st = localStorage.getItem(STORAGE_KEYS.TOKEN);
     if (st) setTokenState(st);
 
@@ -78,47 +103,84 @@ export function AuthProvider({ children }) {
         localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(user));
       } catch (e) {}
     } else {
-      localStorage.removeItem(STORAGE_KEYS.USER);
+      try {
+        localStorage.removeItem(STORAGE_KEYS.USER);
+      } catch (e) {}
     }
   }, [user]);
 
   // persist villageId
   useEffect(() => {
-    if (villageId) localStorage.setItem(STORAGE_KEYS.VILLAGE, villageId);
-    else localStorage.removeItem(STORAGE_KEYS.VILLAGE);
+    try {
+      if (villageId) localStorage.setItem(STORAGE_KEYS.VILLAGE, villageId);
+      else localStorage.removeItem(STORAGE_KEYS.VILLAGE);
+    } catch (e) {}
   }, [villageId]);
+
+  // persist full selected village object
+  useEffect(() => {
+    try {
+      if (village && typeof village === "object") {
+        // store a shallow JSON-friendly copy
+        localStorage.setItem(STORAGE_KEYS.SELECTED_VILLAGE, JSON.stringify(village));
+      } else {
+        localStorage.removeItem(STORAGE_KEYS.SELECTED_VILLAGE);
+      }
+    } catch (e) {}
+  }, [village]);
 
   // persist token + expiry + refreshToken
   useEffect(() => {
-    if (token) localStorage.setItem(STORAGE_KEYS.TOKEN, token);
-    else localStorage.removeItem(STORAGE_KEYS.TOKEN);
+    try {
+      if (token) localStorage.setItem(STORAGE_KEYS.TOKEN, token);
+      else localStorage.removeItem(STORAGE_KEYS.TOKEN);
+    } catch (e) {}
   }, [token]);
 
   useEffect(() => {
-    if (tokenExpiresAt) localStorage.setItem(STORAGE_KEYS.TOKEN_EXPIRY, String(tokenExpiresAt));
-    else localStorage.removeItem(STORAGE_KEYS.TOKEN_EXPIRY);
+    try {
+      if (tokenExpiresAt) localStorage.setItem(STORAGE_KEYS.TOKEN_EXPIRY, String(tokenExpiresAt));
+      else localStorage.removeItem(STORAGE_KEYS.TOKEN_EXPIRY);
+    } catch (e) {}
   }, [tokenExpiresAt]);
 
   useEffect(() => {
-    if (refreshTokenState) localStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, refreshTokenState);
-    else localStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
+    try {
+      if (refreshTokenState) localStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, refreshTokenState);
+      else localStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
+    } catch (e) {}
   }, [refreshTokenState]);
 
   // storage listener to sync across tabs
   useEffect(() => {
     function onStorage(e) {
       if (!e.key) return; // ignore clear()
-      if (e.key === STORAGE_KEYS.USER) {
-        try {
+      try {
+        if (e.key === STORAGE_KEYS.USER) {
           const val = e.newValue ? JSON.parse(e.newValue) : null;
           setUserState(val && val.name ? { name: val.name, role: val.role, email: val.email } : null);
-        } catch {
-          setUserState(null);
         }
+      } catch {
+        setUserState(null);
       }
+
       if (e.key === STORAGE_KEYS.VILLAGE) {
         setVillageIdState(e.newValue);
       }
+
+      if (e.key === STORAGE_KEYS.SELECTED_VILLAGE) {
+        try {
+          const val = e.newValue ? JSON.parse(e.newValue) : null;
+          setVillageState(val);
+          if (val && (val.villageId || val.village_id)) {
+            const id = val.villageId ?? val.village_id;
+            setVillageIdState(String(id));
+          }
+        } catch {
+          setVillageState(null);
+        }
+      }
+
       if (e.key === STORAGE_KEYS.TOKEN) {
         setTokenState(e.newValue);
       }
@@ -184,67 +246,70 @@ export function AuthProvider({ children }) {
   }, [tokenExpiresAt]);
 
   // function to perform refresh
-  const refreshToken = useCallback(async () => {
-    try {
-      // body may include refreshToken if available; otherwise empty
-      const body = refreshTokenState ? { refreshToken: refreshTokenState } : {};
-      const headers = { "Content-Type": "application/json" };
-      // if we have a bearer token, include it (API supports either cookie or Authorization)
-      if (token) headers["Authorization"] = `Bearer ${token}`;
+  const refreshToken = useCallback(
+    async () => {
+      try {
+        // body may include refreshToken if available; otherwise empty
+        const body = refreshTokenState ? { refreshToken: refreshTokenState } : {};
+        const headers = { "Content-Type": "application/json" };
+        // if we have a bearer token, include it (API supports either cookie or Authorization)
+        if (token) headers["Authorization"] = `Bearer ${token}`;
 
-      // IMPORTANT: include credentials so cookie-based refresh works
-      const res = await fetch("https://villagerelocation.onrender.com/refresh", {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-        credentials: "include",
-      });
+        // IMPORTANT: include credentials so cookie-based refresh works
+        const res = await fetch("https://villagerelocation.onrender.com/refresh", {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body),
+          credentials: "include",
+        });
 
-      if (!res.ok) {
-        // refresh failed -> return false so caller can logout if desired
+        if (!res.ok) {
+          // refresh failed -> return false so caller can logout if desired
+          return false;
+        }
+
+        const payload = await res.json();
+        // payload may contain: { token, expiresIn, expiresAt, refreshToken, user }
+        const newToken = payload.token ?? null;
+        const expiresIn = payload.expiresIn; // seconds
+        const expiresAt = payload.expiresAt; // timestamp or ISO
+        const newRefresh = payload.refreshToken ?? null;
+
+        // compute absolute expiry (ms)
+        let absExpiry = null;
+        if (expiresIn && !isNaN(Number(expiresIn))) {
+          absExpiry = Date.now() + Number(expiresIn) * 1000;
+        } else if (expiresAt) {
+          const asNum = Number(expiresAt);
+          absExpiry = !Number.isNaN(asNum) ? asNum : Date.parse(expiresAt);
+        }
+
+        // If server set no expiry info but did set a token, choose a safe default
+        if (!absExpiry && newToken) {
+          absExpiry = Date.now() + 15 * 60 * 1000; // 15 min fallback
+        }
+
+        // Update states accordingly (may be null if server uses cookie-only)
+        setTokenState(newToken);
+        if (absExpiry) setTokenExpiresAt(absExpiry);
+        if (newRefresh) setRefreshTokenState(newRefresh);
+
+        // If server returned user info, keep it in sync
+        if (payload.user && payload.user.name) {
+          setUserState({ name: payload.user.name, role: payload.user.role, email: payload.user.email });
+          try {
+            localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify({ name: payload.user.name, role: payload.user.role, email: payload.user.email }));
+          } catch (e) {}
+        }
+
+        return true;
+      } catch (err) {
+        // treat as refresh failure
         return false;
       }
-
-      const payload = await res.json();
-      // payload may contain: { token, expiresIn, expiresAt, refreshToken, user }
-      const newToken = payload.token ?? null;
-      const expiresIn = payload.expiresIn; // seconds
-      const expiresAt = payload.expiresAt; // timestamp or ISO
-      const newRefresh = payload.refreshToken ?? null;
-
-      // compute absolute expiry (ms)
-      let absExpiry = null;
-      if (expiresIn && !isNaN(Number(expiresIn))) {
-        absExpiry = Date.now() + Number(expiresIn) * 1000;
-      } else if (expiresAt) {
-        const asNum = Number(expiresAt);
-        absExpiry = !Number.isNaN(asNum) ? asNum : Date.parse(expiresAt);
-      }
-
-      // If server set no expiry info but did set a token, choose a safe default
-      if (!absExpiry && newToken) {
-        absExpiry = Date.now() + 15 * 60 * 1000; // 15 min fallback
-      }
-
-      // Update states accordingly (may be null if server uses cookie-only)
-      setTokenState(newToken);
-      if (absExpiry) setTokenExpiresAt(absExpiry);
-      if (newRefresh) setRefreshTokenState(newRefresh);
-
-      // If server returned user info, keep it in sync
-      if (payload.user && payload.user.name) {
-        setUserState({ name: payload.user.name, role: payload.user.role, email: payload.user.email });
-        try {
-          localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify({ name: payload.user.name, role: payload.user.role, email: payload.user.email }));
-        } catch (e) {}
-      }
-
-      return true;
-    } catch (err) {
-      // treat as refresh failure
-      return false;
-    }
-  }, [token, refreshTokenState]);
+    },
+    [token, refreshTokenState]
+  );
 
   // start timers whenever tokenExpiresAt changes
   useEffect(() => {
@@ -320,7 +385,39 @@ export function AuthProvider({ children }) {
 
   // safe setters (wrapped with useCallback so consumers can pass stable refs)
   const setUser = useCallback((u) => setUserState(u ? { name: u.name, role: u.role, email: u.email } : null), []);
-  const setVillageId = useCallback((id) => setVillageIdState(id ?? null), []);
+
+  // setVillageId setter (string)
+  const setVillageId = useCallback((id) => {
+    setVillageIdState(id ?? null);
+    // if id is cleared, also clear village object for consistency
+    if (!id) {
+      setVillageState(null);
+      try {
+        localStorage.removeItem(STORAGE_KEYS.SELECTED_VILLAGE);
+      } catch (e) {}
+    }
+  }, []);
+
+  // setVillage: accepts full village object or null. keeps villageId in sync
+  const setVillage = useCallback((v) => {
+    if (v && typeof v === "object") {
+      setVillageState(v);
+      const id = v.villageId ?? v.village_id ?? (v.id ?? null);
+      if (id !== undefined && id !== null) {
+        setVillageIdState(String(id));
+      }
+      try {
+        localStorage.setItem(STORAGE_KEYS.SELECTED_VILLAGE, JSON.stringify(v));
+      } catch (e) {}
+    } else {
+      setVillageState(null);
+      setVillageIdState(null);
+      try {
+        localStorage.removeItem(STORAGE_KEYS.SELECTED_VILLAGE);
+      } catch (e) {}
+    }
+  }, []);
+
   // setToken accepts optional expiresIn/expiresAt/refreshToken
   const setToken = useCallback((t, options = {}) => {
     const { expiresIn, expiresAt, refreshToken: rToken } = options;
@@ -382,6 +479,7 @@ export function AuthProvider({ children }) {
   const logout = useCallback(() => {
     setUserState(null);
     setVillageIdState(null);
+    setVillageState(null);
     setTokenState(null);
     setTokenExpiresAt(null);
     setRefreshTokenState(null);
@@ -389,6 +487,7 @@ export function AuthProvider({ children }) {
     try {
       localStorage.removeItem(STORAGE_KEYS.USER);
       localStorage.removeItem(STORAGE_KEYS.VILLAGE);
+      localStorage.removeItem(STORAGE_KEYS.SELECTED_VILLAGE);
       localStorage.removeItem(STORAGE_KEYS.TOKEN);
       localStorage.removeItem(STORAGE_KEYS.TOKEN_EXPIRY);
       localStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
@@ -407,6 +506,8 @@ export function AuthProvider({ children }) {
     setUser,
     villageId,
     setVillageId,
+    village,
+    setVillage,
     token,
     setToken,
     tokenExpiresAt,

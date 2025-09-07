@@ -7,11 +7,12 @@ import Dashboard from "./pages/Dashboard.jsx";
 import Home from "./pages/VillageHome.jsx";
 import FamilyList from "./pages/FamilyList";
 import PrivateRoute from "./component/PrivateRoute"; // new file below
+import LandingPage from "./pages/LandingPage.jsx";
 
 export default function App() {
   return (
     <Routes>
-      <Route path="/" element={<Auth />} />
+      <Route path="/" element={<LandingPage />} />
       <Route path="/login" element={<Auth />} />
 
       {/* Protected routes */}

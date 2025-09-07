@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useContext } from "react";
+import React, { useEffect, useState, useRef, useContext, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { X } from "lucide-react";
 import { stageDefs } from "../config/stages";
@@ -22,62 +22,33 @@ export default function VillageModal({
   const [saveStatus, setSaveStatus] = useState(""); // '', 'Saving…', 'Saved', 'Error'
   const saveTimerRef = useRef(null);
 
-  // Helper: determine canonical village id from various possible fields
-  const getVillageId = (v) => {
-    if (!v) return null;
-    return v.villageId ?? v.id ?? v._id ?? null;
-  };
-
-  // Helper: create a storage-safe key for the current folder/path
-  const getStoragePathKey = () => {
+  // Helper to close the modal and clear selectedVillageId in context/localStorage
+  const closeModal = useCallback(() => {
     try {
-      // Use location pathname as "folder" context. e.g. "/villages/list" -> "_villages_list"
-      const path = window.location && window.location.pathname ? window.location.pathname : "root";
-      const safe = path.replace(/\//g, "_") || "_root";
-      return safe;
+      if (typeof setSelectedVillageId === "function") setSelectedVillageId(null);
     } catch (e) {
-      return "root";
-    }
-  };
-
-  // Save village id locally for this "folder" (path). Also maintain a small recent list.
-  const saveVillageIdLocally = (id) => {
-    if (!id) return;
-    try {
-      const pathKey = getStoragePathKey();
-      const singleKey = `selectedVillageId:${pathKey}`;
-      const recentKey = `recentVillageIds:${pathKey}`;
-
-      // store single value
-      localStorage.setItem(singleKey, String(id));
-
-      // store recent list (most recent first), keep up to 10
-      const raw = localStorage.getItem(recentKey);
-      let recent = [];
-      try {
-        recent = raw ? JSON.parse(raw) : [];
-        if (!Array.isArray(recent)) recent = [];
-      } catch (e) {
-        recent = [];
-      }
-
-      // remove existing entry for this id
-      recent = recent.filter((r) => String(r?.id) !== String(id));
-      recent.unshift({ id: String(id), ts: Date.now() });
-
-      if (recent.length > 10) recent = recent.slice(0, 10);
-      localStorage.setItem(recentKey, JSON.stringify(recent));
-    } catch (e) {
-      // localStorage might be disabled -> ignore silently but warn in dev
+      // swallow to avoid breaking UI
       // eslint-disable-next-line no-console
-      console.warn("saveVillageIdLocally failed:", e);
+      console.warn("setSelectedVillageId threw while clearing:", e);
     }
-  };
+    try {
+      localStorage.removeItem("selectedVillageId");
+    } catch (e) {
+      // ignore localStorage errors (private mode, etc.)
+    }
+    try {
+      onClose();
+    } catch (e) {
+      // keep UI responsive
+      // eslint-disable-next-line no-console
+      console.warn("onClose threw:", e);
+    }
+  }, [onClose, setSelectedVillageId]);
 
-  // put village id into context (if setter exists). support multiple id field names.
+  // put village id into context (if setter exists) and persist locally when modal opens
   useEffect(() => {
     if (!open) return;
-    const id = getVillageId(village);
+    const id = village?.villageId ?? village?.id ?? village?._id ?? null;
     if (id && typeof setSelectedVillageId === "function") {
       try {
         setSelectedVillageId(id);
@@ -87,11 +58,21 @@ export default function VillageModal({
         console.warn("setSelectedVillageId threw:", e);
       }
     }
-
-    // store villageId locally per-folder/path whenever modal opens or village changes
-    if (id) {
-      saveVillageIdLocally(id);
+    try {
+      if (id != null) localStorage.setItem("selectedVillageId", String(id));
+    } catch (e) {
+      // ignore localStorage errors
     }
+
+    // cleanup when the modal is closed/unmounted
+    return () => {
+      try {
+        if (typeof setSelectedVillageId === "function") setSelectedVillageId(null);
+      } catch (e) {}
+      try {
+        localStorage.removeItem("selectedVillageId");
+      } catch (e) {}
+    };
   }, [village, open, setSelectedVillageId]);
 
   // initialize fields when village changes
@@ -127,11 +108,11 @@ export default function VillageModal({
   useEffect(() => {
     if (!open) return;
     const onKey = (e) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") closeModal();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [open, closeModal]);
 
   if (!open) return null;
 
@@ -140,7 +121,7 @@ export default function VillageModal({
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
         <div className="bg-white rounded-md shadow w-full max-w-2xl p-4 border border-gray-200 relative">
           <button
-            onClick={onClose}
+            onClick={closeModal}
             className="absolute right-3 top-3 p-1 rounded hover:bg-gray-100"
             aria-label="Close"
           >
@@ -149,7 +130,7 @@ export default function VillageModal({
           <div className="py-8 text-center text-gray-600">No details available.</div>
           <div className="mt-2 flex justify-end">
             <button
-              onClick={onClose}
+              onClick={closeModal}
               className="px-3 py-1.5 rounded border border-gray-200 hover:bg-gray-50 text-sm"
             >
               Close
@@ -185,10 +166,7 @@ export default function VillageModal({
     setSaveError(null);
     setSaveStatus("Saving…");
     try {
-      await onSaveVillage({
-        villageId: getVillageId(village),
-        updatedBy: value,
-      });
+      await onSaveVillage({ villageId: village.villageId ?? village.id ?? village._id, updatedBy: value });
       setSaving(false);
       setSaveStatus("Saved");
       saveTimerRef.current = setTimeout(() => setSaveStatus(""), 1500);
@@ -236,18 +214,15 @@ export default function VillageModal({
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
       onMouseDown={(e) => {
         // close when clicking the overlay (but not when clicking inner content)
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget) closeModal();
       }}
       role="dialog"
       aria-modal="true"
     >
-      <div
-        className="bg-white rounded-md shadow w-full max-w-2xl p-4 border border-gray-200 relative"
-        onMouseDown={(e) => e.stopPropagation()}
-      >
+      <div className="bg-white rounded-md shadow w-full max-w-2xl p-4 border border-gray-200 relative" onMouseDown={(e)=>e.stopPropagation()}>
         {/* Close Button */}
         <button
-          onClick={onClose}
+          onClick={closeModal}
           className="absolute right-3 top-3 p-1 rounded hover:bg-gray-100"
           aria-label="Close"
         >
@@ -257,9 +232,7 @@ export default function VillageModal({
         {/* Header */}
         <header className="mb-3">
           <h2 className="text-base font-semibold text-gray-800">{village.name}</h2>
-          <p className="text-xs text-gray-600">
-            Village ID: {getVillageId(village)}
-          </p>
+          <p className="text-xs text-gray-600">Village ID: {village.villageId ?? village.id ?? village._id}</p>
         </header>
 
         {/* Stage Progress */}
@@ -287,9 +260,7 @@ export default function VillageModal({
                       >
                         {done ? "✓" : sub.id}
                       </span>
-                      <span className={done ? "text-gray-800 text-sm" : "text-gray-500 text-sm"}>
-                        {sub.name}
-                      </span>
+                      <span className={done ? "text-gray-800 text-sm" : "text-gray-500 text-sm"}>{sub.name}</span>
                     </li>
                   );
                 })}
@@ -343,7 +314,7 @@ export default function VillageModal({
             Open Profile
           </button>
           <button
-            onClick={onClose}
+            onClick={closeModal}
             className="px-3 py-1.5 rounded-md border border-gray-300 bg-white text-sm text-gray-700 hover:bg-gray-50"
           >
             Close
