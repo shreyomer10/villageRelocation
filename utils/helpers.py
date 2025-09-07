@@ -1,4 +1,5 @@
 import bcrypt
+from flask import jsonify
 
 
 def hash_password(plain: str) -> bytes:
@@ -22,3 +23,10 @@ def to_village_card(doc: dict):
         "lastUpdatedAt": doc.get("updated_at"),
     }
 
+def make_response(error: bool, message: str, result=None, status: int = 200):
+    """Helper to standardize API responses"""
+    return jsonify({
+        "error": error,
+        "message": message,
+        "result": result
+    }), status
