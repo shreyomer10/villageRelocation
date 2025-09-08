@@ -1,5 +1,8 @@
 // src/pages/LandingPage.jsx
 import React, { useEffect, useState, useRef } from "react";
+import { useNavigate } from "react-router-dom";
+
+
 
 const BASE_URL = "https://villagerelocation.onrender.com"; // API prefix from spec
 
@@ -525,6 +528,7 @@ function Footer({ contact }) {
    Uses robust fetch handling and displays all returned fields where possible
    --------------------------- */
 export default function LandingPage() {
+  const navigate = useNavigate();
   const [splashVisible, setSplashVisible] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -612,12 +616,12 @@ export default function LandingPage() {
 
   if (splashVisible) {
     return (
-      <div className="flex h-screen w-screen items-center justify-center bg-[#f8f9fa]">
+      <div className="flex h-screen w-screen items-center bg-[#fff8e1] justify-center bg-[#f8f9fa]">
         <div className="text-center">
-          <img src="/images/logo.png" alt="logo" className="mx-auto h-28 w-28" />
+          <img src="/images/logo.png" alt="logo" className="mx-auto h-20 w-28" />
           <h1 className="mt-6 text-2xl font-bold text-gray-800">MAATI</h1>
           <p className="text-gray-600 mt-2">Ensuring Transparency & Fair Relocation</p>
-          <p className="text-gray-500 italic text-sm">Government of India Initiative</p>
+          <p className="text-blue-500 italic text-sm">Government of India Initiative</p>
         </div>
       </div>
     );
@@ -644,7 +648,7 @@ export default function LandingPage() {
         </div>
 
         <nav className="hidden md:flex gap-6 text-sm items-center">
-          <a href="/login" className="hover:text-[#1b5e20]">Login</a>
+          <button onClick={() => navigate("/login")} className="hover:text-[#1b5e20]">Login</button>
           <a href="#guidelines" className="hover:text-[#1b5e20]">Guidelines</a>
           <a href="#about" className="hover:text-[#1b5e20]">About Us</a>
           <a href="#faq" className="hover:text-[#1b5e20]">FAQs</a>
