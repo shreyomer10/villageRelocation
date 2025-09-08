@@ -226,14 +226,19 @@ export default function MainNavbar({
                 onClick={() => navigate("/dashboard")}
                 src={logoUrl}
                 alt="logo"
-                className="w-14 h-14 object-contain cursor-pointer"
+                className="w-18 h-14 object-contain cursor-pointer"
               />
-              {showWelcome && displayName && (
-                <div className="text-lg font-semibold text-black leading-tight">
+               <div className="text-left">
+                <div className="text-[#4a3529] font-bold text-xl leading-none">{brandDevanagari}</div>
+                <div className="text-xs text-[#4a3529] tracking-wider">{brandLatin}</div>
+              </div>
+              
+            </div>
+            {showWelcome && displayName && (
+                <div className="text-lg font-semibold text-right text-black leading-tight">
                   Welcome {displayName} {displayRole ? `(${displayRole})` : ""}
                 </div>
               )}
-            </div>
             {centerContent && (
               <div
                 className="absolute left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2 z-10 pointer-events-auto"
@@ -243,10 +248,7 @@ export default function MainNavbar({
               </div>
             )}
             <div className="flex items-center justify-end gap-4">
-              <div className="text-right">
-                <div className="text-[#4a3529] font-bold text-xl leading-none">{brandDevanagari}</div>
-                <div className="text-xs text-[#4a3529] tracking-wider">{brandLatin}</div>
-              </div>
+             
               {rightContent && <div className="mr-2">{rightContent}</div>}
               <button
                 onClick={() => setMenuOpen(!menuOpen)}

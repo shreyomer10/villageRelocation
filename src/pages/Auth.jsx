@@ -94,16 +94,40 @@ export default function Auth() {
   }
 
   return (
+
     <div className="flex items-center justify-center min-h-screen bg-[#f7f2e7]">
-      <div className="w-full max-w-sm p-8 bg-white rounded-xl shadow-md text-center">
+      <header className="fixed top-0 left-0 w-full bg-[#c8e6c9]/95 backdrop-blur-sm p-4 flex items-center justify-between shadow z-50">
+        <div className="flex items-center px-10 gap-2">
+          <img src="/images/logo.png" alt="logo" className="h-14 w-20 rounded" />
+          <div>
+            <h1 className="text-lg font-bold text-[#1b5e20]">MAATI</h1>
+            <p className="text-xs text-gray-700">Village Relocation Monitoring</p>
+          </div>
+        </div>
+
+        <nav className="hidden md:flex gap-6 text-sm px-40 items-center">
+          <a href="/" className="hover:text-[#1b5e20]">home</a>
+        </nav>
+
+        
+
+      
+      </header>
+      <div className="w-full max-w-sm p-8 py-auto bg-white rounded-xl shadow-md text-center">
+        <div className="flex text-lg font-bold text-[#1b5e20] justify-center py-7">
+  <h1 className="text-3xl font-extrabold tracking-wide drop-shadow-sm">
+    LOG IN
+  </h1>
+</div>
+
         {/* Logo */}
-        <div className="mb-6">
+        {/* <div className="mb-6">
           <img
             src="images/logo.png"
             alt="Logo"
             className="mx-auto w-24 h-24 object-contain"
           />
-        </div>
+        </div> */}
 
         {/* Error */}
         {error && (
