@@ -24,6 +24,8 @@ class VillageCard(BaseModel):
     updatedBy:str
     siteOfRelocation:str
     areaDiverted:str
+    lat:float
+    long:float
 
     @classmethod
     def from_mongo(cls, doc: dict):
@@ -56,8 +58,8 @@ class Village(BaseModel):
     janpad: str
     subD2: str
     district: str
-    lat: str
-    long: str
+    lat: float
+    long: float
     currentStage: str
     currentSubStage: str
     kme: HttpUrl

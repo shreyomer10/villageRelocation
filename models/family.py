@@ -19,6 +19,7 @@ class Members(BaseModel):
     age:str
     healthStatus:str
     photo:HttpUrl
+   # relocationOption:int   #new
 
 class Family(BaseModel):
     familyId:str
@@ -30,6 +31,8 @@ class Family(BaseModel):
     mukhiyaAge:str
     updatedAt:str
     updatedBy:str
+   # lat:float   #new
+   # long:float   #new
     members:List[Members]=[]
     photos:List[HttpUrl]=[]
     docs:List[HttpUrl]=[]

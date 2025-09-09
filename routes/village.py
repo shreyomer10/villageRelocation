@@ -34,6 +34,8 @@ def get_all_villages():
             "updatedBy": 1,
             "siteOfRelocation": 1,
             "areaDiverted": 1,
+            "lat":1,
+            "long":1
         }
 
         cursor = villages.find({}, projection).sort("name", ASCENDING)
