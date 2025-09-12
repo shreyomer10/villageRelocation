@@ -11,10 +11,19 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@googlemaps/markerclusterer": "^2.6.2",
+    "@react-google-maps/api": "^2.20.7",
+    "cesium": "^1.133.1",
+    "homepage": ".",
+    "leaflet": "^1.9.4",
     "lucide-react": "^0.542.0",
+    "maplibre-gl": "^5.7.1",
+    "mappls-web-maps": "^3.7.1-0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
-    "react-router-dom": "^6.30.1"
+    "react-leaflet": "^5.0.0",
+    "react-router-dom": "^6.30.1",
+    "resium": "^1.19.0-beta.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.33.0",
@@ -28,6 +37,7 @@
     "globals": "^16.3.0",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.17",
-    "vite": "^5.4.2"
+    "vite": "^5.4.2",
+    "vite-plugin-cesium": "^1.2.23"
   }
 }
