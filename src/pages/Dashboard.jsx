@@ -1,20 +1,20 @@
 // File: src/pages/Dashboard.jsx
 import React, { useEffect, useState, useContext, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { Search, Sliders, Calendar, CheckCircle, Map, LayoutGrid, ChevronLeft, ChevronRight } from "lucide-react";
+import { Search, Sliders, Calendar, CheckCircle, Map, LayoutGrid } from "lucide-react";
 
 import MainNavbar from "../component/MainNavbar";
 import VillageModal from "../component/VillageModal";
 import { stageDefs } from "../config/stages";
 import { AuthContext } from "../context/AuthContext";
-import { GoogleMap, useJsApiLoader, MarkerF } from "@react-google-maps/api";
+import { GoogleMap, useJsApiLoader, MarkerF, InfoWindowF } from "@react-google-maps/api";
 
 // --- New Map Configuration ---
 const LIBRARIES = ["places"];
 const MAP_CENTER = { lat: 22.48, lng: 81.78 };
 const OVERLAY_TOP_PADDING = 140;
-const SUMMARY_EXPANDED_WIDTH = 520; // must match QuickSummaryTable expandedWidth
-const SUMMARY_COLLAPSED_WIDTH = 56; // must match QuickSummaryTable collapsedWidth
+const SUMMARY_EXPANDED_WIDTH = 520; // kept for fit calculations if needed in future
+const SUMMARY_COLLAPSED_WIDTH = 56; // kept for fit calculations if needed in future
 
 const MAP_OPTIONS = {
   restriction: {
@@ -30,8 +30,18 @@ const MAP_OPTIONS = {
   mapTypeId: "hybrid",
 };
 
-// --- Replace your QuickSummaryTable with this corrected version ---
-function QuickSummaryTable({ villages = [], maxRows = 10, isMapView = false, collapsed = false, onToggleCollapsed, onGuidelineClick }) {
+// Utility: safely parse numbers from strings
+function toNumberOrNull(v) {
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v === "string") {
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+// (Optional) QuickSummaryTable left intact but no longer shown in map view — kept for later use.
+function QuickSummaryTable({ villages = [], maxRows = 10, isMapView = false, collapsed = false, onToggleCollapsed }) {
   const TOTAL_SUBSTAGES = 29;
   const TOTAL_STAGES = 6;
   const rows = villages.slice(0, maxRows);
@@ -62,9 +72,7 @@ function QuickSummaryTable({ villages = [], maxRows = 10, isMapView = false, col
           if (typeof sub === 'number' && sub > 0 && list.length >= sub) return list[sub - 1].name ?? list[sub - 1].title ?? String(sub);
         }
       }
-    } catch (e) {
-      // ignore and fallback below
-    }
+    } catch (e) {}
     return substage == null ? '-' : String(substage);
   }
 
@@ -79,40 +87,12 @@ function QuickSummaryTable({ villages = [], maxRows = 10, isMapView = false, col
       }}
     >
       <div className="flex items-center justify-between px-3 py-2">
-        <h3
-          className={`font-semibold text-gray-800 transition-opacity duration-200 ${
-            collapsed ? "opacity-0 pointer-events-none" : "opacity-100"
-          }`}
-        >
+        <h3 className={`font-semibold text-gray-800 transition-opacity duration-200 ${collapsed ? "opacity-0 pointer-events-none" : "opacity-100"}`}>
           {!collapsed ? "Quick View" : ""}
         </h3>
-
         <div className="flex items-center gap-2">
           {!collapsed && <div className="text-sm text-gray-500">Top {rows.length}</div>}
-
-          {/* Guideline button moved INSIDE the QuickSummaryTable header (right corner of the table) */}
-          <button
-            onClick={() => typeof onGuidelineClick === 'function' && onGuidelineClick()}
-            aria-label="Guideline"
-            className={`px-3 py-1 rounded-md text-sm bg-white border border-gray-200 hover:bg-gray-50 focus:outline-none ${collapsed ? 'hidden' : ''}`}
-            type="button"
-          >
-            Guideline
-          </button>
-
-          {isMapView ? (
-            <button
-              onClick={() => onToggleCollapsed && onToggleCollapsed((c) => !c)}
-              aria-label={collapsed ? "Open quick view" : "Collapse quick view"}
-              className="p-2 bg-gray-100 rounded hover:bg-gray-200 flex items-center justify-center"
-              style={{ width: 36, height: 36 }}
-              type="button"
-            >
-              {collapsed ? <ChevronLeft className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
-            </button>
-          ) : (
-            <div style={{ width: 36, height: 36 }} aria-hidden />
-          )}
+          <div style={{ width: 36, height: 36 }} aria-hidden />
         </div>
       </div>
 
@@ -136,7 +116,6 @@ function QuickSummaryTable({ villages = [], maxRows = 10, isMapView = false, col
                 <th className="pb-2">Progress</th>
               </tr>
             </thead>
-
             <tbody>
               {rows.map((v) => {
                 const progress = computeProgress(v.currentStage, v.currentSubStage);
@@ -149,13 +128,7 @@ function QuickSummaryTable({ villages = [], maxRows = 10, isMapView = false, col
                     <td className="py-3 pr-2 w-[180px]">
                       <div className="text-xs text-gray-600 mb-1">{progress}%</div>
                       <div className="w-full bg-gray-200 rounded h-2 overflow-hidden">
-                        <div
-                          className="h-2 rounded"
-                          style={{ width: `${progress}%`, transition: "width 800ms ease" }}
-                          aria-valuenow={progress}
-                          aria-valuemin={0}
-                          aria-valuemax={100}
-                        />
+                        <div className="h-2 rounded" style={{ width: `${progress}%`, transition: "width 800ms ease" }} aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100} />
                       </div>
                     </td>
                   </tr>
@@ -163,40 +136,30 @@ function QuickSummaryTable({ villages = [], maxRows = 10, isMapView = false, col
               })}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="py-6 text-center text-gray-500">
-                    No villages to show
-                  </td>
+                  <td colSpan={5} className="py-6 text-center text-gray-500">No villages to show</td>
                 </tr>
               )}
             </tbody>
           </table>
-
-          <div className="mt-3 text-xs text-gray-500">
-            Progress is approximated from stage/substage. Adjust TOTAL_SUBSTAGES/TOTAL_STAGES if needed.
-          </div>
+          <div className="mt-3 text-xs text-gray-500">Progress is approximated from stage/substage. Adjust TOTAL_SUBSTAGES/TOTAL_STAGES if needed.</div>
         </div>
       </div>
     </div>
   );
 }
 
+// (Unused) VillageCard kept for backward compatibility if you want to re-enable card UI later
 const VillageCard = ({ village, onOpen }) => {
   const { name, villageId, status = "N/A", date, lastUpdatedOn } = village;
   const bgColor = status === "N/A" ? "bg-white" : "bg-violet-50";
   const displayDate = date ?? lastUpdatedOn ?? "-";
 
   return (
-    <div
-      role="button"
-      onClick={() => onOpen(village)}
-      className={`${bgColor} rounded-lg p-5 shadow-md hover:shadow-lg transition transform hover:-translate-y-1 cursor-pointer border border-gray-100`}
-      aria-label={`Open ${name}`}
-    >
+    <div role="button" onClick={() => onOpen(village)} className={`${bgColor} rounded-lg p-5 shadow-md hover:shadow-lg transition transform hover:-translate-y-1 cursor-pointer border border-gray-100`} aria-label={`Open ${name}`}>
       <div className="mb-3">
         <h3 className="font-semibold text-gray-800 text-lg">{name}</h3>
         <p className="text-sm text-gray-600 mt-1">Village ID: {villageId}</p>
       </div>
-
       <div className="flex items-center justify-between mt-6 gap-2">
         <div className="flex items-center gap-2 text-sm text-gray-700 flex-1 min-w-0">
           {status !== "N/A" ? (
@@ -208,7 +171,6 @@ const VillageCard = ({ village, onOpen }) => {
             <span className="text-gray-500">N/A</span>
           )}
         </div>
-
         <div className="flex items-center gap-1 text-sm text-gray-600 flex-shrink-0">
           <Calendar className="w-4 h-4" />
           <span>{displayDate}</span>
@@ -217,6 +179,97 @@ const VillageCard = ({ village, onOpen }) => {
     </div>
   );
 };
+
+// New table for grid/card view. Clicking a row opens the modal for that village.
+function VillagesTable({ villages = [], onRowClick }) {
+  const TOTAL_SUBSTAGES = 29;
+  const TOTAL_STAGES = 6;
+
+  function computeProgress(stage, substage) {
+    const s = Number(stage) || 0;
+    const sub = Number(substage) || 0;
+    const perStage = TOTAL_SUBSTAGES / TOTAL_STAGES;
+    const completed = Math.max(0, (s - 1) * perStage + sub);
+    const pct = Math.round((completed / TOTAL_SUBSTAGES) * 100);
+    return Math.min(100, Math.max(0, pct));
+  }
+
+  function getSubstageName(stage, substage) {
+    try {
+      const s = Number(stage) || 0;
+      const sub = substage == null ? null : substage;
+      const stageDef = stageDefs.find(sd => sd.stage_id === s || sd.stageId === s || sd.id === s);
+      if (stageDef) {
+        const list = stageDef.substages || stageDef.subStages || stageDef.subStagesList || stageDef.steps || stageDef.children || stageDef.sub || stageDef.sub_stage_list;
+        if (Array.isArray(list)) {
+          const found = list.find(ss => ss.substage_id === sub || ss.sub_stage_id === sub || ss.id === sub || ss.index === sub || ss.order === sub || ss.name === sub || ss.title === sub);
+          if (found) return found.name ?? found.title ?? String(sub);
+          if (typeof sub === 'number' && sub > 0 && list.length >= sub) return list[sub - 1].name ?? list[sub - 1].title ?? String(sub);
+        }
+      }
+    } catch (e) {
+      // ignore and fallback
+    }
+    return substage == null ? '-' : String(substage);
+  }
+
+  return (
+    <div className="bg-white rounded-lg shadow px-4 py-4 overflow-x-auto">
+      <table className="w-full table-auto text-left text-base">
+        <thead>
+          <tr className="text-gray-600 border-b">
+            <th className="py-2">Village</th>
+            <th className="py-2">ID</th>
+            <th className="py-2">Stage</th>
+            <th className="py-2">Substage</th>
+            <th className="py-2">Site</th>
+            <th className="py-2">Last Updated</th>
+            <th className="py-2">Progress</th>
+          </tr>
+        </thead>
+        <tbody>
+          {villages.map((v) => {
+            const progress = computeProgress(v.currentStage, v.currentSubStage);
+            const substageName = getSubstageName(v.currentStage, v.currentSubStage);
+
+            return (
+              <tr
+                key={v.villageId}
+                onClick={() => onRowClick(v)}
+                className="cursor-pointer hover:bg-gray-50 border-b"
+                title={`Open ${v.name}`}
+              >
+                <td className="py-3 pr-4 truncate max-w-[280px]">{v.name}</td>
+                <td className="py-3 pr-4 text-gray-700">{v.villageId}</td>
+                <td className="py-3 pr-4 text-gray-700">{v.status}</td>
+                <td className="py-3 pr-4 text-gray-600">{substageName}</td>
+                <td className="py-3 pr-4 truncate max-w-[260px]">{v.siteOfRelocation ?? "-"}</td>
+                <td className="py-3 pr-4 text-gray-600">{v.date ?? v.lastUpdatedOn ?? "-"}</td>
+                <td className="py-3 pr-4 w-[180px]">
+                  <div className="text-xs text-gray-600 mb-1">{progress}%</div>
+                  <div className="w-full bg-gray-200 rounded h-2 overflow-hidden">
+                    <div
+                      className="h-2 rounded bg-green-500"
+                      style={{ width: `${progress}%`, transition: "width 600ms ease" }}
+                      aria-valuenow={progress}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                    />
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+          {villages.length === 0 && (
+            <tr>
+              <td colSpan={7} className="py-6 text-center text-gray-500">No villages to show</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -230,14 +283,18 @@ export default function Dashboard() {
   const [listError, setListError] = useState(null);
 
   const [selectedVillage, setSelectedVillage] = useState(null);
-  const [viewMode, setViewMode] = useState("grid");
+  const [viewMode, setViewMode] = useState("map");
 
-  // controls the collapsed state of the summary aside in map view
   const [summaryCollapsed, setSummaryCollapsed] = useState(false);
+
+  // NEW: track hovered marker ID to show a stylish white box
+  const [hoveredVillageId, setHoveredVillageId] = useState(null);
 
   const mapRef = useRef(null);
   const geocoderRef = useRef(null);
   const searchDebounceRef = useRef(null);
+  const hoverTimeoutRef = useRef(null);
+  const filterButtonRef = useRef(null);
 
   const { isLoaded: isMapLoaded } = useJsApiLoader({
     id: "google-map-script",
@@ -274,22 +331,9 @@ export default function Dashboard() {
 
     const updatedBy = item.updatedBy ?? item.updated_by ?? item.updatedByUser ?? item.updated_by_user ?? item.updated_by_name ?? "-";
 
-    const lat =
-      typeof item.lat === "number"
-        ? item.lat
-        : typeof item.latitude === "number"
-        ? item.latitude
-        : typeof item.lat_dd === "number"
-        ? item.lat_dd
-        : null;
-    const lng =
-      typeof item.lng === "number"
-        ? item.lng
-        : typeof item.long === "number"
-        ? item.long
-        : typeof item.longitude === "number"
-        ? item.longitude
-        : null;
+    // Robust latitude/longitude parsing: accept numbers or numeric strings
+    const lat = toNumberOrNull(item.lat ?? item.latitude ?? item.lat_dd ?? item.latitude_dd ?? item.coordinates?.lat ?? null);
+    const lng = toNumberOrNull(item.lng ?? item.long ?? item.longitude ?? item.longitude_dd ?? item.coordinates?.lng ?? null);
 
     return {
       name,
@@ -357,7 +401,6 @@ export default function Dashboard() {
     return () => {
       mounted = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const toggleStage = (s) => {
@@ -419,6 +462,10 @@ export default function Dashboard() {
       return;
     }
     setSelectedVillage(village);
+
+    // Keep hovered id to keep InfoWindow shown while modal opens
+    setHoveredVillageId(String(village.villageId));
+
     try {
       if (typeof setVillageId === "function") setVillageId(String(village.villageId));
       if (typeof setVillage === "function") setVillage(village);
@@ -431,9 +478,25 @@ export default function Dashboard() {
     } catch (e) {
       console.warn("Could not write to localStorage:", e);
     }
+
+    // ensure map centers a bit so modal doesn't cover marker
+    try {
+      if (mapRef.current && typeof village.lat === "number" && typeof village.lng === "number") {
+        mapRef.current.panTo({ lat: village.lat, lng: village.lng });
+        mapRef.current.setZoom(Math.max(mapRef.current.getZoom() || 12, 13));
+        const rightPadding = viewMode === "map" ? (summaryCollapsed ? SUMMARY_COLLAPSED_WIDTH : SUMMARY_EXPANDED_WIDTH) + 48 : 60;
+        if (viewMode === "map") mapRef.current.panBy(Math.round(rightPadding / 2), -Math.round(OVERLAY_TOP_PADDING / 2));
+      }
+    } catch (e) {
+      // ignore pan failures
+    }
   };
 
-  const closeModal = () => setSelectedVillage(null);
+  const closeModal = () => {
+    setSelectedVillage(null);
+    // small delay to allow mouse to move away - clear hovered id
+    setTimeout(() => setHoveredVillageId(null), 80);
+  };
 
   const filteredVillages = villages.filter((v) => {
     const matchSearch = [v.name, v.villageId, v.status, v.updatedBy].join(" ").toLowerCase().includes(searchTerm.toLowerCase());
@@ -448,9 +511,7 @@ export default function Dashboard() {
       const parsed = JSON.parse(storedUserRaw);
       if (parsed?.name) username = parsed.name;
     }
-  } catch (e) {
-    // ignore parsing error
-  }
+  } catch (e) {}
 
   const handleAddVillage = () => navigate("/villages/new");
   const openProfile = (village) => {
@@ -476,7 +537,6 @@ export default function Dashboard() {
     mapRef.current = null;
   };
 
-  // Fit/pan logic that accounts for the summary box width on the right
   const requestFitToFiltered = () => {
     if (!mapRef.current || !isMapLoaded) return;
     const markers = filteredVillages.filter((v) => typeof v.lat === "number" && typeof v.lng === "number");
@@ -486,7 +546,6 @@ export default function Dashboard() {
       mapRef.current.panTo(MAP_CENTER);
       mapRef.current.setZoom(11);
       try {
-        // make a slight shift so default center isn't covered by right-side UI
         if (viewMode === "map") mapRef.current.panBy(Math.round(rightPadding / 2), -Math.round(OVERLAY_TOP_PADDING / 2));
       } catch (e) {}
       return;
@@ -497,7 +556,6 @@ export default function Dashboard() {
       mapRef.current.panTo({ lat: only.lat, lng: only.lng });
       mapRef.current.setZoom(14);
       try {
-        // shift the map so the single marker appears left of center and not hidden by the aside
         if (viewMode === "map") mapRef.current.panBy(Math.round(rightPadding / 2), -Math.round(OVERLAY_TOP_PADDING / 2));
       } catch (e) {}
       return;
@@ -506,7 +564,6 @@ export default function Dashboard() {
     try {
       const bounds = new window.google.maps.LatLngBounds();
       markers.forEach((m) => bounds.extend({ lat: m.lat, lng: m.lng }));
-      // fit bounds while leaving extra 'right' space for the overlay
       mapRef.current.fitBounds(bounds, { top: OVERLAY_TOP_PADDING + 40, right: rightPadding, bottom: 60, left: 60 });
     } catch (e) {
       console.warn("fitBounds failed:", e);
@@ -515,9 +572,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (viewMode !== "map" || !isMapLoaded) return;
-    // when filteredVillages or collapsed changes, re-fit
     requestFitToFiltered();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filteredVillages, viewMode, isMapLoaded, summaryCollapsed]);
 
   const doMapSearch = (term) => {
@@ -558,6 +613,7 @@ export default function Dashboard() {
     };
   }, []);
 
+  // Renders the map container and markers. In MAP view we show markers and a hover InfoWindow.
   const renderMapBackground = () => {
     if (viewMode !== "map") return null;
     if (!isMapLoaded) {
@@ -568,12 +624,80 @@ export default function Dashboard() {
       );
     }
 
+    // find hovered village to render InfoWindow
+    const hovered = filteredVillages.find((v) => String(v.villageId) === String(hoveredVillageId));
+
     return (
       <div style={{ position: "fixed", top: 0, left: 0, width: "100%", height: "100%", zIndex: 0 }}>
-        <GoogleMap mapContainerStyle={{ width: "100%", height: "100%" }} center={MAP_CENTER} zoom={12} options={MAP_OPTIONS} onLoad={handleMapLoad} onUnmount={handleMapUnmount}>
-          {filteredVillages.filter((v) => typeof v.lat === "number" && typeof v.lng === "number").map((village) => (
-            <MarkerF key={village.villageId} position={{ lat: village.lat, lng: village.lng }} title={village.name} onClick={() => handleOpenVillage(village)} />
-          ))}
+        <GoogleMap
+          mapContainerStyle={{ width: "100%", height: "100%", pointerEvents: "auto" }}
+          center={MAP_CENTER}
+          zoom={12}
+          options={{ ...MAP_OPTIONS, clickableIcons: true }}
+          onLoad={handleMapLoad}
+          onUnmount={handleMapUnmount}
+          onClick={() => {
+            // clicking on map clears the hover hint (but not the selected modal)
+            setHoveredVillageId(null);
+          }}
+        >
+          {filteredVillages
+            .filter((v) => typeof v.lat === "number" && typeof v.lng === "number")
+            .map((village) => {
+              const isHovered = String(village.villageId) === String(hoveredVillageId);
+              return (
+                <MarkerF
+                  key={village.villageId}
+                  position={{ lat: village.lat, lng: village.lng }}
+                  title={village.name}
+                  clickable={true}
+                  optimized={false}
+                  zIndex={isHovered ? 9999 : 1}
+                  options={{
+                    cursor: "pointer",
+                  }}
+                  onClick={() => {
+                    // when clicked: open modal and keep the hovered id so InfoWindow remains visible
+                    setHoveredVillageId(String(village.villageId));
+                    handleOpenVillage(village);
+                  }}
+                  onMouseOver={() => {
+                    // set hovered id consistently as string
+                    setHoveredVillageId(String(village.villageId));
+                  }}
+                  onMouseOut={() => {
+                    // only clear if the leaving marker is the current hovered (prevents race)
+                    setHoveredVillageId((prev) => (String(prev) === String(village.villageId) ? null : prev));
+                  }}
+                />
+              );
+            })}
+
+          {hovered && typeof hovered.lat === "number" && typeof hovered.lng === "number" && (
+            <InfoWindowF
+              position={{ lat: hovered.lat, lng: hovered.lng }}
+              options={{
+                disableAutoPan: true,
+                pixelOffset: (window.google && window.google.maps) ? new window.google.maps.Size(0, -34) : undefined,
+                maxWidth: 240,
+              }}
+              onCloseClick={() => setHoveredVillageId(null)}
+            >
+              <div
+                className="rounded-lg shadow-lg p-3 bg-white"
+                style={{ minWidth: 140, pointerEvents: "auto", cursor: "default" }}
+                role="dialog"
+                aria-label={`Info for ${hovered.name}`}
+                onMouseEnter={() => {
+                  // keep it shown while user interacts
+                  setHoveredVillageId(String(hovered.villageId));
+                }}
+              >
+                <div className="text-sm font-semibold text-gray-800 truncate">{hovered.name}</div>
+                <div className="text-xs text-gray-500 mt-1">Click marker to open details</div>
+              </div>
+            </InfoWindowF>
+          )}
         </GoogleMap>
       </div>
     );
@@ -587,35 +711,53 @@ export default function Dashboard() {
       return <div className="text-center py-6 text-red-600">{listError}</div>;
     }
 
+    // GRID view now shows a table (no cards). Clicking a row opens VillageModal.
     if (viewMode === "grid") {
-      return (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-8">
-          {filteredVillages.map((v, i) => (
-            <VillageCard key={v.villageId ?? i} village={v} onOpen={handleOpenVillage} />
-          ))}
-        </div>
-      );
+      return <VillagesTable villages={filteredVillages} onRowClick={handleOpenVillage} />;
+    }
+
+    // MAP view: we intentionally show only the map and NO table/aside
+    if (viewMode === "map") {
+      return <div className="h-[60vh]" />; // empty content placeholder; map is rendered behind
     }
 
     return null;
   };
 
   return (
+    // The outer wrapper is set to pointer-events: none so the map (behind) can receive clicks.
+    // We explicitly enable pointer-events on interactive UI pieces below.
     <div className={`min-h-screen font-sans ${viewMode === "map" ? "bg-transparent" : "bg-[#f8f0dc]"}`}>
+
       {renderMapBackground()}
 
-      <div style={{ position: "relative", zIndex: 20 }}>
-        <MainNavbar name={username} showWelcome={true} />
+      {/* top-level container that sits above the map, but is mostly pointer-events: none
+          so clicks pass through to the map. Interactive controls are explicitly enabled below. */}
+      <div style={{ position: "relative", zIndex: 20, pointerEvents: "none" }}>
 
-        <div className="px-6 py-6">
+        {/* navbar must be interactive -> enable pointer events for it */}
+        <div style={{ pointerEvents: "auto" }}>
+          <MainNavbar name={(() => {
+            const storedUserRaw = localStorage.getItem("user");
+            try {
+              if (storedUserRaw) {
+                const parsed = JSON.parse(storedUserRaw);
+                if (parsed?.name) return parsed.name;
+              }
+            } catch (e) {}
+            return "Shrey";
+          })()} showWelcome={true} />
+        </div>
+
+        {/* top controls (search, filter, view toggles) need to be interactive */}
+        <div style={{ pointerEvents: "auto" }} className="px-6 py-6">
           <div className="mx-auto flex flex-col md:flex-row items-center gap-4 justify-between">
             <div className="flex items-center w-full md:max-w-2xl gap-4">
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
                 <input type="text" placeholder="Search by name, id or status" value={searchTerm} onChange={(e) => handleSearchChange(e.target.value)} className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white" aria-label="Search villages" />
               </div>
-
-              <div className="relative">
+              <div className="relative" ref={filterButtonRef} onMouseEnter={() => { if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current); setStageFilterOpen(true); }} onMouseLeave={() => { hoverTimeoutRef.current = setTimeout(() => setStageFilterOpen(false), 150); }} onFocus={() => { if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current); setStageFilterOpen(true); }} onBlur={() => { hoverTimeoutRef.current = setTimeout(() => setStageFilterOpen(false), 150); }}>
                 <button onClick={() => setStageFilterOpen((s) => !s)} className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50" aria-expanded={stageFilterOpen} aria-controls="stage-filter">
                   <Sliders className="w-4 h-4" />
                   <span className="text-gray-700 text-sm">Filter</span>
@@ -648,35 +790,23 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Guideline button removed from here and placed inside the QuickSummaryTable as requested */}
             <div className="w-full md:w-auto flex justify-end">
-              <div aria-hidden style={{ width: 0, height: 0 }} />
+              <button onClick={() => navigate("/villages/new")} className="px-4 py-2 bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-400" aria-label="Add new village">Guideline</button>
             </div>
           </div>
         </div>
 
-        <main className="max-w-10xl mx-8 p-8 relative z-20">
-          {viewMode === "map" ? (
-            <div className="relative">
-              <div>{renderContent()}</div>
-
-              {/* For map view we render the aside absolutely and allow collapse/expand. The Dashboard holds collapsed state so map-fitting can account for width changes. */}
-              <aside className="absolute right-6 top-28 z-40">
-                <QuickSummaryTable villages={filteredVillages} maxRows={12} isMapView collapsed={summaryCollapsed} onToggleCollapsed={setSummaryCollapsed} onGuidelineClick={handleAddVillage} />
-              </aside>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 lg:grid-cols-[1fr_520px] gap-8">
-              <div>{renderContent()}</div>
-              <aside>
-                {/* In card/grid view the summary table is static (not collapsible) and sits like a normal aside */}
-                <QuickSummaryTable villages={filteredVillages} maxRows={12} isMapView={false} onGuidelineClick={handleAddVillage} />
-              </aside>
-            </div>
-          )}
+        {/* main content area left non-interactive so clicks hit the map below */}
+        <main className="max-w-10xl mx-8 p-8 relative z-20" style={{ pointerEvents: "none" }}>
+          <div className="relative">
+            <div>{renderContent()}</div>
+          </div>
         </main>
 
-        <VillageModal open={!!selectedVillage} village={selectedVillage} onClose={closeModal} onOpenProfile={openProfile} onSaveVillage={handleSaveVillage} />
+        {/* Make modal interactive -> pointer-events: auto */}
+        <div style={{ pointerEvents: "auto" }}>
+          <VillageModal open={!!selectedVillage} village={selectedVillage} onClose={closeModal} onOpenProfile={openProfile} onSaveVillage={handleSaveVillage} />
+        </div>
 
         <div className="h-20" />
       </div>
