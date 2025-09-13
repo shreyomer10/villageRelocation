@@ -5,11 +5,13 @@ import { stageDefs } from "../config/stages";
 /**
  * Props:
  * - showSubStage (boolean): whether hovering a stage shows sub-stages (default: false)
+ * - showOnlyCurrentSubStage (boolean): when true, popup shows only the current sub-stage (default: false)
  * - currentStage (number): the active stage id/sequence (default: 0)
  * - currentSubStage (number?): the active sub-stage index (1-based) within the active stage (default: null)
  */
 export default function StageProgress({
   showSubStage = false,
+  showOnlyCurrentSubStage = false, // NEW
   currentStage = 0,
   currentSubStage = null,
 }) {
@@ -20,7 +22,7 @@ export default function StageProgress({
   // Calculate main progress percentage
   const progressPercent =
     currentStage <= 1
-      ? 0   
+      ? 0
       : ((Math.min(currentStage, totalSteps) - 1) / (totalSteps - 1)) * 100;
 
   /** Determine sub-stage visual status */
@@ -108,17 +110,30 @@ export default function StageProgress({
                   stage.subStages.length > 0 && (
                     <div className="absolute top-14 bg-white border border-gray-200 rounded-lg shadow-lg p-2 w-48 z-50">
                       <ul className="space-y-1">
-                        {stage.subStages.map((sub, idx) => {
-                          const status = getSubStatus(seq, idx);
+                        {/*
+                          If showOnlyCurrentSubStage is true, filter subStages to only the one
+                          whose getSubStatus(...) === "current". Otherwise show all.
+                        */}
+                        {(
+                          showOnlyCurrentSubStage
+                            ? stage.subStages.filter((_, idx) =>
+                                getSubStatus(seq, idx) === "current"
+                              )
+                            : stage.subStages
+                        ).map((sub, idx) => {
+                          // Note: when we filtered, idx refers to index in original array if we didn't re-map indexes.
+                          // To compute status reliably, find original index:
+                          const originalIdx = stage.subStages.indexOf(sub);
+                          const status = getSubStatus(seq, originalIdx);
 
                           return (
                             <li
-                              key={`${seq}-${sub.id}`} // ✅ safe unique key
+                              key={`${seq}-${sub.id}`}
                               className={`text-xs p-1 rounded transition-colors duration-200 ${
                                 status === "completed"
-                                  ? "bg-green-100 text-green-700 font-medium"
+                                  ? "bg-blue-100 text-blue-700 font-medium"
                                   : status === "current"
-                                  ? "bg-green-200 text-green-800 font-semibold"
+                                  ? "bg-orange-300 text-orange-800 font-semibold"
                                   : "text-gray-600"
                               }`}
                             >

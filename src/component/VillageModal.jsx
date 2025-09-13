@@ -188,7 +188,7 @@ export default function VillageModal({
         {/* Stage Progress - compact */}
         <div className="mb-4">
           <div className="mx-auto mx-w-auto">
-            <StageProgress  currentStage={currentSeq} currentSubStage={currentSub} />
+            <StageProgress  currentStage={currentSeq} currentSubStage={currentSub} showOnlyCurrentSubStage={true} showSubStage={true}/>
             <div className="mt-2 text-center">
   <h1 className="text-lg font-semibold">
     Current Stage: <span className="text-indigo-700">{stageName}</span>
