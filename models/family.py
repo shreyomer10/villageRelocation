@@ -1,43 +1,165 @@
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, field_validator, validator
 from typing import Optional, List
 
+from pydantic_core import ValidationError
 
+class StatusHistory(BaseModel):
+    status:int
+    comments:str
+    verifier:str
+    time: str          # ISO timestamp
+
+class UpdatesInsert(BaseModel):
+    currentStage:str
+    name:str
+    docs:List[str]=Field(default_factory=list)
+    notes:str
+    class Config:
+        extra = "forbid"
+
+class UpdatesUpdate(BaseModel):
+    currentStage:Optional[str]=None
+    name:Optional[str]=None
+    docs:Optional[List[str]]=Field(default_factory=list)
+    notes:Optional[str]=None
+    class Config:
+        extra = "forbid"
+
+
+
+class Updates(UpdatesInsert):
+
+    status:int
+    updateId:str                   
+    verifiedBy:str
+    verifiedAt:str
+    insertedBy:str
+    statusHistory:List[StatusHistory]
 
 
 class FamilyCard(BaseModel):
     familyId:str
     mukhiyaName:str
-    mukhiyaPhoto:HttpUrl
-    relocationOption:int
+    mukhiyaPhoto:str
+    relocationOption:str
 
     @classmethod
     def from_mongo(cls, doc: dict):
         return cls.model_validate(doc)
 
-class Members(BaseModel):
-    name:str
-    age:str
-    healthStatus:str
-    photo:HttpUrl
-   # relocationOption:int   #new
+
+class MemberInsert(BaseModel):
+    name: str
+    age: int
+    gender: str
+    healthIssues: Optional[str] = None
+    relocationOption:str
+    photo: Optional[str] = None
+    plotId: Optional[str] = None
+
+    class Config:
+        extra = "forbid"   # 🚫 reject unknown fields like "updates"
+
+
+
+class Member(MemberInsert):
+    updates: Optional[List[Updates]] = None
+    stagesCompleted:List[str]=Field(default_factory=list)
+    currentStage:str
+
+
+
 
 class Family(BaseModel):
-    familyId:str
+    #familyId:str
     mukhiyaName:str
-    mukhiyaPhoto:HttpUrl
-    relocationOption:int
+    mukhiyaPhoto:str
+    relocationOption:str
     villageId:str
     mukhiyaHealth:str
     mukhiyaAge:str
-    updatedAt:str
-    updatedBy:str
-   # lat:float   #new
-   # long:float   #new
-    members:List[Members]=[]
-    photos:List[HttpUrl]=[]
-    docs:List[HttpUrl]=[]
+    mukhiyaGender:str   
+    lat:float   #new
+    long:float   #new
+    plotId:Optional[str]=None #new
+    members:List[MemberInsert]=[]
+    photos:List[str]=[]
+    docs:List[str]=[]
 
+    class Config:
+        extra = "forbid"   # 🚫 reject unknown fields like "updates"
 
+    # ✅ validation: mukhiyaAge must be numeric string
+    @field_validator("mukhiyaAge")
     @classmethod
-    def from_mongo(cls, doc: dict):
-        return cls.model_validate(doc)
+    def validate_mukhiya_age(cls, v: str) -> str:
+        if not v.isdigit():
+            raise ValueError("Mukhiya age must be numeric (string of digits)")
+        return v
+
+    # ✅ validation: lat must be -90 to 90
+    @field_validator("lat")
+    @classmethod
+    def validate_lat(cls, v: float) -> float:
+        if not (-90 <= v <= 90):
+            raise ValueError("Latitude must be between -90 and 90")
+        return v
+
+    # ✅ validation: long must be -180 to 180
+    @field_validator("long")
+    @classmethod
+    def validate_long(cls, v: float) -> float:
+        if not (-180 <= v <= 180):
+            raise ValueError("Longitude must be between -180 and 180")
+        return v
+
+class FamilyUpdate(BaseModel):
+    #familyId: Optional[str] = None
+    mukhiyaName: Optional[str] = None
+    mukhiyaPhoto: Optional[str] = None
+    relocationOption: Optional[str] = None
+    villageId: Optional[str] = None
+    mukhiyaHealth: Optional[str] = None
+    mukhiyaAge: Optional[str] = None
+    mukhiyaGender: Optional[str] = None   
+
+    lat: Optional[float] = None
+    long: Optional[float] = None
+    plotId: Optional[str] = None
+    members: Optional[List[MemberInsert]] = None   # or List[Members]
+    photos: Optional[List[str]] = None
+    docs: Optional[List[str]] = None
+    class Config:
+        extra = "forbid"   # 🚫 reject unknown fields like "updates"
+
+
+
+    @field_validator("mukhiyaAge")
+    @classmethod
+    def validate_mukhiya_age(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not v.isdigit():
+            raise ValueError("Mukhiya age must be numeric (string of digits)")
+        return v
+
+    @field_validator("lat")
+    @classmethod
+    def validate_lat(cls, v: Optional[float]) -> Optional[float]:
+        if v is not None and not (-90 <= v <= 90):
+            raise ValueError("Latitude must be between -90 and 90")
+        return v
+
+    @field_validator("long")
+    @classmethod
+    def validate_long(cls, v: Optional[float]) -> Optional[float]:
+        if v is not None and not (-180 <= v <= 180):
+            raise ValueError("Longitude must be between -180 and 180")
+        return v
+
+
+class FamilyComplete(Family):
+    familyId:str
+    currentStage:str
+    updates:List[Updates]= Field(default_factory=list)
+    stagesCompleted:List[str]=Field(default_factory=list)
+    members: List[Member] = Field(default_factory=list)  # 👈
+

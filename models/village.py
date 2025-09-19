@@ -35,12 +35,13 @@ from typing import List, Optional
 
 
 class VillageLog(BaseModel):
+    type:str #new        meeting / family stage/community facility / family house
     updateTime: str
     updateBy: str
     comments: Optional[str] = None
 class Documents(BaseModel):
     name:str
-    url:HttpUrl
+    url:str
     currentStage:Optional[str]=None
     currentSubStage:Optional[str]=None
     notes:Optional[str]=None
@@ -62,12 +63,12 @@ class Village(BaseModel):
     long: float
     currentStage: str
     currentSubStage: str
-    kme: HttpUrl
+    kme: str
 
     docs: List[Documents] = []
-    photos: List[HttpUrl] = []
+    photos: List[str] = []
     logs: List[VillageLog] = []
-    familyMasterList:HttpUrl
+    familyMasterList:str
 
     # Example: ensure latitude/longitude look like numbers
     @field_validator("lat", "long")

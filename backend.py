@@ -8,6 +8,10 @@ from routes.auth import auth_bp
 from routes.village import village_bp
 from routes.family import family_bp
 from routes.maati import maati_bp
+from routes.meeting import meeting_bp
+from routes.admin.community import building_bp
+from routes.app.plotsVerification import plots_BP
+from routes.options import options_BP
 
 
 app = Flask(__name__)
@@ -35,7 +39,11 @@ app.register_blueprint(auth_bp,url_prefix="/")
 app.register_blueprint(village_bp,url_prefix="/")
 app.register_blueprint(family_bp,url_prefix="/")
 app.register_blueprint(maati_bp,url_prefix="/")
+app.register_blueprint(meeting_bp,url_prefix="/")
+app.register_blueprint(building_bp,url_prefix="/")
+app.register_blueprint(plots_BP,url_prefix="/")
 
+app.register_blueprint(options_BP,url_prefix="/")
 
 
 

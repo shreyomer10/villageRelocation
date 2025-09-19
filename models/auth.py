@@ -10,6 +10,7 @@ class User(BaseModel):
     role: str
     mobile: str
 
+
     @classmethod
     def from_mongo(cls, doc: dict):
         # Convert ObjectId to string for _id/sub
@@ -25,17 +26,18 @@ class AccessLevel(str, Enum):
     BLOCKED = "Blocked"
 
 
-class Operator(BaseModel):
-    sub: str = Field(alias="_id")  # MongoDB _id → sub
-    email: str
-    name: str
-    role: str
-    mobile: str
-    access: AccessLevel   # restricted field
 
-    @classmethod
-    def from_mongo(cls, doc: dict):
-        # Convert ObjectId to string for _id/sub
-        if "_id" in doc:
-            doc["_id"] = str(doc["_id"])
-        return cls.model_validate(doc)
+# class employees(BaseModel):
+#     sub: str = Field(alias="_id")  # MongoDB _id → sub
+#     email: str
+#     name: str
+#     role: str
+#     mobile: str
+#     access: AccessLevel   # restricted field
+
+#     @classmethod
+#     def from_mongo(cls, doc: dict):
+#         # Convert ObjectId to string for _id/sub
+#         if "_id" in doc:
+#             doc["_id"] = str(doc["_id"])
+#         return cls.model_validate(doc)

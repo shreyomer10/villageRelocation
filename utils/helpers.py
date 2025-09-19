@@ -30,3 +30,23 @@ def make_response(error: bool, message: str, result=None, status: int = 200):
         "message": message,
         "result": result
     }), status
+
+
+from pydantic import ValidationError
+
+def validation_error_response(err: ValidationError, status: int = 400):
+    """
+    Standardized response for Pydantic ValidationError
+    Returns same format as make_response
+    """
+    details = {}
+    for e in err.errors():
+        field_path = ".".join(map(str, e["loc"]))
+        details[field_path] = e["msg"]
+
+    return make_response(
+        True,
+        "Validation error",
+        result={"details": details},
+        status=status
+    )
