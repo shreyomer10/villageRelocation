@@ -181,7 +181,7 @@ const VillageCard = ({ village, onOpen }) => {
 };
 
 // New table for grid/card view. Clicking a row opens the modal for that village.
-function VillagesTable({ villages = [], onRowClick }) {
+function VillagesTable({ villages = [], onRowClick, onRowHoverStart, onRowHoverEnd }) {
   const TOTAL_SUBSTAGES = 29;
   const TOTAL_STAGES = 6;
 
@@ -238,6 +238,11 @@ function VillagesTable({ villages = [], onRowClick }) {
                 onClick={() => onRowClick(v)}
                 className="cursor-pointer hover:bg-gray-50 border-b"
                 title={`Open ${v.name}`}
+                onMouseEnter={() => onRowHoverStart?.(v)}
+                onMouseLeave={() => onRowHoverEnd?.(v)}
+                onFocus={() => onRowHoverStart?.(v)}
+                onBlur={() => onRowHoverEnd?.(v)}
+                tabIndex={0}
               >
                 <td className="py-3 pr-4 truncate max-w-[280px]">{v.name}</td>
                 <td className="py-3 pr-4 text-gray-700">{v.villageId}</td>
@@ -293,7 +298,8 @@ export default function Dashboard() {
   const mapRef = useRef(null);
   const geocoderRef = useRef(null);
   const searchDebounceRef = useRef(null);
-  const hoverTimeoutRef = useRef(null);
+  const hoverTimeoutRef = useRef(null); // used for stage filter hover
+  const rowHoverTimeoutRef = useRef(null); // used for table-row hover
   const filterButtonRef = useRef(null);
 
   const { isLoaded: isMapLoaded } = useJsApiLoader({
@@ -610,10 +616,38 @@ export default function Dashboard() {
   useEffect(() => {
     return () => {
       if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+      if (rowHoverTimeoutRef.current) clearTimeout(rowHoverTimeoutRef.current);
     };
   }, []);
 
-  // Renders the map container and markers. In MAP view we show markers and a hover InfoWindow.
+  // Handlers so table rows behave like markers
+  const handleRowHoverStart = (village) => {
+    if (!village) return;
+    if (rowHoverTimeoutRef.current) {
+      clearTimeout(rowHoverTimeoutRef.current);
+      rowHoverTimeoutRef.current = null;
+    }
+    setHoveredVillageId(String(village.villageId));
+
+    // If map is visible, pan/zoom to the village similar to marker hover
+    try {
+      if (viewMode === "map" && mapRef.current && typeof village.lat === "number" && typeof village.lng === "number") {
+        mapRef.current.panTo({ lat: village.lat, lng: village.lng });
+        mapRef.current.setZoom(Math.max(mapRef.current.getZoom() || 12, 13));
+        const rightPadding = viewMode === "map" ? (summaryCollapsed ? SUMMARY_COLLAPSED_WIDTH : SUMMARY_EXPANDED_WIDTH) + 48 : 60;
+        mapRef.current.panBy(Math.round(rightPadding / 2), -Math.round(OVERLAY_TOP_PADDING / 2));
+      }
+    } catch (e) {
+      // ignore pan failures
+    }
+  };
+
+  const handleRowHoverEnd = (_village) => {
+    // small delay so quick mouse moves don't hide immediately
+    if (rowHoverTimeoutRef.current) clearTimeout(rowHoverTimeoutRef.current);
+    rowHoverTimeoutRef.current = setTimeout(() => setHoveredVillageId(null), 120);
+  };
+
   const renderMapBackground = () => {
     if (viewMode !== "map") return null;
     if (!isMapLoaded) {
@@ -713,7 +747,7 @@ export default function Dashboard() {
 
     // GRID view now shows a table (no cards). Clicking a row opens VillageModal.
     if (viewMode === "grid") {
-      return <VillagesTable villages={filteredVillages} onRowClick={handleOpenVillage} />;
+      return <VillagesTable villages={filteredVillages} onRowClick={handleOpenVillage} onRowHoverStart={handleRowHoverStart} onRowHoverEnd={handleRowHoverEnd} />;
     }
 
     // MAP view: we intentionally show only the map and NO table/aside
@@ -796,8 +830,8 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* main content area left non-interactive so clicks hit the map below */}
-        <main className="max-w-10xl mx-8 p-8 relative z-20" style={{ pointerEvents: "none" }}>
+        {/* main content area - interactive when not in map mode */}
+        <main className="max-w-10xl mx-8 p-8 relative z-20" style={{ pointerEvents: viewMode === "map" ? "none" : "auto" }}>
           <div className="relative">
             <div>{renderContent()}</div>
           </div>
