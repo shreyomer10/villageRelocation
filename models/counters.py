@@ -119,8 +119,25 @@ def get_next_option_stage_id(db,optionId:str) -> str:
     )
     return f"{optionId}_{counter['seq']}"
 
-from pymongo import ReturnDocument
+def get_next_villageStage_id(db) -> str:
 
+    counter = db.counters.find_one_and_update(
+        {"_id": f"stages_maati"},
+        {"$inc": {"seq": 1}},
+        upsert=True,
+        return_document=ReturnDocument.AFTER
+    )
+    return f"Stage_{counter['seq']}"
+
+def get_next_villageSubStage_id(db,stageId:str) -> str:
+
+    counter = db.counters.find_one_and_update(
+        {"_id": f"sub_{stageId}"},
+        {"$inc": {"seq": 1}},
+        upsert=True,
+        return_document=ReturnDocument.AFTER
+    )
+    return f"{stageId}_{counter['seq']}"
 def get_next_family_update_id(db, villageId: str, optionId: str) -> str:
     """
     Generate a unique ID with a given prefix, per village and option.
@@ -137,6 +154,7 @@ def get_next_family_update_id(db, villageId: str, optionId: str) -> str:
     return f"VOF_{villageId}_{optionId}_{counter['seq']}"
 
 def get_next_member_update_id(db, familyId: str, optionId: str) -> str:
+
     counter = db.counters.find_one_and_update(
         {"_id": f"VOM_{familyId}_{optionId}"},
         {"$inc": {"seq": 1}},
@@ -144,3 +162,18 @@ def get_next_member_update_id(db, familyId: str, optionId: str) -> str:
         return_document=ReturnDocument.AFTER
     )
     return f"VOM_{familyId}_{optionId}_{counter['seq']}"
+
+
+def get_next_villageStageUpdate_id(db, villageId: str) -> str:
+    """
+    Generate a unique verification ID per village and type.
+
+    Format: V_<villageId>_<typeId>_<seq>
+    """
+    counter = db.counters.find_one_and_update(
+        {"_id": f"Updates_{villageId}"},
+        {"$inc": {"seq": 1}},
+        upsert=True,
+        return_document=ReturnDocument.AFTER
+    )
+    return f"Updates_{villageId}_{counter['seq']}"

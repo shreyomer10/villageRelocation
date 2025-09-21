@@ -4,7 +4,7 @@ from flask import Flask, Blueprint, logging,request, jsonify,make_response
 from flask_cors import CORS
 from pydantic import ValidationError
 from pymongo import  ASCENDING, DESCENDING
-from models.village import FamilyCount, Stage, SubStage, Village, VillageCard
+from models.village import FamilyCount, SubStage, Village, VillageCard
 from config import JWT_EXPIRE_MIN, db
 
 import logging
@@ -62,35 +62,35 @@ def get_all_villages():
             "result":None
         }), 500
 
-@village_bp.route("/timeline", methods=["GET"])
-def get_timeline():
-    try:
-        cursor = stages.find({}, {"_id": 0})  # fetch all, exclude _id
-        result = []
+# @village_bp.route("/timeline", methods=["GET"])
+# def get_timeline():
+#     try:
+#         cursor = stages.find({}, {"_id": 0})  # fetch all, exclude _id
+#         result = []
 
-        for doc in cursor:
-            try:
-                # validate and parse using Pydantic
-                stage = Stage.model_validate(doc)
-                result.append(stage.model_dump())
-            except ValidationError as ve:
-                logging.error(f"Stage validation failed: {ve}")
-                # skip invalid record or include an error marker
-                continue  
+#         for doc in cursor:
+#             try:
+#                 # validate and parse using Pydantic
+#                 stage = Stage.model_validate(doc)
+#                 result.append(stage.model_dump())
+#             except ValidationError as ve:
+#                 logging.error(f"Stage validation failed: {ve}")
+#                 # skip invalid record or include an error marker
+#                 continue  
 
-        return jsonify({
-            "error": False,
-            "message": "Successfully Fetched timeline",
-            "result": result
-        }), 200
+#         return jsonify({
+#             "error": False,
+#             "message": "Successfully Fetched timeline",
+#             "result": result
+#         }), 200
 
-    except Exception as e:
-        logging.exception("Error fetching timeline data")
-        return jsonify({
-            "error": True,
-            "message": str(e),
-            "result":None
-        }), 500
+#     except Exception as e:
+#         logging.exception("Error fetching timeline data")
+#         return jsonify({
+#             "error": True,
+#             "message": str(e),
+#             "result":None
+#         }), 500
 
 
 @village_bp.route("/villages/family-count", defaults={"village_id": None}, methods=["GET"])

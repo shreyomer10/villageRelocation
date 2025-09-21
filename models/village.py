@@ -1,18 +1,102 @@
-from pydantic import BaseModel, HttpUrl, ValidationError, field_validator
+from pydantic import BaseModel, Field, HttpUrl, ValidationError, field_validator
 from typing import Optional, List
 
 
-class SubStage(BaseModel):
-    subId: int
-    name: str
-    desc: Optional[str] = None
 
 
-class Stage(BaseModel):
-    stageId: int
+# class StatusHistory(BaseModel):
+#     comments:str
+#     verifier:str
+#     time: str          # ISO timestamp
+
+class VillageUpdatesInsert(BaseModel):
+    currentStage:str
+    currentSubStage:str
+    name:str
+    docs:List[str]=Field(default_factory=list)
+    notes:str
+    class Config:
+        extra = "forbid"
+
+class VillageUpdatesUpdate(BaseModel):
+    currentStage:Optional[str]=None
+    currentSubStage:Optional[str]=None
+
+    name:Optional[str]=None
+    docs:Optional[List[str]]=Field(default_factory=list)
+    notes:Optional[str]=None
+    class Config:
+        extra = "forbid"
+
+
+
+class VillageUpdates(VillageUpdatesInsert):
+    updateId:str                   
+    verifiedBy:str
+    verifiedAt:str
+
+
+
+
+
+
+
+class SubStageInsert(BaseModel):
     name: str
     desc: Optional[str] = None
-    substages: List[SubStage] = []
+    deleted:bool=False
+    position: Optional[int] = None  # ✅ new: position index
+
+    class Config:
+        extra = "forbid"   # ❌ reject unknown fields
+   
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v):
+        if v is not None and not v.strip():
+            raise ValueError("Stage name cannot be empty if provided")
+        return v
+
+    
+
+class SubStageUpdate(BaseModel):
+    name: Optional[str]
+    desc: Optional[str] = None
+    deleted:bool=False
+    class Config:
+        extra = "forbid"   # ❌ reject unknown fields
+
+    
+
+class SubStage(SubStageInsert):
+    subStageId:str
+
+class StageInsert(BaseModel):
+    name: str
+    desc: Optional[str] = None
+    stages: List[SubStageInsert]= Field(default_factory=list)
+    deleted:bool=False
+    class Config:
+        extra = "forbid"   # ❌ reject unknown fields
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v):
+        if v is not None and not v.strip():
+            raise ValueError("Stage name cannot be empty if provided")
+        return v
+
+
+class StageUpdate(BaseModel):
+    name: Optional[str]
+    desc: Optional[str] = None
+    deleted:bool=False
+    class Config:
+        extra = "forbid"   # ❌ reject unknown fields
+    
+
+class Stages(StageInsert):
+    stageId:str
 
 
 class VillageCard(BaseModel):
@@ -30,8 +114,7 @@ class VillageCard(BaseModel):
     @classmethod
     def from_mongo(cls, doc: dict):
         return cls.model_validate(doc)
-    
-from typing import List, Optional
+
 
 
 class VillageLog(BaseModel):
@@ -61,14 +144,19 @@ class Village(BaseModel):
     district: str
     lat: float
     long: float
-    currentStage: str
-    currentSubStage: str
     kme: str
 
     docs: List[Documents] = []
     photos: List[str] = []
     logs: List[VillageLog] = []
     familyMasterList:str
+
+
+    currentStage:str
+    currentSubStage: str
+
+    updates:List[VillageUpdates]= Field(default_factory=list)
+    completed_substages:List[str]=Field(default_factory=list)
 
     # Example: ensure latitude/longitude look like numbers
     @field_validator("lat", "long")
@@ -84,6 +172,9 @@ class Village(BaseModel):
     @classmethod
     def from_mongo(cls, doc: dict):
         return cls.model_validate(doc)
+
+
+
 class FamilyCount(BaseModel):
     villageId: str
     totalFamilies: int

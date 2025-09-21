@@ -9,11 +9,14 @@ class User(BaseModel):
     name: str
     role: str
     mobile: str
+    villageId:str
+
+    class Config:
+        extra = "forbid"  
 
 
     @classmethod
     def from_mongo(cls, doc: dict):
-        # Convert ObjectId to string for _id/sub
         if "_id" in doc:
             doc["_id"] = str(doc["_id"])
         return cls.model_validate(doc)

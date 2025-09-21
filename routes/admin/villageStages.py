@@ -1,0 +1,455 @@
+
+import datetime as dt
+import logging
+
+from flask import Blueprint, logging,request, jsonify
+from pydantic import ValidationError
+from models.village import StageInsert,Stages,SubStage,SubStageInsert,SubStageUpdate,StageUpdate, VillageUpdates, VillageUpdatesInsert, VillageUpdatesUpdate
+from models.counters import get_next_villageStage_id, get_next_villageStageUpdate_id, get_next_villageSubStage_id
+from utils.helpers import make_response, validation_error_response
+from config import  db
+
+from pymongo import errors  
+buildings = db.buildings
+villages = db.villages
+plots = db.plots
+families = db.testing
+stages = db.stages
+
+villageStages_BP = Blueprint("villageStages",__name__)
+
+from datetime import datetime
+from pymongo import ReturnDocument
+
+#dashboard overall stages and substages 
+
+
+
+@villageStages_BP.route("/stages/insert", methods=["POST"])
+def insert_stage():
+    try:
+        payload = request.get_json(force=True)
+        if not payload:
+            return make_response(True, "Missing request body", status=400)
+
+        # Validate input
+        try:
+            option_obj = StageInsert(**payload)
+        except ValidationError as ve:
+            return validation_error_response(ve)
+
+        # Generate new optionId (sequence or custom logic)
+        new_option_id = get_next_villageStage_id(db)
+
+
+        # ✅ Generate stageIds and validate with BuildingStages model
+        stages_with_id = []
+        for stage in option_obj.stages:
+            stage_id = get_next_villageSubStage_id(db, new_option_id)
+            stage_full = SubStage(
+                subStageId=stage_id,
+                **stage.model_dump(exclude_none=True)
+            )
+            stages_with_id.append(stage_full)
+
+        # ✅ Build Building object with IDs
+        option_complete = Stages(
+            stageId=new_option_id,
+            name=option_obj.name,
+            desc=option_obj.desc,
+            stages=stages_with_id,
+            deleted=False
+        )
+
+        # ✅ Properly dump nested models
+        option_dict = option_complete.model_dump(exclude_none=True)
+        option_dict["stages"] = [s.model_dump(exclude_none=True) for s in stages_with_id]
+
+        stages.insert_one(option_dict)
+
+        return make_response(
+            False,
+            "Stage inserted successfully",
+            result=option_complete.model_dump(exclude_none=True),
+            status=200
+        )
+    except Exception as e:
+        return make_response(True, f"Error inserting Stage: {str(e)}", status=500)
+
+@villageStages_BP.route("/stages/<stageId>", methods=["PUT"])
+def update_Stage(stageId):
+    try:
+        payload = request.get_json(force=True)
+        if not payload:
+            return make_response(True, "Missing request body", status=400)
+
+        # Stages should not be updated here
+        if "stages" in payload:
+            return make_response(True, "Updating stages is not allowed here", status=400)
+
+        try:
+            update_obj = StageUpdate(**payload)
+        except ValidationError as ve:
+            return validation_error_response(ve)
+
+        stage = stages.find_one({"stageId": str(stageId), "deleted": False})
+        if not stage:
+            return make_response(True, "Stage not found", status=404)
+
+        # Only update provided fields
+        update_dict = update_obj.model_dump(
+            exclude_unset=True,
+            exclude_none=True,
+            exclude={"stages"}
+        )
+
+        if not update_dict:
+            return make_response(True, "No valid fields to update", status=400)
+
+        stages.update_one({"stageId": str(stageId)}, {"$set": update_dict})
+
+        return make_response(False, "Stage updated successfully", result=update_dict)
+
+    except Exception as e:
+        return make_response(True, f"Error updating option: {str(e)}", status=500)
+
+
+@villageStages_BP.route("/stages/<stageId>", methods=["DELETE"])
+def delete_Stage(stageId):
+    try:
+        stage = stages.find_one({"stageId": str(stageId)})
+        if not stage:
+            return make_response(True, "Stage not found", status=404)
+
+        # status_history = option.get("statusHistory", [])
+        # status_history.append({
+        #     "status": "DELETED",
+        #     "time": datetime.utcnow().isoformat()
+        # })
+
+        stages.update_one(
+            {"stageId": str(stageId)},
+            {"$set": {"deleted": True}}
+        )
+
+        return make_response(False, "Stage deleted successfully")
+
+    except Exception as e:
+        return make_response(True, f"Error deleting option: {str(e)}", status=500)
+
+
+@villageStages_BP.route("/stages", methods=["GET"])
+def get_Stages():
+    try:
+        docs = list(stages.find({"deleted": False}, {"_id": 0}))
+
+        if not docs:
+            return make_response(True, "No Stages found", status=404)
+
+        return make_response(False, "Stages fetched successfully", result={"count": len(docs), "items": docs}, status=200)
+
+    except Exception as e:
+        return make_response(True, f"Error fetching stages: {str(e)}", status=500)
+
+
+@villageStages_BP.route("/deleted_stages", methods=["GET"])
+def get_deleted_stages():
+    try:
+        docs = list(stages.find({"deleted": True}, {"_id": 0}))
+        if not docs:
+            return make_response(True, "No deleted stages found", status=404)
+
+        return make_response(False, "Deleted stages fetched successfully", result={"count": len(docs), "items": docs}, status=200)
+
+    except Exception as e:
+        return make_response(True, f"Error fetching deleted stages: {str(e)}", status=500)
+    
+
+@villageStages_BP.route("/deleted_substages/<stageId>", methods=["GET"])
+def get_deleted_substages(stageId):
+    try:
+        option = stages.find_one(
+            {"stageId": stageId, "deleted": False},
+            {"_id": 0}
+        )
+        if not option:
+            return make_response(True, "Stage not found", status=404)
+
+        deleted_stages = [s for s in option.get("stages", []) if s.get("deleted", False)]
+
+        if not deleted_stages:
+            return make_response(True, "No deleted sub stages found", status=404)
+
+        return make_response(
+            False,
+            "Deleted sub stages fetched successfully",
+            result={"count": len(deleted_stages), "items": deleted_stages},
+            status=200
+        )
+    except Exception as e:
+        return make_response(True, f"Error fetching deleted sub stages: {str(e)}", status=500)
+
+
+@villageStages_BP.route("/substage/insert/<stageId>", methods=["POST"])
+def insert_substage(stageId):
+    try:
+        payload = request.get_json(force=True)
+        if not payload:
+            return make_response(True, "Missing request body", status=400)
+
+        try:
+            stage_obj = SubStageInsert(**payload)
+        except ValidationError as ve:
+            return make_response(True, "Validation error", result=ve.errors(), status=400)
+
+        option = stages.find_one({"stageId": stageId, "deleted": False})
+        if not option:
+            return make_response(True, "stage not found", status=404)
+
+        # Generate stageId
+        new_stage_id = get_next_villageSubStage_id(db, stageId)
+        stage_complete = {
+            **stage_obj.model_dump(exclude_none=True, exclude={"position"}),
+            "subStageId": new_stage_id
+        }
+
+        stages = option.get("stages", [])
+
+        # Insert at position or append
+        pos = getattr(stage_obj, "position", None)
+        pos = pos if pos is not None else len(stages)
+        if pos < 0 or pos > len(stages):
+            return make_response(True, f"Position must be between 0 and {len(stages)}", status=400)
+
+        stages.insert(pos, stage_complete)
+
+        stages.update_one(
+            {"stageId": stageId},
+            {"$set": {"stages": stages}}
+        )
+
+        return make_response(False, "Sub stage inserted successfully", result=stage_complete)
+    except Exception as e:
+        return make_response(True, f"Error inserting sub stage: {str(e)}", status=500)
+
+
+@villageStages_BP.route("/sstages/<stageId>/<subStageId>", methods=["PUT"])
+def update_substage(stageId, subStageId):
+    try:
+        payload = request.get_json(force=True)
+        if not payload:
+            return make_response(True, "Missing request body", status=400)
+
+        try:
+            stage_obj = SubStageUpdate(**payload)
+        except ValidationError as ve:
+            return make_response(True, "Validation error", result=ve.errors(), status=400)
+
+        option = stages.find_one({"stageId": stageId, "deleted": False})
+        if not option:
+            return make_response(True, "stage not found", status=404)
+
+        stage = next((s for s in option.get("stages", []) if s["subStageId"] == subStageId), None)
+        if not stage:
+            return make_response(True, "Sub Stage not found", status=404)
+        if stage.get("deleted", False):
+            return make_response(True, "Cannot update deleted sub stage", status=400)
+
+        update_dict = stage_obj.model_dump(exclude_none=True)
+        if not update_dict:
+            return make_response(True, "No valid fields to update", status=400)
+
+        stages.update_one(
+            {"stageId": stageId, "stages.subStageId": subStageId},
+            {"$set": {f"stages.$.{k}": v for k, v in update_dict.items()}}
+        )
+        return make_response(False, "Sub stage updated successfully", result=update_dict)
+    except Exception as e:
+        return make_response(True, f"Error updating sub stage: {str(e)}", status=500)
+
+
+@villageStages_BP.route("/sstages/<stageId>/<subStageId>", methods=["DELETE"])
+def delete_sub_stage(stageId, subStageId):
+    try:
+        result = stages.update_one(
+            {"stageId": stageId, "stages.subStageId": subStageId},
+            {"$set": {"stages.$.deleted": True}}
+        )
+        if result.matched_count == 0:
+            return make_response(True, "Stage not found", status=404)
+
+        return make_response(False, "sub stage deleted successfully")
+    except Exception as e:
+        return make_response(True, f"Error deleting sub stage: {str(e)}", status=500)
+
+
+
+@villageStages_BP.route("/village_updates/insert/<villageId>", methods=["POST"])
+def insert_village_update(villageId):
+    try:
+        payload = request.get_json(force=True)
+        data = VillageUpdatesInsert(**payload)
+
+        # -------- Fetch village --------
+        village = villages.find_one({"villageId": villageId}, {"_id": 0})
+        if not village:
+            return make_response(True, f"Village {villageId} not found", status=404)
+
+        # -------- Validate Stage --------
+        stage_doc = stages.find_one({"stageId": data.currentStage}, {"_id": 0})
+        if not stage_doc:
+            return make_response(True, f"Stage {data.currentStage} not found", status=400)
+
+        # -------- Validate SubStage inside Stage --------
+        if data.currentSubStage not in stage_doc.get("subStages", []):
+            return make_response(True, f"SubStage {data.currentSubStage} not found in Stage {data.currentStage}", status=400)
+
+        # -------- Flatten All SubStages --------
+        all_stages = list(stages.find({}, {"_id": 0, "stageId": 1, "subStages": 1}))
+        flattened = [sub for st in all_stages for sub in st.get("subStages", [])]
+
+        if data.currentSubStage not in flattened:
+            return make_response(True, f"Invalid SubStage {data.currentSubStage}", status=400)
+
+        # -------- Pre-requisite check --------
+        idx = flattened.index(data.currentSubStage)
+        prereqs = flattened[:idx]
+
+        completed = set(village.get("completed_substages", []))
+        missing = [p for p in prereqs if p not in completed]
+        if missing:
+            return make_response(True, f"Missing prerequisite SubStages: {missing}", status=400)
+        new_update_id=get_next_villageStageUpdate_id(db,villageId=villageId)
+        # -------- Create Update Record --------
+        update_obj = VillageUpdates(
+            **data.dict(),
+            updateId=new_update_id,
+            verifiedBy="system",   # later replace with auth user
+            verifiedAt=datetime.utcnow().isoformat()
+        ).dict()
+
+
+        # -------- Update Village --------
+        villages.update_one(
+            {"villageId": villageId},
+            {
+                "$set": {
+                    "currentStage": data.currentStage,
+                    "currentSubStage": data.currentSubStage,
+                },
+                "$addToSet": {"completed_substages": data.currentSubStage},
+                "$push": {"updates": update_obj},  # insert into updates array
+            },
+        )
+
+        return make_response(False, "Village update inserted successfully", status=201)
+
+    except ValidationError as ve:
+        return make_response(True, ve.errors(), status=400)
+    except Exception as e:
+        return make_response(True, str(e), status=500)
+
+
+@villageStages_BP.route("/village_updates/<villageId>/<updateId>", methods=["PUT"])
+def update_village_update(villageId, updateId):
+    try:
+        payload = request.get_json(force=True)
+        userId = payload.pop("userId", None)
+        if not payload or not userId:
+            return make_response(True, "Missing request body or userId", status=400)
+
+        try:
+            update_obj = VillageUpdatesUpdate(**payload)
+        except ValidationError as ve:
+            return validation_error_response(ve)
+
+        # Stage/subStage cannot be changed
+        if update_obj.currentStage or update_obj.currentSubStage:
+            return make_response(True, "Updating stage/subStage not allowed", status=400)
+
+        # Fetch village and target update
+        village = villages.find_one({"villageId": villageId})
+        if not village:
+            return make_response(True, "Village not found", status=404)
+
+        update_item = next((u for u in village.get("updates", []) if u["updateId"] == updateId), None)
+        if not update_item:
+            return make_response(True, "Update not found", status=404)
+        if update_item.get("deleted", False):
+            return make_response(True, "Cannot update deleted update", status=400)
+
+        # Build update dict
+        now = datetime.utcnow().isoformat()
+        update_dict = update_obj.model_dump(exclude_none=True)
+        update_dict.update({"verifiedAt": now, "verifiedBy": userId})
+
+        villages.update_one(
+            {"villageId": villageId, "updates.updateId": updateId},
+            {"$set": {f"updates.$.{k}": v for k, v in update_dict.items()}},
+        )
+
+        return make_response(False, "Village update modified successfully", result=update_dict)
+    except Exception as e:
+        return make_response(True, f"Error updating village update: {str(e)}", status=500)
+
+
+@villageStages_BP.route("/village_updates/<villageId>/<updateId>", methods=["DELETE"])
+def delete_village_update(villageId, updateId):
+    try:
+        payload = request.get_json(force=True)
+        userId = payload.get("userId") if payload else None
+       # comments = payload.get("comments", "Deleted by user") if payload else "Deleted by user"
+
+        if not userId:
+            return make_response(True, "Missing userId in request body", status=400)
+
+        village = villages.find_one({"villageId": villageId})
+        if not village:
+            return make_response(True, "Village not found", status=404)
+
+        update_item = next((u for u in village.get("updates", []) if u["updateId"] == updateId), None)
+        if not update_item:
+            return make_response(True, "Update not found", status=404)
+
+        now = datetime.utcnow().isoformat()
+
+
+        villages.update_one(
+            {"villageId": villageId, "updates.updateId": updateId},
+            {
+                "$set": {"updates.$.deleted": True},
+            },
+        )
+
+        return make_response(False, "Village update deleted successfully")
+    except Exception as e:
+        return make_response(True, f"Error deleting village update: {str(e)}", status=500)
+
+
+@villageStages_BP.route("/village_updates/<villageId>", methods=["GET"])
+def get_village_updates(villageId):
+    try:
+        # --------- Fetch Village ---------
+        village = villages.find_one({"villageId": villageId}, {"_id": 0})
+        if not village:
+            return make_response(True, "Village not found", status=404)
+
+        # --------- Filter by Deleted Flag ---------
+        flag = request.args.get("deleted", "false").lower()  # default = false
+        if flag not in ["true", "false"]:
+            return make_response(True, "Invalid 'deleted' flag. Use true or false.", status=400)
+
+        deleted = flag == "true"
+        updates = [u for u in village.get("updates", []) if u.get("deleted", False) == deleted]
+
+        if not updates:
+            return make_response(True, "No updates found", status=404)
+
+        return make_response(
+            False,
+            "Village updates fetched successfully",
+            result={"count": len(updates), "items": updates},
+        )
+
+    except Exception as e:
+        return make_response(True, f"Error fetching village updates: {str(e)}", status=500)
