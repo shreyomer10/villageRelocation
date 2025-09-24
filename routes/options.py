@@ -34,6 +34,11 @@ def insert_option():
             option_obj = OptionInsert(**payload)
         except ValidationError as ve:
             return validation_error_response(ve)
+        total_options = options.count_documents({"deleted": False})
+        pos = option_obj.position if option_obj.position is not None else total_options
+
+        if pos < 0 or pos > total_options:
+            return make_response(True, f"Position must be between 0 and {total_options}", status=400)
 
         # Generate new optionId (sequence or custom logic)
         new_option_id = get_next_option_id(db)
@@ -55,9 +60,14 @@ def insert_option():
             name=option_obj.name,
             desc=option_obj.desc,
             stages=stages_with_id,
-            deleted=False
-        )
+            deleted=False,
+            position=pos
 
+        )
+        options.update_many(
+            {"deleted": False, "position": {"$gte": pos}},
+            {"$inc": {"position": 1}}
+        )
         # ✅ Properly dump nested models
         option_dict = option_complete.model_dump(exclude_none=True)
         option_dict["stages"] = [s.model_dump(exclude_none=True) for s in stages_with_id]
@@ -89,10 +99,15 @@ def update_option(optionId):
             update_obj = OptionUpdate(**payload)
         except ValidationError as ve:
             return validation_error_response(ve)
+        total_options = options.count_documents({"deleted": False})
 
         option = options.find_one({"optionId": str(optionId), "deleted": False})
         if not option:
             return make_response(True, "Option not found", status=404)
+        old_pos = option["position"]
+        new_pos = update_obj.position if update_obj.position is not None else old_pos
+        if new_pos < 0 or new_pos > total_options:
+            return make_response(True, f"Position must be between 0 and {total_options-1}", status=400)
 
         # Only update provided fields
         update_dict = update_obj.model_dump(
@@ -103,7 +118,16 @@ def update_option(optionId):
 
         if not update_dict:
             return make_response(True, "No valid fields to update", status=400)
-
+        if new_pos > old_pos:
+            options.update_many(
+                {"deleted": False, "position": {"$gt": old_pos, "$lte": new_pos}},
+                {"$inc": {"position": -1}}
+            )
+        elif new_pos < old_pos:
+            options.update_many(
+                {"deleted": False, "position": {"$gte": new_pos, "$lt": old_pos}},
+                {"$inc": {"position": 1}}
+            )
         options.update_one({"optionId": str(optionId)}, {"$set": update_dict})
 
         return make_response(False, "Option updated successfully", result=update_dict)
@@ -125,12 +149,16 @@ def delete_option(optionId):
         #     "status": "DELETED",
         #     "time": datetime.utcnow().isoformat()
         # })
+        pos = option.get("position")
 
         options.update_one(
             {"optionId": str(optionId)},
             {"$set": {"deleted": True}}
         )
-
+        options.update_many(
+            {"deleted": False, "position": {"$gt": pos}},
+            {"$inc": {"position": -1}}
+        )
         return make_response(False, "Option deleted successfully")
 
     except Exception as e:
@@ -141,7 +169,7 @@ def delete_option(optionId):
 @options_BP.route("/options", methods=["GET"])
 def get_options():
     try:
-        docs = list(options.find({"deleted": False}, {"_id": 0}))
+        docs = list(options.find({"deleted": False}, {"_id": 0}).sort("position", 1))
 
         if not docs:
             return make_response(True, "No options found", status=404)
@@ -156,7 +184,7 @@ def get_options():
 @options_BP.route("/deleted_options", methods=["GET"])
 def get_deleted_options():
     try:
-        docs = list(options.find({"deleted": True}, {"_id": 0}))
+        docs = list(options.find({"deleted": True}, {"_id": 0}).sort("position", 1))
         if not docs:
             return make_response(True, "No deleted options found", status=404)
 

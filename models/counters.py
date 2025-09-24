@@ -1,6 +1,19 @@
 from pymongo import ReturnDocument
 
 
+
+
+def get_next_user_id(db):
+    counter = db.counters.find_one_and_update(
+        {"_id": f"UID"},
+        {"$inc": {"seq": 1}},
+        upsert=True,
+        return_document=ReturnDocument.AFTER
+    )
+    return f"UID_{counter['seq']}"
+
+
+
 def get_next_meeting_id(db, villageId: str):
     counter = db.counters.find_one_and_update(
         {"_id": f"meeting_{villageId}"},

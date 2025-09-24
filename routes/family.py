@@ -243,6 +243,7 @@ def update_family(family_id):
         payload = request.get_json(force=True)
         if not payload:
             return make_response(True, "Missing request body", status=400)
+        
         forbidden_fields = {"updates", "currentStage", "statusHistory", "familyId","stagesCompleted"}
         if any(f in payload for f in forbidden_fields):
             return make_response(True, f"Fields {forbidden_fields} are not allowed here", status=400)

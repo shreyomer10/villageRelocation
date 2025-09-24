@@ -14,7 +14,8 @@ buildings = db.buildings
 villages = db.villages
 plots = db.plots
 families = db.testing
-stages = db.stages
+#stages = db.stages
+stages = db.teststages
 
 villageStages_BP = Blueprint("villageStages",__name__)
 
@@ -104,15 +105,16 @@ def update_Stage(stageId):
         except ValidationError as ve:
             return validation_error_response(ve)
         total_stages = stages.count_documents({"deleted": False})
-        new_pos = update_obj.position if update_obj.position is not None else old_pos
-
-        if new_pos < 0 or new_pos > total_stages:
-            return make_response(True, f"Position must be between 0 and {total_stages-1}", status=400)
 
         stage = stages.find_one({"stageId": str(stageId), "deleted": False})
         if not stage:
             return make_response(True, "Stage not found", status=404)
         old_pos = stage["position"]
+        new_pos = update_obj.position if update_obj.position is not None else old_pos
+
+        if new_pos < 0 or new_pos > total_stages:
+            return make_response(True, f"Position must be between 0 and {total_stages-1}", status=400)
+
         # Only update provided fields
         update_dict = update_obj.model_dump(
             exclude_unset=True,
@@ -231,6 +233,7 @@ def insert_substage(stageId):
             return make_response(True, "Validation error", result=ve.errors(), status=400)
 
         option = stages.find_one({"stageId": stageId, "deleted": False})
+        #substages = option.get("stages", [])
         if not option:
             return make_response(True, "stage not found", status=404)
 
@@ -241,19 +244,19 @@ def insert_substage(stageId):
             "subStageId": new_stage_id
         }
 
-        stages = option.get("stages", [])
+        stages_ = option.get("stages", [])
 
         # Insert at position or append
         pos = getattr(stage_obj, "position", None)
-        pos = pos if pos is not None else len(stages)
-        if pos < 0 or pos > len(stages):
-            return make_response(True, f"Position must be between 0 and {len(stages)}", status=400)
+        pos = pos if pos is not None else len(stages_)
+        if pos < 0 or pos > len(stages_):
+            return make_response(True, f"Position must be between 0 and {len(stages_)}", status=400)
 
-        stages.insert(pos, stage_complete)
+        stages_.insert(pos, stage_complete)
 
         stages.update_one(
             {"stageId": stageId},
-            {"$set": {"stages": stages}}
+            {"$set": {"stages": stages_}}
         )
 
         return make_response(False, "Sub stage inserted successfully", result=stage_complete)
