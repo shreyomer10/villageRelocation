@@ -76,6 +76,8 @@ class StageInsert(BaseModel):
     desc: Optional[str] = None
     stages: List[SubStageInsert]= Field(default_factory=list)
     deleted:bool=False
+    position: Optional[int] = None  # ✅ new: position index
+
     class Config:
         extra = "forbid"   # ❌ reject unknown fields
 
@@ -91,6 +93,8 @@ class StageUpdate(BaseModel):
     name: Optional[str]
     desc: Optional[str] = None
     deleted:bool=False
+    position: Optional[int] = None  # ✅ new: position index
+
     class Config:
         extra = "forbid"   # ❌ reject unknown fields
     

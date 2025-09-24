@@ -71,7 +71,7 @@ def insert_plot():
             plotId=new_plot_id,
             stagesCompleted=[],   # auto-populated from docs
             docs=[],
-            **plot_obj.model_dump(exclude_none=True, exclude={"stagesCompleted"})
+            **plot_obj.model_dump(exclude_none=True, exclude={"stagesCompleted","docs"})
         )
 
         # Insert into Mongo

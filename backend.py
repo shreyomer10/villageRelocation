@@ -13,6 +13,7 @@ from routes.admin.community import building_bp
 from routes.app.plotsVerification import plots_BP
 from routes.options import options_BP
 from routes.admin.villageStages import villageStages_BP
+from routes.admin.employee import emp_bp
 
 
 app = Flask(__name__)
@@ -43,9 +44,8 @@ app.register_blueprint(maati_bp,url_prefix="/")
 app.register_blueprint(meeting_bp,url_prefix="/")
 app.register_blueprint(building_bp,url_prefix="/")
 app.register_blueprint(plots_BP,url_prefix="/")
-
 app.register_blueprint(options_BP,url_prefix="/")
-
+app.register_blueprint(emp_bp,url_prefix="/")
 app.register_blueprint(villageStages_BP,url_prefix="/")
 
 

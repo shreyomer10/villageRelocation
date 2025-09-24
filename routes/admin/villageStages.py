@@ -38,6 +38,13 @@ def insert_stage():
         except ValidationError as ve:
             return validation_error_response(ve)
 
+
+        total_stages = stages.count_documents({"deleted": False})
+        pos = option_obj.position if option_obj.position is not None else total_stages
+
+        if pos < 0 or pos > total_stages:
+            return make_response(True, f"Position must be between 0 and {total_stages}", status=400)
+
         # Generate new optionId (sequence or custom logic)
         new_option_id = get_next_villageStage_id(db)
 
@@ -58,9 +65,14 @@ def insert_stage():
             name=option_obj.name,
             desc=option_obj.desc,
             stages=stages_with_id,
-            deleted=False
-        )
+            deleted=False,
+            position=pos
 
+        )
+        stages.update_many(
+            {"deleted": False, "position": {"$gte": pos}},
+            {"$inc": {"position": 1}}
+        )
         # ✅ Properly dump nested models
         option_dict = option_complete.model_dump(exclude_none=True)
         option_dict["stages"] = [s.model_dump(exclude_none=True) for s in stages_with_id]
@@ -91,11 +103,16 @@ def update_Stage(stageId):
             update_obj = StageUpdate(**payload)
         except ValidationError as ve:
             return validation_error_response(ve)
+        total_stages = stages.count_documents({"deleted": False})
+        new_pos = update_obj.position if update_obj.position is not None else old_pos
+
+        if new_pos < 0 or new_pos > total_stages:
+            return make_response(True, f"Position must be between 0 and {total_stages-1}", status=400)
 
         stage = stages.find_one({"stageId": str(stageId), "deleted": False})
         if not stage:
             return make_response(True, "Stage not found", status=404)
-
+        old_pos = stage["position"]
         # Only update provided fields
         update_dict = update_obj.model_dump(
             exclude_unset=True,
@@ -105,7 +122,16 @@ def update_Stage(stageId):
 
         if not update_dict:
             return make_response(True, "No valid fields to update", status=400)
-
+        if new_pos > old_pos:
+            stages.update_many(
+                {"deleted": False, "position": {"$gt": old_pos, "$lte": new_pos}},
+                {"$inc": {"position": -1}}
+            )
+        elif new_pos < old_pos:
+            stages.update_many(
+                {"deleted": False, "position": {"$gte": new_pos, "$lt": old_pos}},
+                {"$inc": {"position": 1}}
+            )
         stages.update_one({"stageId": str(stageId)}, {"$set": update_dict})
 
         return make_response(False, "Stage updated successfully", result=update_dict)
@@ -117,32 +143,34 @@ def update_Stage(stageId):
 @villageStages_BP.route("/stages/<stageId>", methods=["DELETE"])
 def delete_Stage(stageId):
     try:
-        stage = stages.find_one({"stageId": str(stageId)})
+        stage = stages.find_one({"stageId": (stageId), "deleted": False})
         if not stage:
             return make_response(True, "Stage not found", status=404)
 
-        # status_history = option.get("statusHistory", [])
-        # status_history.append({
-        #     "status": "DELETED",
-        #     "time": datetime.utcnow().isoformat()
-        # })
+        pos = stage.get("position")
 
+        # Mark as deleted
         stages.update_one(
-            {"stageId": str(stageId)},
+            {"stageId": (stageId)},
             {"$set": {"deleted": True}}
+        )
+
+        # Shift positions of later stages up by 1
+        stages.update_many(
+            {"deleted": False, "position": {"$gt": pos}},
+            {"$inc": {"position": -1}}
         )
 
         return make_response(False, "Stage deleted successfully")
 
     except Exception as e:
-        return make_response(True, f"Error deleting option: {str(e)}", status=500)
+        return make_response(True, f"Error deleting stage: {str(e)}", status=500)
 
 
 @villageStages_BP.route("/stages", methods=["GET"])
 def get_Stages():
     try:
-        docs = list(stages.find({"deleted": False}, {"_id": 0}))
-
+        docs = list(stages.find({"deleted": False}, {"_id": 0}).sort("position", 1))
         if not docs:
             return make_response(True, "No Stages found", status=404)
 
@@ -155,7 +183,7 @@ def get_Stages():
 @villageStages_BP.route("/deleted_stages", methods=["GET"])
 def get_deleted_stages():
     try:
-        docs = list(stages.find({"deleted": True}, {"_id": 0}))
+        docs = list(stages.find({"deleted": True}, {"_id": 0}).sort("position", 1))
         if not docs:
             return make_response(True, "No deleted stages found", status=404)
 

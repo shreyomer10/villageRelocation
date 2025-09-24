@@ -33,7 +33,10 @@ def get_beneficiaries(village_id):
         option_id = request.args.get("optionId")
 
         # -------- Build Query --------
-        q = {"villageId": village_id, "relocationOption": option_id}
+        q = {"villageId": village_id}
+        if option_id:
+            q["relocationOption"] = option_id
+
         projection = {
             "_id": 0,
             "familyId": 1,
@@ -42,23 +45,11 @@ def get_beneficiaries(village_id):
             "relocationOption": 1,
         }
 
-        # -------- DB Call (Safe) --------
-        try:
-            cursor = families.find(q, projection, no_cursor_timeout=True)\
-                             .sort("mukhiyaName", ASCENDING)
-        except Exception as db_err:
-            logging.error(f"Mongo query failed: {db_err}")
-            return make_response(True, "Database error while fetching beneficiaries", status=500)
+        # -------- DB Call (Safe, no no_cursor_timeout) --------
+        cursor = families.find(q, projection).sort("mukhiyaName", ASCENDING)
 
         # -------- Transform Results --------
-        results = []
-        for doc in cursor:
-            try:
-                card = FamilyCard.from_mongo(doc)
-                results.append(card.model_dump(mode="json"))
-            except Exception as ve:
-                logging.warning(f"FamilyCard validation failed for {doc.get('familyId')}: {ve}")
-                continue
+        results = list(cursor)  # just return as is
 
         if not results:
             return make_response(False, "No beneficiaries found for given village and option", result=[], status=200)
@@ -66,32 +57,23 @@ def get_beneficiaries(village_id):
         return make_response(False, "Beneficiaries fetched successfully", result=results, status=200)
 
     except Exception as e:
-        logging.exception("Unexpected error in get_beneficiaries")
-        return make_response(True, "Internal server error", status=500)
+        logging.error(f"Unexpected error in get_beneficiaries: {str(e)}")
+        return make_response(True, f"Internal server error {str(e)}", status=500)
 
 @family_bp.route("/families/<family_id>", methods=["GET"])
 def get_family_data(family_id):
     try:
-        # -------- Validate Inputs --------
         if not family_id or not isinstance(family_id, str):
             return make_response(True, "Invalid or missing family_id", status=400)
 
-        # -------- DB Call --------
         f = families.find_one({"familyId": family_id}, {"_id": 0})
         if not f:
             return make_response(True, "Family not found", status=404)
+        
 
-        # -------- Validate & Transform --------
-        try:
-            family = FamilyComplete.model_validate(f)
-        except ValidationError as ve:
-            logging.error(f"Family validation failed for {family_id}: {ve}")
-            return make_response(True, "Data validation error", status=422)
-
-        return make_response(False, "Family fetched successfully", result=family.model_dump(mode="json"), status=200)
+        return make_response(False, "Family fetched successfully", result=f, status=200)
 
     except Exception as e:
-        logging.exception("Unexpected error in get_family_data")
         return make_response(True, "Internal server error", status=500)
 
 #Static API's FOR ADMIN PURPOSE
