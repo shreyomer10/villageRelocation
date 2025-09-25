@@ -296,13 +296,17 @@ def insert_family_update(familyId):
         except ValidationError as ve:
             return validation_error_response(ve)
         # 1️⃣ Fetch family
+# 1️⃣ Fetch family
         family = families.find_one({"familyId": familyId}, {"_id": 0})
         if not family:
             return make_response(True, "Family not found", status=404)
-        fam = FamilyComplete.model_validate(family)
+
+        # Use family dict directly instead of validating with FamilyComplete
+        fam = family
+
 
         # 2️⃣ Fetch option details
-        option = options.find_one({"optionId": fam.relocationOption}, {"_id": 0})
+        option = options.find_one({"optionId": fam.get("relocationOption")}, {"_id": 0})
         if not option:
             return make_response(True, "Relocation option not found", status=404)
 
@@ -313,7 +317,7 @@ def insert_family_update(familyId):
         if current_stage not in stage_ids:
             return make_response(True, f"Invalid stageId: {current_stage}", status=400)
 
-        stagesCompleted = fam.stagesCompleted or []
+        stagesCompleted = fam.get("stagesCompleted", [])
         current_index = stage_ids.index(current_stage)
 
         # Collect all stages before this one
@@ -372,7 +376,6 @@ def insert_family_update(familyId):
     except Exception as e:
         return make_response(True, f"Unexpected error: {str(e)}", status=500)
 
-
 @family_bp.route("/member_updates/insert/<familyId>", methods=["POST"])
 def insert_member_update(familyId):
     try:
@@ -382,37 +385,38 @@ def insert_member_update(familyId):
             return make_response(True, "Missing userId or req body", status=400)
 
         # Required fields
-        name = payload.get("name")
-        nameUpdate = payload.get("nameUpdate")
-
+        name = payload.get("name")              # update name
+        nameUpdate = payload.get("nameUpdate")  # existing member name
         age = payload.get("age")
         gender = payload.get("gender")
         current_stage = payload.get("currentStage")
         notes = payload.get("notes", "")
 
-        if not all([name, age, gender, current_stage,nameUpdate]):
+        if not all([name, nameUpdate, age, gender, current_stage]):
             return make_response(True, "Missing required fields", status=400)
 
-        # 1️⃣ Fetch family
+        # 1️⃣ Fetch family (raw dict, no strict Pydantic validation)
         family_doc = families.find_one({"familyId": familyId}, {"_id": 0})
         if not family_doc:
             return make_response(True, "Family not found", status=404)
-        fam = FamilyComplete.model_validate(family_doc)
 
-        # 2️⃣ Find the member
+        # 2️⃣ Find the member directly from dict (use nameUpdate)
+        members = family_doc.get("members", [])
         member = next(
-            (m for m in fam.members if m.name == name and m.age == age and m.gender.lower() == gender.lower()),
+            (m for m in members if m.get("name") == nameUpdate 
+                                and m.get("age") == age 
+                                and m.get("gender", "").lower() == gender.lower()),
             None
         )
         if not member:
             return make_response(True, "Member not found in family", status=404)
 
         # 3️⃣ Validate eligibility
-        if member.age < 18 or member.gender.upper() not in ["M", "MALE"]:
+        if int(member.get("age", 0)) < 18 or member.get("gender", "").upper() not in ["M", "MALE"]:
             return make_response(True, "Member not eligible (must be male and >=18)", status=400)
 
         # 4️⃣ Fetch relocation option & stages
-        option = options.find_one({"optionId": member.relocationOption}, {"_id": 0})
+        option = options.find_one({"optionId": member.get("relocationOption")}, {"_id": 0})
         if not option:
             return make_response(True, "Relocation option not found", status=404)
 
@@ -423,7 +427,7 @@ def insert_member_update(familyId):
             return make_response(True, f"Invalid stageId: {current_stage}", status=400)
 
         # 5️⃣ Validate stage order
-        stagesCompleted = member.stagesCompleted or []
+        stagesCompleted = member.get("stagesCompleted", [])
         current_index = stage_ids.index(current_stage)
         required_stages = stage_ids[:current_index]
         missing_stages = [s for s in required_stages if s not in stagesCompleted]
@@ -436,7 +440,7 @@ def insert_member_update(familyId):
             )
 
         # 6️⃣ Generate member updateId
-        update_id = get_next_member_update_id(db, fam.familyId, option["optionId"])
+        update_id = get_next_member_update_id(db, family_doc["familyId"], option["optionId"])
 
         now = dt.datetime.utcnow().isoformat()
         history = StatusHistory(
@@ -446,22 +450,22 @@ def insert_member_update(familyId):
             time=str(now)
         )
 
-        # 7️⃣ Build update object
+        # 7️⃣ Build update object (use update name = `name`)
         mem_update = Updates(
             updateId=update_id,
             currentStage=current_stage,
             notes=notes,
             status=1,
-            name=nameUpdate,
+            name=name,  # <-- update name stored
             verifiedBy=userId,
             insertedBy=userId,
             verifiedAt=str(now),
             statusHistory=[history.model_dump()]
         )
 
-        # 8️⃣ Update the member inside family
+        # 8️⃣ Update the member inside family (match using member’s original details)
         families.update_one(
-            {"familyId": familyId, "members.name": name, "members.age": age, "members.gender": gender},
+            {"familyId": familyId, "members.name": nameUpdate, "members.age": age, "members.gender": gender},
             {
                 "$push": {"members.$.updates": mem_update.model_dump(exclude_none=True)},
                 "$addToSet": {"members.$.stagesCompleted": current_stage},
@@ -480,7 +484,6 @@ def insert_member_update(familyId):
         return validation_error_response(ve)
     except Exception as e:
         return make_response(True, f"Unexpected error: {str(e)}", status=500)
-
 
 @family_bp.route("/verification/verify", methods=["POST"])
 def verify_update():
