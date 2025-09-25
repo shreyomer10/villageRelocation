@@ -336,8 +336,9 @@ def insert_family_update(familyId):
             )
 
         # 4️⃣ Generate updateId
-        update_id = get_next_family_update_id(db, fam.villageId, option["optionId"])
-
+        update_id = get_next_family_update_id(
+            db, fam.get("villageId"), option["optionId"]
+        )
         now = dt.datetime.utcnow().isoformat()
         history=StatusHistory(
             status=1,
