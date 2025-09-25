@@ -405,7 +405,7 @@ def insert_member_update(familyId):
         members = family_doc.get("members", [])
         member = next(
             (m for m in members if m.get("name") == nameUpdate 
-                                and m.get("age") == age 
+                                and str(m.get("age"))== str(age)
                                 and m.get("gender", "").lower() == gender.lower()),
             None
         )
