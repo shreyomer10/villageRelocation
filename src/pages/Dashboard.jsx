@@ -5,6 +5,7 @@ import { Search, Sliders, Calendar, CheckCircle, Map, LayoutGrid } from "lucide-
 
 import MainNavbar from "../component/MainNavbar";
 import VillageModal from "../component/VillageModal";
+import StageModal from "../component/StageModal"; // <-- NEW import
 import { stageDefs } from "../config/stages";
 import { AuthContext } from "../context/AuthContext";
 import { GoogleMap, useJsApiLoader, MarkerF, InfoWindowF } from "@react-google-maps/api";
@@ -292,8 +293,18 @@ export default function Dashboard() {
 
   const [summaryCollapsed, setSummaryCollapsed] = useState(false);
 
+  // NEW: stage modal control
+  const [showStageModal, setShowStageModal] = useState(false);
+
   // NEW: track hovered marker ID to show a stylish white box
   const [hoveredVillageId, setHoveredVillageId] = useState(null);
+
+  // Add near other states:
+  const [adminOpen, setAdminOpen] = useState(false);
+
+  // Add near other refs:
+  const adminHoverTimeoutRef = useRef(null);
+  const adminButtonRef = useRef(null);
 
   const mapRef = useRef(null);
   const geocoderRef = useRef(null);
@@ -785,7 +796,7 @@ export default function Dashboard() {
 
         {/* top controls (search, filter, view toggles) need to be interactive */}
         <div style={{ pointerEvents: "auto" }} className="px-6 py-6">
-          <div className="mx-auto flex flex-col md:flex-row items-center gap-4 justify-between">
+          <div className="mx-auto flex flex-col md:flex-row items center gap-4 justify-between">
             <div className="flex items-center w-full md:max-w-2xl gap-4">
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
@@ -824,9 +835,82 @@ export default function Dashboard() {
               </div>
             </div>
 
-            <div className="w-full md:w-auto flex justify-end">
-              <button onClick={() => navigate("/villages/new")} className="px-4 py-2 bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-400" aria-label="Add new village">Guideline</button>
-            </div>
+            <div className="w-full md:w-auto flex items-center justify-end gap-3">
+  {/* Admin button + hover menu */}
+  <div
+    ref={adminButtonRef}
+    className="relative"
+    onMouseEnter={() => {
+      if (adminHoverTimeoutRef.current) clearTimeout(adminHoverTimeoutRef.current);
+      setAdminOpen(true);
+    }}
+    onMouseLeave={() => {
+      adminHoverTimeoutRef.current = setTimeout(() => setAdminOpen(false), 150);
+    }}
+    onFocus={() => {
+      if (adminHoverTimeoutRef.current) clearTimeout(adminHoverTimeoutRef.current);
+      setAdminOpen(true);
+    }}
+    onBlur={() => {
+      // small delay so keyboard users can move into the menu
+      adminHoverTimeoutRef.current = setTimeout(() => setAdminOpen(false), 150);
+    }}
+  >
+    <button
+      aria-haspopup="true"
+      aria-expanded={adminOpen}
+      onClick={() => setAdminOpen((s) => !s)}
+      className="px-3 py-2 bg-white border border-gray-300 rounded-lg shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-400 flex items-center gap-2"
+    >
+      Admin
+      <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
+        <path d="M5.23 7.21a.75.75 0 011.06.02L10 11.293l3.71-4.06a.75.75 0 111.12 1.00l-4.25 4.65a.75.75 0 01-1.12 0L5.21 8.28a.75.75 0 01.02-1.07z" />
+      </svg>
+    </button>
+
+    {adminOpen && (
+      <div
+        role="menu"
+        aria-label="Admin menu"
+        className="absolute right-0 mt-2 w-44 bg-white rounded-xl shadow-lg border border-gray-100 p-3 z-50"
+        onMouseEnter={() => {
+          if (adminHoverTimeoutRef.current) clearTimeout(adminHoverTimeoutRef.current);
+        }}
+        onMouseLeave={() => {
+          adminHoverTimeoutRef.current = setTimeout(() => setAdminOpen(false), 150);
+        }}
+      >
+        <button
+          role="menuitem"
+          onClick={() => { setAdminOpen(false); setShowStageModal(true); }}
+          className="w-full text-left px-3 py-2 rounded hover:bg-gray-50 focus:outline-none"
+        >
+          Stages
+        </button>
+        <button
+          role="menuitem"
+          onClick={() => { setAdminOpen(false); navigate("/admin/employees"); }}
+          className="w-full text-left px-3 py-2 rounded hover:bg-gray-50 focus:outline-none mt-1"
+        >
+          Employees
+        </button>
+        <button
+          role="menuitem"
+          onClick={() => { setAdminOpen(false); navigate("/admin/options"); }}
+          className="w-full text-left px-3 py-2 rounded hover:bg-gray-50 focus:outline-none mt-1"
+        >
+          Options
+        </button>
+      </div>
+    )}
+  </div>
+
+  {/* Guideline button (unchanged) */}
+  <button onClick={() => navigate("/villages/new")} className="px-4 py-2 bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-400" aria-label="Add new village">
+    Guideline
+  </button>
+</div>
+
           </div>
         </div>
 
@@ -841,6 +925,13 @@ export default function Dashboard() {
         <div style={{ pointerEvents: "auto" }}>
           <VillageModal open={!!selectedVillage} village={selectedVillage} onClose={closeModal} onOpenProfile={openProfile} onSaveVillage={handleSaveVillage} />
         </div>
+
+        {/* Stage modal (interactive) */}
+        {showStageModal && (
+          <div style={{ pointerEvents: "auto" }}>
+            <StageModal onClose={() => setShowStageModal(false)} />
+          </div>
+        )}
 
         <div className="h-20" />
       </div>

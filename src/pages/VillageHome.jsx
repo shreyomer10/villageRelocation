@@ -6,6 +6,8 @@ import FamilyPieChart from "../component/FamilyPieChart";
 import MainNavbar from "../component/MainNavbar";
 import { stageDefs } from "../config/stages";
 import { AuthContext } from "../context/AuthContext";
+import MeetingsModal from "../component/MeetingsModal";
+
 
 export default function VillageDashboard() {
   const navigate = useNavigate();
@@ -56,6 +58,9 @@ export default function VillageDashboard() {
   const [loadingCounts, setLoadingCounts] = useState(true);
   const [loadingVillage, setLoadingVillage] = useState(true);
   const [error, setError] = useState(null);
+
+  // Meetings modal control (ADDED)
+  const [showMeetingsModal, setShowMeetingsModal] = useState(false);
 
   // DOCS modal / viewer states
   const [showDocsModal, setShowDocsModal] = useState(false);
@@ -470,7 +475,6 @@ export default function VillageDashboard() {
         <div className="flex items-center justify-between mb-4">
           <div>
             <h1 className="text-2xl font-bold text-gray-800">{district ?? "—"}</h1>
-            
           </div>
 
           <div className="flex items-center gap-3">
@@ -492,8 +496,25 @@ export default function VillageDashboard() {
             >
               Plan Layout
             </button>
+
+            <button
+              onClick={() => setShowDocsModal(true)}
+              className="bg-indigo-50 hover:bg-indigo-100 px-6 py-2 rounded-2xl shadow text-sm font-medium"
+              title="Open stage documents"
+            >
+              Docs
+            </button>
+
+            <button
+              onClick={() => setShowMeetingsModal(true)}
+              className="bg-yellow-50 hover:bg-yellow-100 px-4 py-2 rounded-2xl shadow text-sm font-medium"
+              title="Open meetings for this village"
+            >
+              Meetings
+            </button>
           </div>
         </div>
+        
 
         {/* TOP ROW: Left pie + Right stacked cards */}
         <div className="grid grid-cols-12 gap-6">
@@ -546,15 +567,7 @@ export default function VillageDashboard() {
                   </div>
 
                   {/* DOC button next to location */}
-                  <div className="ml-4">
-                    <button
-                      onClick={() => setShowDocsModal(true)}
-                      className="bg-blue-600 hover:bg-blue-700 text-white px-10 py-5 rounded-md text-m shadow "
-                      title="Open stage documents"
-                    >
-                      Docs
-                    </button>
-                  </div>
+                  
                   
                 
               </div>
@@ -647,10 +660,6 @@ export default function VillageDashboard() {
                   <div className="col-span-2">
                     <DetailRow label="Site of Relocation" value={siteOfRelocation} />
                   </div>
-
-                  
-
-                  
                 </div>
 
                 {/* logs ticker */}
@@ -679,6 +688,13 @@ export default function VillageDashboard() {
           </div>
         </div>
       </div>
+
+      {showMeetingsModal && (
+        <MeetingsModal
+          villageId={villageIdState ?? effectiveVillageId}
+          onClose={() => setShowMeetingsModal(false)}
+        />
+      )}
 
       {/* Fullscreen modal */}
       {showFullscreen && currentImage && (
