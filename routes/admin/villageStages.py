@@ -263,7 +263,6 @@ def insert_substage(stageId):
     except Exception as e:
         return make_response(True, f"Error inserting sub stage: {str(e)}", status=500)
 
-
 @villageStages_BP.route("/sstages/<stageId>/<subStageId>", methods=["PUT"])
 def update_substage(stageId, subStageId):
     try:
@@ -280,24 +279,47 @@ def update_substage(stageId, subStageId):
         if not option:
             return make_response(True, "stage not found", status=404)
 
-        stage = next((s for s in option.get("stages", []) if s["subStageId"] == subStageId), None)
+        stages_ = option.get("stages", [])
+        stage = next((s for s in stages_ if s["subStageId"] == subStageId), None)
         if not stage:
             return make_response(True, "Sub Stage not found", status=404)
         if stage.get("deleted", False):
             return make_response(True, "Cannot update deleted sub stage", status=400)
 
-        update_dict = stage_obj.model_dump(exclude_none=True)
-        if not update_dict:
+        update_dict = stage_obj.model_dump(exclude_none=True, exclude={"position"})
+        if not update_dict and "position" not in payload:
             return make_response(True, "No valid fields to update", status=400)
 
+        # --- Step 1: Update fields normally ---
         stages.update_one(
             {"stageId": stageId, "stages.subStageId": subStageId},
             {"$set": {f"stages.$.{k}": v for k, v in update_dict.items()}}
         )
-        return make_response(False, "Sub stage updated successfully", result=update_dict)
+
+        # --- Step 2: Handle position rearrangement ---
+        if "position" in payload:
+            new_pos = payload["position"]
+            if not isinstance(new_pos, int):
+                return make_response(True, "Position must be an integer", status=400)
+            if new_pos < 0 or new_pos >= len(stages_):
+                return make_response(True, f"Position must be between 0 and {len(stages_)-1}", status=400)
+
+            # Remove current substage
+            stages_ = [s for s in stages_ if s["subStageId"] != subStageId]
+
+            # Re-insert at new position
+            stage.update(update_dict)  # ensure latest fields are merged
+            stages_.insert(new_pos, stage)
+
+            stages.update_one(
+                {"stageId": stageId},
+                {"$set": {"stages": stages_}}
+            )
+
+        return make_response(False, "Sub stage updated successfully", result={**update_dict, **({"position": payload.get("position")} if "position" in payload else {})})
+
     except Exception as e:
         return make_response(True, f"Error updating sub stage: {str(e)}", status=500)
-
 
 @villageStages_BP.route("/sstages/<stageId>/<subStageId>", methods=["DELETE"])
 def delete_sub_stage(stageId, subStageId):

@@ -278,8 +278,9 @@ def update_option_stage(optionId, stageId):
         option = options.find_one({"optionId": optionId, "deleted": False})
         if not option:
             return make_response(True, "Option not found", status=404)
+        stages_ = option.get("stages", [])
 
-        stage = next((s for s in option.get("stages", []) if s["stageId"] == stageId), None)
+        stage = next((s for s in stages_ if s["stageId"] == stageId), None)
         if not stage:
             return make_response(True, "Stage not found", status=404)
         if stage.get("deleted", False):
@@ -293,6 +294,24 @@ def update_option_stage(optionId, stageId):
             {"optionId": optionId, "stages.stageId": stageId},
             {"$set": {f"stages.$.{k}": v for k, v in update_dict.items()}}
         )
+        if "position" in payload:
+            new_pos = payload["position"]
+            if not isinstance(new_pos, int):
+                return make_response(True, "Position must be an integer", status=400)
+            if new_pos < 0 or new_pos >= len(stages_):
+                return make_response(True, f"Position must be between 0 and {len(stages_)-1}", status=400)
+
+            # Remove current substage
+            stages_ = [s for s in stages_ if s["stageId"] != stageId]
+
+            # Re-insert at new position
+            stage.update(update_dict)  # ensure latest fields are merged
+            stages_.insert(new_pos, stage)
+
+            options.update_one(
+                {"optionId": optionId},
+                {"$set": {"stages": stages_}}
+            )
         return make_response(False, "Option stage updated successfully", result=update_dict)
     except Exception as e:
         return make_response(True, f"Error updating option stage: {str(e)}", status=500)

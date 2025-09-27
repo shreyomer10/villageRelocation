@@ -63,6 +63,8 @@ class SubStageUpdate(BaseModel):
     name: Optional[str]
     desc: Optional[str] = None
     deleted:bool=False
+    position: Optional[int] = None  # ✅ new: position index
+
     class Config:
         extra = "forbid"   # ❌ reject unknown fields
 
