@@ -10,6 +10,8 @@ import PrivateRoute from "./component/PrivateRoute"; // new file below
 import LandingPage from "./pages/LandingPage.jsx";
 // import at top of your router file
 import StagePage from "./pages/StagePage";
+import EmployeesPage from "./pages/EmployeePages.jsx";
+import MeetingsPage from "./pages/MeetingPages.jsx";
 
 
 
@@ -39,6 +41,11 @@ export default function App() {
       
 
 <Route path="/stages" element={<PrivateRoute> <StagePage /> </PrivateRoute>} />
+<Route path="/admin/employees" element={<PrivateRoute> <EmployeesPage /> </PrivateRoute>} />
+
+<Route path="/meetings" element={<PrivateRoute> <MeetingsPage /></PrivateRoute>} />
+// or if you pass village id param:
+<Route path="/meetings/:villageId" element={<PrivateRoute> <MeetingsPage /> </PrivateRoute>} />
       <Route
         path="/family"
         element={

@@ -506,12 +506,13 @@ export default function VillageDashboard() {
             </button>
 
             <button
-              onClick={() => setShowMeetingsModal(true)}
-              className="bg-yellow-50 hover:bg-yellow-100 px-4 py-2 rounded-2xl shadow text-sm font-medium"
-              title="Open meetings for this village"
-            >
-              Meetings
-            </button>
+  onClick={() => navigate(`/meetings/${villageIdState ?? effectiveVillageId}`)}
+  className="bg-yellow-50 hover:bg-yellow-100 px-4 py-2 rounded-2xl shadow text-sm font-medium"
+  title="Open meetings for this village"
+>
+  Meetings
+</button>
+
           </div>
         </div>
         

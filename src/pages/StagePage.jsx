@@ -1,22 +1,15 @@
-// src/pages/StagePage.jsx
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import MainNavbar from "../component/MainNavbar";
 
 /**
- * StagePage
- *
- * - Fetches /stages on mount and displays them
- * - Global Select mode, per-stage sub-select, edit/delete logic unchanged
- * - Each expanded card:
- *    - Shows active (non-deleted) sub-stages in the main list (with descriptions)
- *    - Shows "+ Add Sub-stage" area
- *    - Shows a "Deleted sub-stages" link (only if deleted subs exist)
- *      which toggles a separate list rendered below the Add area (read-only)
- * - Single global "Show deleted stages" below all cards remains unchanged
- *
- * NOTE: All alert() and confirm() calls removed per request. Errors are logged and
- * set to the `error` state where it makes sense for display at the top of the page.
+ * StagePage (updated)
+ * - Allows specifying `position` when creating a stage
+ * - Drag-and-drop reordering of stage cards (HTML5 dnd)
+ *   - Optimistically updates UI and calls PUT /stages/:stageId with { position }
+ *   - On failure it reloads stages from server and shows error
+ * - Ensures stages are sorted by `position` after every load
+ * - Keeps deleted-substages inline toggle and global deleted-stages block unchanged
  */
 
 export default function StagePage() {
@@ -25,6 +18,10 @@ export default function StagePage() {
   const [stages, setStages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  // drag & drop state
+  const [dragIndex, setDragIndex] = useState(null);
+  const [dragOverIndex, setDragOverIndex] = useState(null);
 
   // per-stage inline deleted-substage toggle + cache
   const [showDeletedInExpanded, setShowDeletedInExpanded] = useState({});
@@ -43,6 +40,7 @@ export default function StagePage() {
   const [showCreatePanel, setShowCreatePanel] = useState(false);
   const [createName, setCreateName] = useState("");
   const [createDesc, setCreateDesc] = useState("");
+  const [createPosition, setCreatePosition] = useState("");
   const [createSubstages, setCreateSubstages] = useState([{ name: "", desc: "" }]);
   const [creating, setCreating] = useState(false);
 
@@ -79,6 +77,8 @@ export default function StagePage() {
         else if (Array.isArray(payload)) items = payload;
         else if (Array.isArray(payload.items)) items = payload.items;
         if (!mounted) return;
+        // ensure sorting by position
+        items = (items || []).slice().sort((a, b) => (Number(a.position ?? 0) - Number(b.position ?? 0)));
         setStages(items);
       } catch (err) {
         console.error(err);
@@ -90,6 +90,23 @@ export default function StagePage() {
     })();
     return () => { mounted = false; };
   }, []);
+
+  async function reloadStages() {
+    try {
+      const res = await fetch("https://villagerelocation.onrender.com/stages");
+      if (!res.ok) return;
+      const payload = await res.json();
+      let items = [];
+      if (payload?.result?.items) items = payload.result.items;
+      else if (Array.isArray(payload.result)) items = payload.result;
+      else if (Array.isArray(payload)) items = payload;
+      else if (Array.isArray(payload.items)) items = payload.items;
+      items = (items || []).slice().sort((a, b) => (Number(a.position ?? 0) - Number(b.position ?? 0)));
+      setStages(items);
+    } catch (e) {
+      console.error(e);
+    }
+  }
 
   function authHeaders() {
     const token = localStorage.getItem("token");
@@ -129,10 +146,7 @@ export default function StagePage() {
   }
 
   async function deleteSelectedStages() {
-    if (selectedStageIds.size === 0) {
-      // nothing to delete
-      return;
-    }
+    if (selectedStageIds.size === 0) return;
     const failures = [];
     for (const id of Array.from(selectedStageIds)) {
       try {
@@ -172,7 +186,6 @@ export default function StagePage() {
   }
 
   // Toggle showing deleted substages inline within an expanded stage card.
-  // We'll show deleted sub-stages **separately** (below the Add area).
   async function toggleShowDeletedInline(stageId) {
     const currently = !!showDeletedInExpanded[stageId];
     if (currently) {
@@ -180,19 +193,14 @@ export default function StagePage() {
       return;
     }
 
-    // find stage and check local deleted
     const s = stages.find(x => String(getStageId(x)) === String(stageId));
     const localDeleted = Array.isArray(s?.stages) ? s.stages.filter(ss => ss.deleted === true) : [];
-
-    // if local deleted exist, show them (no fetch)
     if (localDeleted.length > 0) {
       setShowDeletedInExpanded(prev => ({ ...prev, [stageId]: true }));
       return;
     }
 
-    // if cached, show and merge into local view
     if (deletedSubstageCache[stageId] && deletedSubstageCache[stageId].length > 0) {
-      // merge into local stage.stages so that data is available consistently
       setStages(prev => prev.map(st => {
         if (String(getStageId(st)) !== String(stageId)) return st;
         const existing = Array.isArray(st.stages) ? st.stages.slice() : [];
@@ -204,7 +212,6 @@ export default function StagePage() {
       return;
     }
 
-    // otherwise fetch deleted_substages for this stage
     try {
       const res = await fetch(`https://villagerelocation.onrender.com/deleted_substages/${encodeURIComponent(stageId)}`);
       if (!res.ok) {
@@ -214,7 +221,6 @@ export default function StagePage() {
       const data = await res.json();
       const items = data?.result?.items ?? [];
       if (!Array.isArray(items) || items.length === 0) {
-        // nothing to show
         return;
       }
       const marked = items.map(it => ({ ...it, deleted: true }));
@@ -262,10 +268,7 @@ export default function StagePage() {
 
   async function deleteSelectedSubstages(stageId) {
     const set = selectedSubstages[stageId];
-    if (!set || set.size === 0) {
-      // nothing selected
-      return;
-    }
+    if (!set || set.size === 0) return;
     const failures = [];
     for (const subId of Array.from(set)) {
       try {
@@ -303,19 +306,17 @@ export default function StagePage() {
     }
   }
 
-  // ---------- create / update / delete (unchanged except removing confirm/alert prompts) ----------
+  // ---------- create / update / delete (unchanged except including position) ----------
   async function handleCreateStage(e) {
     e && e.preventDefault();
-    if (!createName || createName.trim() === "") {
-      // validation failed
-      return;
-    }
+    if (!createName || createName.trim() === "") return;
     setCreating(true);
     try {
       const payload = {
         name: createName.trim(),
         desc: createDesc?.trim() || undefined,
         deleted: false,
+        position: createPosition !== "" ? Number(createPosition) : undefined,
         stages: createSubstages.map(s => ({ name: (s.name || "").trim(), desc: (s.desc || "").trim() || undefined })).filter(x => x.name),
       };
       const res = await fetch("https://villagerelocation.onrender.com/stages/insert", {
@@ -329,10 +330,14 @@ export default function StagePage() {
       }
       const data = await res.json();
       const inserted = data?.result ?? null;
-      if (inserted) setStages(prev => [inserted, ...prev]);
-      else await reloadStages();
+      if (inserted) {
+        // reload to get canonical positions from server
+        await reloadStages();
+      } else {
+        await reloadStages();
+      }
 
-      setCreateName(""); setCreateDesc(""); setCreateSubstages([{ name: "", desc: "" }]); setShowCreatePanel(false);
+      setCreateName(""); setCreateDesc(""); setCreatePosition(""); setCreateSubstages([{ name: "", desc: "" }]); setShowCreatePanel(false);
     } catch (err) {
       console.error(err);
       setError(err.message || "Failed to create stage");
@@ -341,28 +346,10 @@ export default function StagePage() {
     }
   }
 
-  async function reloadStages() {
-    try {
-      const res = await fetch("https://villagerelocation.onrender.com/stages");
-      if (!res.ok) return;
-      const payload = await res.json();
-      let items = [];
-      if (payload?.result?.items) items = payload.result.items;
-      else if (Array.isArray(payload.result)) items = payload.result;
-      else if (Array.isArray(payload)) items = payload;
-      else if (Array.isArray(payload.items)) items = payload.items;
-      setStages(items);
-    } catch (e) {
-      console.error(e);
-    }
-  }
-
   async function submitStageUpdate(e) {
     e && e.preventDefault();
     if (!editStage || !editStage.stageId) return;
-    if (!editStage.name || editStage.name.trim() === "") {
-      return;
-    }
+    if (!editStage.name || editStage.name.trim() === "") return;
     try {
       const body = { name: editStage.name.trim(), desc: editStage.desc ?? undefined, deleted: !!editStage.deleted };
       const res = await fetch(`https://villagerelocation.onrender.com/stages/${encodeURIComponent(editStage.stageId)}`, {
@@ -397,7 +384,8 @@ export default function StagePage() {
         const txt = await res.text().catch(() => "");
         throw new Error(`Delete failed: ${res.status} ${txt}`);
       }
-      setStages(prev => prev.filter(s => String(getStageId(s)) !== String(stageId)));
+      // reload from server to get canonical positions
+      await reloadStages();
       setSelectedStageIds(prev => { const c = new Set(prev); c.delete(stageId); return c; });
     } catch (err) {
       console.error(err);
@@ -575,50 +563,189 @@ export default function StagePage() {
     );
   }
 
+  // ---------- Drag & Drop handlers ----------
+  // Updated drag & drop handlers — replace the existing implementations in your StagePage component
+function handleDragStart(e, index) {
+  if (globalSelectMode) return; // disable while selecting
+  setDragIndex(index);
+  e.dataTransfer.effectAllowed = "move";
+  try {
+    // store index as fallback and the stageId for robustness
+    e.dataTransfer.setData("text/plain", String(index));
+    const sid = getStageId(stages[index]);
+    e.dataTransfer.setData("application/json", JSON.stringify({ stageId: sid }));
+  } catch (err) {
+    // some browsers restrict setData for certain types
+  }
+}
+
+function handleDragOver(e, index) {
+  e.preventDefault();
+  if (globalSelectMode) return;
+  setDragOverIndex(index);
+}
+
+async function handleDrop(e, targetIndex) {
+  e.preventDefault();
+  if (globalSelectMode) return;
+
+  // Determine sourceIndex robustly (use state first, fallback to dataTransfer)
+  let sourceIndex = dragIndex;
+  if (sourceIndex === null || sourceIndex === undefined) {
+    try {
+      const dt = e.dataTransfer.getData("text/plain");
+      sourceIndex = dt !== "" ? Number(dt) : null;
+    } catch (err) {
+      sourceIndex = null;
+    }
+  }
+
+  if (sourceIndex === null || sourceIndex === undefined || isNaN(sourceIndex)) {
+    setDragIndex(null);
+    setDragOverIndex(null);
+    return;
+  }
+
+  // no-op if dropped on same index
+  if (sourceIndex === targetIndex) {
+    setDragIndex(null);
+    setDragOverIndex(null);
+    return;
+  }
+
+  // Optimistic reorder locally
+  const newStages = stages.slice();
+  const [moved] = newStages.splice(sourceIndex, 1);
+  const insertAt = Math.max(0, Math.min(targetIndex, newStages.length));
+  newStages.splice(insertAt, 0, moved);
+
+  // normalize positions to 0-based contiguous indices locally (optimistic UI)
+  const withPos = newStages.map((s, i) => ({ ...s, position: i }));
+  setStages(withPos);
+
+  // reset drag state
+  setDragIndex(null);
+  setDragOverIndex(null);
+
+  // Persist the moved stage's new position to server
+  const movedId = getStageId(moved);
+  const url = `https://villagerelocation.onrender.com/stages/${encodeURIComponent(movedId)}`;
+
+  // Helper: build payload ensuring 'name' is present (server validation requires it)
+  async function buildPayload() {
+    // prefer local fields if available
+    const name = (moved.name ?? "").toString();
+    const desc = moved.desc ?? undefined;
+    const deleted = !!moved.deleted;
+    if (name && name.trim() !== "") {
+      return { name: name.trim(), desc, deleted, position: insertAt };
+    }
+
+    // fallback: fetch canonical stage from server to obtain required fields
+    try {
+      const r = await fetch(url);
+      if (!r.ok) {
+        // can't get canonical record — return minimal payload (will likely fail validation)
+        return { name: "", desc, deleted, position: insertAt };
+      }
+      const data = await r.json();
+      // server may wrap in result or return the object directly; try common shapes
+      const serverObj = data?.result ?? data;
+      const serverName = serverObj?.name ?? "";
+      const serverDesc = serverObj?.desc ?? desc;
+      const serverDeleted = serverObj?.deleted ?? deleted;
+      return { name: (serverName ?? "").toString().trim(), desc: serverDesc, deleted: !!serverDeleted, position: insertAt };
+    } catch (err) {
+      return { name: "", desc, deleted, position: insertAt };
+    }
+  }
+
+  try {
+    const payload = await buildPayload();
+
+    // if payload.name is still empty, give a helpful error instead of blindly calling the server
+    if (!payload.name || payload.name.trim() === "") {
+      throw new Error("Reorder failed: stage name required by server validation. Reloading from server.");
+    }
+
+    const res = await fetch(url, {
+      method: "PUT",
+      headers: authHeaders(),
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      // try to parse JSON body for a readable validation error
+      let bodyText = "";
+      try {
+        const txt = await res.text();
+        // if response is JSON try pretty parse
+        try {
+          const j = JSON.parse(txt);
+          bodyText = typeof j === "object" ? JSON.stringify(j) : txt;
+        } catch {
+          bodyText = txt;
+        }
+      } catch (e) {
+        bodyText = `${res.status}`;
+      }
+      throw new Error(`Reorder failed: ${res.status} ${bodyText}`);
+    }
+
+    // success — reload canonical order from the server to ensure positions are authoritative
+    await reloadStages();
+  } catch (err) {
+    console.error(err);
+    setError(err.message || "Failed to update positions");
+    // revert to server state
+    await reloadStages();
+  }
+}
+
+
+function handleDragEnd() {
+  setDragIndex(null);
+  setDragOverIndex(null);
+}
+
   // ---------- UI ----------
   return (
     <div className="min-h-screen bg-gray-50">
       <MainNavbar />
-      <div className="max-w-6xl mx-auto p-6">
-        {/* Header: Dashboard on left, Add / Select on the right */}
-        <div className="flex items-center justify-between mb-6">
-          {/* Left: Dashboard */}
+      <div className="max-w-6xl mx-auto px-4 py-4 sm:px-6 lg:px-8">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-3">
           <div>
             <button
               onClick={() => navigate("/dashboard")}
-              className="px-3 py-2 border rounded-md bg-white"
+              className="px-3 py-2 border rounded-md bg-white text-sm"
             >
               ← Back
             </button>
           </div>
 
-          {/* Right: Add / Select / Delete selected */}
-          <div className="flex items-center gap-3">
-            {/* Add button hidden while in global select */}
+          <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto">
             {!globalSelectMode && (
               <button
                 onClick={() => setShowCreatePanel(s => !s)}
-                className="px-4 py-2 bg-blue-600 text-white rounded-md"
+                className="px-4 py-2 bg-blue-600 text-white rounded-md w-full sm:w-auto text-sm"
               >
                 + Add
               </button>
             )}
 
-            {/* Global select toggle */}
             <button
               onClick={toggleGlobalSelect}
-              className={`px-4 py-2 rounded-md ${globalSelectMode ? "bg-gray-700 text-white" : "bg-gray-200 text-gray-700"}`}
+              className={`px-4 py-2 rounded-md ${globalSelectMode ? "bg-gray-700 text-white" : "bg-gray-200 text-gray-700"} w-full sm:w-auto text-sm`}
               title={globalSelectMode ? "Exit select mode" : "Enter select mode"}
             >
               {globalSelectMode ? "Done" : "Select"}
             </button>
 
-            {/* Delete selected appears only in select mode */}
             {globalSelectMode && (
               <button
                 onClick={deleteSelectedStages}
                 disabled={selectedStageIds.size === 0}
-                className={`px-4 py-2 rounded-md ${selectedStageIds.size === 0 ? "bg-red-100 text-red-300 cursor-not-allowed" : "bg-red-600 text-white"}`}
+                className={`px-4 py-2 rounded-md ${selectedStageIds.size === 0 ? "bg-red-100 text-red-300 cursor-not-allowed" : "bg-red-600 text-white"} w-full sm:w-auto text-sm`}
                 title={selectedStageIds.size === 0 ? "No stages selected" : `Delete selected (${selectedStageIds.size})`}
               >
                 Delete selected ({selectedStageIds.size})
@@ -627,11 +754,10 @@ export default function StagePage() {
           </div>
         </div>
 
-        {/* Create panel */}
         {showCreatePanel && (
           <form onSubmit={handleCreateStage} className="bg-white rounded-lg shadow p-4 mb-6">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div className="md:col-span-2">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="sm:col-span-2">
                 <label className="block text-sm font-medium text-gray-700">Stage name</label>
                 <input value={createName} onChange={(e) => setCreateName(e.target.value)} className="w-full p-2 border rounded" />
                 <label className="block text-sm font-medium text-gray-700 mt-3">Description</label>
@@ -639,72 +765,84 @@ export default function StagePage() {
               </div>
 
               <div className="flex flex-col justify-between">
-                <div className="text-sm text-gray-600">Sub-stages (optional)</div>
-                <button type="button" onClick={() => setCreateSubstages(prev => [...prev, { name: "", desc: "" }])} className="px-3 py-2 bg-green-600 text-white rounded">+ add field</button>
+                <div>
+                  <label className="block text-sm text-gray-700">Position (optional)</label>
+                  <input type="number" value={createPosition} onChange={(e) => setCreatePosition(e.target.value)} placeholder="0..n" className="w-full p-2 border rounded" />
+                  <div className="text-xs text-gray-500 mt-2">If empty it will be appended</div>
+                </div>
+                <div className="text-sm text-gray-600 mt-2">Sub-stages (optional)</div>
+                <button type="button" onClick={() => setCreateSubstages(prev => [...prev, { name: "", desc: "" }])} className="px-3 py-2 mt-2 bg-green-600 text-white rounded">+ add field</button>
               </div>
             </div>
 
             <div className="mt-3 space-y-2">
               {createSubstages.map((x, i) => (
-                <div key={i} className="grid grid-cols-1 md:grid-cols-6 gap-2 items-center">
-                  <input value={x.name} onChange={(e) => setCreateSubstages(prev => prev.map((v, ii) => ii === i ? { ...v, name: e.target.value } : v))} placeholder="Sub-stage name" className="md:col-span-2 p-2 border rounded" />
-                  <input value={x.desc} onChange={(e) => setCreateSubstages(prev => prev.map((v, ii) => ii === i ? { ...v, desc: e.target.value } : v))} placeholder="Description" className="md:col-span-3 p-2 border rounded" />
+                <div key={i} className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-6 gap-2 items-center">
+                  <input value={x.name} onChange={(e) => setCreateSubstages(prev => prev.map((v, ii) => ii === i ? { ...v, name: e.target.value } : v))} placeholder="Sub-stage name" className="md:col-span-2 p-2 border rounded w-full" />
+                  <input value={x.desc} onChange={(e) => setCreateSubstages(prev => prev.map((v, ii) => ii === i ? { ...v, desc: e.target.value } : v))} placeholder="Description" className="md:col-span-3 p-2 border rounded w-full" />
                   <div className="md:col-span-1">
-                    <button type="button" onClick={() => setCreateSubstages(prev => prev.filter((_, ii) => ii !== i))} className="px-2 py-2 border rounded">Remove</button>
+                    <button type="button" onClick={() => setCreateSubstages(prev => prev.filter((_, ii) => ii !== i))} className="px-2 py-2 border rounded w-full sm:w-auto">Remove</button>
                   </div>
                 </div>
               ))}
             </div>
 
-            <div className="mt-4 flex gap-2">
-              <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded">{creating ? "Creating…" : "Create"}</button>
-              <button type="button" onClick={() => setShowCreatePanel(false)} className="px-4 py-2 border rounded">Cancel</button>
+            <div className="mt-4 flex gap-2 flex-col sm:flex-row">
+              <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded w-full sm:w-auto">{creating ? "Creating…" : "Create"}</button>
+              <button type="button" onClick={() => setShowCreatePanel(false)} className="px-4 py-2 border rounded w-full sm:w-auto">Cancel</button>
             </div>
           </form>
         )}
 
-        {/* Stage list */}
         {loading ? (
           <div className="text-center py-8">Loading stages…</div>
         ) : error ? (
           <div className="text-red-600 py-6 whitespace-pre-wrap">{error}</div>
         ) : (
           <div className="space-y-4">
-            {stages.map((s) => {
+            {stages.map((s, index) => {
               const stageId = getStageId(s);
               const subStages = s.stages ?? s.subStages ?? s.sub_stages ?? s.options ?? [];
               const expanded = expandedStageIds.has(stageId);
               const stageSelected = selectedStageIds.has(stageId);
 
-              // local deleted list + potential cached ones
               const localDeleted = Array.isArray(subStages) ? subStages.filter(ss => ss.deleted === true) : [];
               const cachedDeleted = deletedSubstageCache[stageId] ?? [];
-              // combine cached + local deleted by unique subId (cached items may duplicate)
               const mergedDeletedMap = new Map();
               [...localDeleted, ...cachedDeleted].forEach(d => mergedDeletedMap.set(String(getSubId(d)), d));
               const mergedDeleted = Array.from(mergedDeletedMap.values());
 
-              // active (non-deleted) subs
               const activeSubs = Array.isArray(subStages) ? subStages.filter(ss => !ss.deleted) : [];
 
               const showDeletedLink = mergedDeleted.length > 0;
 
+              const isDragOver = dragOverIndex === index;
+
               return (
-                <div key={String(stageId)} className="bg-white rounded-lg shadow p-4 border relative">
-                  <div className="flex items-start justify-between gap-4">
+                <div
+                  key={String(stageId)}
+                  draggable={!globalSelectMode}
+                  onDragStart={(e) => handleDragStart(e, index)}
+                  onDragOver={(e) => handleDragOver(e, index)}
+                  onDrop={(e) => handleDrop(e, index)}
+                  onDragEnd={handleDragEnd}
+                  className={`bg-white rounded-lg shadow p-4 border relative ${isDragOver ? "border-dashed border-2" : ""}`}
+                  style={{ cursor: globalSelectMode ? "default" : "grab" }}
+                >
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                     <div className="flex items-center gap-3 min-w-0">
                       {globalSelectMode && (
                         <input type="checkbox" checked={stageSelected} onChange={() => toggleStageCheckbox(stageId)} />
                       )}
 
                       <div>
-                        <div className="text-lg font-semibold text-gray-800 truncate">{s.name}</div>
-                        {s.desc && <div className="text-sm text-gray-500 mt-1">{s.desc}</div>}
-                        <div className="text-xs text-gray-400 mt-1">ID: {stageId}</div>
+                        <div className="text-base sm:text-lg font-semibold text-gray-800 truncate">{s.name}</div>
+                        {s.desc && <div className="text-sm text-gray-500 mt-1 truncate">{s.desc}</div>}
+                        <div className="text-xs text-gray-400 mt-1">ID: {stageId} • Pos: {s.position ?? index}</div>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 mt-3 sm:mt-0">
                       {!globalSelectMode && !expanded && (
                         <>
                           <button onClick={() => setEditStage({ stageId, name: s.name ?? "", desc: s.desc ?? "", deleted: !!s.deleted })} className="px-3 py-1 rounded bg-indigo-50 text-sm">Edit</button>
@@ -720,10 +858,9 @@ export default function StagePage() {
                     </div>
                   </div>
 
-                  {/* Expanded area */}
                   {expanded && (
                     <div className="mt-4 border-t pt-4 space-y-4">
-                      <div className="flex items-center justify-between">
+                      <div className="flex flex-col sm:flex-row sm:items-center items-start justify-between gap-3">
                         <div className="text-sm text-gray-600">Sub-stages ({activeSubs.length})</div>
                         <div className="flex items-center gap-2">
                           <label className="inline-flex items-center gap-2 text-sm">
@@ -739,8 +876,7 @@ export default function StagePage() {
                         </div>
                       )}
 
-                      {/* Active sub-stages list (non-deleted) */}
-                      <div className="space-y-2">
+                      <div className="space-y-2 max-h-[50vh] sm:max-h-[40vh] overflow-auto">
                         {activeSubs.length === 0 ? (
                           <div className="text-xs text-gray-500">No sub-stages</div>
                         ) : (
@@ -748,10 +884,9 @@ export default function StagePage() {
                         )}
                       </div>
 
-                      {/* Add sub-stage area */}
                       <div className="mt-2">
                         {!showAddFormFor || showAddFormFor !== stageId ? (
-                          <button onClick={() => setShowAddFormFor(stageId)} className="px-3 py-1 rounded bg-green-50 text-sm">+ Add Sub-stage</button>
+                          <button onClick={() => setShowAddFormFor(stageId)} className="px-3 py-1 rounded bg-green-50 text-sm w-full sm:w-auto">+ Add Sub-stage</button>
                         ) : (
                           <form onSubmit={(e) => {
                             e.preventDefault();
@@ -763,23 +898,22 @@ export default function StagePage() {
                               position: fd.get("position") ? Number(fd.get("position")) : undefined
                             };
                             submitAddSubstage(e, stageId, payload);
-                          }} className="bg-gray-50 p-3 rounded">
-                            <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
-                              <input name="sname" placeholder="Name" className="md:col-span-2 p-2 border rounded" />
-                              <input name="sdesc" placeholder="Description" className="p-2 border rounded" />
-                              <input name="position" placeholder="Position (optional)" className="p-2 border rounded" />
+                          }} className="bg-gray-50 p-3 rounded w-full">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2">
+                              <input name="sname" placeholder="Name" className="md:col-span-2 p-2 border rounded w-full" />
+                              <input name="sdesc" placeholder="Description" className="p-2 border rounded w-full" />
+                              <input name="position" placeholder="Position (optional)" className="p-2 border rounded w-full" />
                             </div>
-                            <div className="mt-2 flex gap-2">
-                              <button type="submit" className="px-3 py-1 bg-blue-600 text-white rounded">Add</button>
-                              <button type="button" onClick={() => setShowAddFormFor(null)} className="px-3 py-1 border rounded">Cancel</button>
+                            <div className="mt-2 flex flex-col sm:flex-row gap-2">
+                              <button type="submit" className="px-3 py-1 bg-blue-600 text-white rounded w-full sm:w-auto">Add</button>
+                              <button type="button" onClick={() => setShowAddFormFor(null)} className="px-3 py-1 border rounded w-full sm:w-auto">Cancel</button>
                             </div>
                           </form>
                         )}
                       </div>
 
-                      {/* Deleted sub-stages link (only if any deleted exists) */}
                       {showDeletedLink && (
-                        <div className="mt-2 flex justify-end items-center gap-3">
+                        <div className="mt-2 flex flex-col sm:flex-row sm:justify-end items-center gap-3">
                           <button onClick={() => toggleShowDeletedInline(stageId)} className="text-sm text-indigo-600 underline">
                             {showDeletedInExpanded[stageId] ? "Hide deleted sub-stages" : `Deleted sub-stages (${mergedDeleted.length})`}
                           </button>
@@ -787,7 +921,6 @@ export default function StagePage() {
                         </div>
                       )}
 
-                      {/* Deleted sub-stages separate list (rendered below Add area when toggled) */}
                       {showDeletedInExpanded[stageId] && (
                         <div className="mt-3 bg-gray-50 p-3 rounded border">
                           {mergedDeleted.length === 0 ? (
@@ -817,7 +950,7 @@ export default function StagePage() {
             {/* Single global deleted-stages link (placed after all stage cards) */}
             <div className="mt-4">
               <div className="flex justify-center">
-                <button onClick={toggleDeletedStagesGlobal} className="text-sm text-indigo-600 underline">
+                <button onClick={toggleDeletedStagesGlobal} className="text-sm text-indigo-600 underline px-2 py-1">
                   {showDeletedStages ? "Hide deleted stages" : "Show deleted stages"}
                 </button>
               </div>
@@ -888,7 +1021,7 @@ export default function StagePage() {
         {/* Edit stage modal */}
         {editStage && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40 p-4">
-            <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-md">
+            <div className="bg-white rounded-lg shadow-lg p-4 w-full max-w-md sm:max-w-lg md:max-w-xl mx-3 sm:mx-0">
               <div className="flex items-center justify-between mb-3">
                 <h4 className="font-semibold">Edit Stage</h4>
                 <button onClick={() => setEditStage(null)} className="text-gray-500">✕</button>
@@ -920,7 +1053,7 @@ export default function StagePage() {
         {/* Edit substage modal */}
         {editSubstage && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40 p-4">
-            <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-md">
+            <div className="bg-white rounded-lg shadow-lg p-4 w-full max-w-md sm:max-w-lg md:max-w-xl mx-3 sm:mx-0">
               <div className="flex items-center justify-between mb-3">
                 <h4 className="font-semibold">Edit Sub-stage</h4>
                 <button onClick={() => setEditSubstage(null)} className="text-gray-500">✕</button>
