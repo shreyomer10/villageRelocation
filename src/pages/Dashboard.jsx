@@ -5,7 +5,8 @@ import { Search, Sliders, Calendar, CheckCircle, Map, LayoutGrid } from "lucide-
 
 import MainNavbar from "../component/MainNavbar";
 import VillageModal from "../component/VillageModal";
-import StageModal from "../component/StageModal"; // <-- NEW import
+
+
 import { stageDefs } from "../config/stages";
 import { AuthContext } from "../context/AuthContext";
 import { GoogleMap, useJsApiLoader, MarkerF, InfoWindowF } from "@react-google-maps/api";
@@ -294,7 +295,7 @@ export default function Dashboard() {
   const [summaryCollapsed, setSummaryCollapsed] = useState(false);
 
   // NEW: stage modal control
-  const [showStageModal, setShowStageModal] = useState(false);
+  
 
   // NEW: track hovered marker ID to show a stylish white box
   const [hoveredVillageId, setHoveredVillageId] = useState(null);
@@ -881,12 +882,12 @@ export default function Dashboard() {
         }}
       >
         <button
-          role="menuitem"
-          onClick={() => { setAdminOpen(false); setShowStageModal(true); }}
-          className="w-full text-left px-3 py-2 rounded hover:bg-gray-50 focus:outline-none"
-        >
-          Stages
-        </button>
+  role="menuitem"
+  onClick={() => { setAdminOpen(false); navigate("/stages"); }}
+  className="w-full text-left px-3 py-2 rounded hover:bg-gray-50 focus:outline-none"
+>
+  Stages
+</button>
         <button
           role="menuitem"
           onClick={() => { setAdminOpen(false); navigate("/admin/employees"); }}
@@ -926,13 +927,7 @@ export default function Dashboard() {
           <VillageModal open={!!selectedVillage} village={selectedVillage} onClose={closeModal} onOpenProfile={openProfile} onSaveVillage={handleSaveVillage} />
         </div>
 
-        {/* Stage modal (interactive) */}
-        {showStageModal && (
-          <div style={{ pointerEvents: "auto" }}>
-            <StageModal onClose={() => setShowStageModal(false)} />
-          </div>
-        )}
-
+        
         <div className="h-20" />
       </div>
     </div>

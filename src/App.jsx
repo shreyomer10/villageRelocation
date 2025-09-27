@@ -8,6 +8,10 @@ import Home from "./pages/VillageHome.jsx";
 import FamilyList from "./pages/FamilyList";
 import PrivateRoute from "./component/PrivateRoute"; // new file below
 import LandingPage from "./pages/LandingPage.jsx";
+// import at top of your router file
+import StagePage from "./pages/StagePage";
+
+
 
 export default function App() {
   return (
@@ -32,6 +36,9 @@ export default function App() {
           </PrivateRoute>
         }
       />
+      
+
+<Route path="/stages" element={<PrivateRoute> <StagePage /> </PrivateRoute>} />
       <Route
         path="/family"
         element={
