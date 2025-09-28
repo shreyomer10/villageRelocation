@@ -4,12 +4,13 @@ import MainNavbar from "../component/MainNavbar";
 
 /**
  * StagePage (updated)
- * - Allows specifying `position` when creating a stage
- * - Drag-and-drop reordering of stage cards (HTML5 dnd)
- *   - Optimistically updates UI and calls PUT /stages/:stageId with { position }
- *   - On failure it reloads stages from server and shows error
- * - Ensures stages are sorted by `position` after every load
- * - Keeps deleted-substages inline toggle and global deleted-stages block unchanged
+ * - Stage-level selection uses a checkbox when global select mode is active.
+ * - Per-stage "Select" button appears only when the stage has substages (active, non-deleted).
+ * - "Deselect all" buttons added:
+ *    - Global: appears next to the global Delete button when any stages are selected.
+ *    - Per-stage: appears next to the per-stage Delete selected button when any substages are selected.
+ * - Stage drag/drop disabled for expanded cards (no reordering while expanded).
+ * - All other existing behaviors retained.
  */
 
 export default function StagePage() {
@@ -19,9 +20,17 @@ export default function StagePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // drag & drop state
+  // drag & drop state for stages
   const [dragIndex, setDragIndex] = useState(null);
   const [dragOverIndex, setDragOverIndex] = useState(null);
+
+  // pending reorder waiting for user confirmation (for stages)
+  const [pendingReorder, setPendingReorder] = useState(null);
+  const [persisting, setPersisting] = useState(false);
+
+  // pending substage reorder waiting for user confirmation
+  const [pendingSubstageReorder, setPendingSubstageReorder] = useState(null);
+  const [persistingSubstage, setPersistingSubstage] = useState(null); // subId being persisted
 
   // per-stage inline deleted-substage toggle + cache
   const [showDeletedInExpanded, setShowDeletedInExpanded] = useState({});
@@ -52,6 +61,11 @@ export default function StagePage() {
   const [deletedStagesError, setDeletedStagesError] = useState(null);
   const [showDeletedStages, setShowDeletedStages] = useState(false);
   const [expandedDeletedStageIds, setExpandedDeletedStageIds] = useState(new Set());
+
+  // delete confirmation modal state
+  // shape: { type: 'stage'|'substage'|'multipleStages'|'multipleSubstages', stageId?, subStageId?, ids?, name? }
+  const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const [performingDelete, setPerformingDelete] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -145,32 +159,14 @@ export default function StagePage() {
     });
   }
 
-  async function deleteSelectedStages() {
-    if (selectedStageIds.size === 0) return;
-    const failures = [];
-    for (const id of Array.from(selectedStageIds)) {
-      try {
-        const res = await fetch(`https://villagerelocation.onrender.com/stages/${encodeURIComponent(id)}`, {
-          method: "DELETE",
-          headers: authHeaders(),
-        });
-        if (!res.ok) {
-          const txt = await res.text().catch(() => "");
-          failures.push(`${id}: ${res.status} ${txt}`);
-        } else {
-          setStages(prev => prev.filter(s => String(getStageId(s)) !== String(id)));
-        }
-      } catch (err) {
-        console.error(err);
-        failures.push(`${id}: ${err.message}`);
-      }
-    }
+  // new: deselect all global
+  function deselectAllStages() {
     setSelectedStageIds(new Set());
-    setGlobalSelectMode(false);
-    if (failures.length > 0) {
-      console.error("Some deletes failed:", failures);
-      setError(`Some deletes failed:\n${failures.join("\n")}`);
-    }
+  }
+
+  function requestDeleteSelectedStages() {
+    if (selectedStageIds.size === 0) return;
+    setDeleteConfirm({ type: 'multipleStages', ids: Array.from(selectedStageIds) });
   }
 
   // ---------- Expand & per-stage sub-select ----------
@@ -266,44 +262,19 @@ export default function StagePage() {
     });
   }
 
-  async function deleteSelectedSubstages(stageId) {
-    const set = selectedSubstages[stageId];
-    if (!set || set.size === 0) return;
-    const failures = [];
-    for (const subId of Array.from(set)) {
-      try {
-        const res = await fetch(`https://villagerelocation.onrender.com/sstages/${encodeURIComponent(stageId)}/${encodeURIComponent(subId)}`, {
-          method: "DELETE",
-          headers: authHeaders(),
-        });
-        if (!res.ok) {
-          const txt = await res.text().catch(() => "");
-          failures.push(`${subId}: ${res.status} ${txt}`);
-        } else {
-          setStages(prev => prev.map(s => {
-            if (String(getStageId(s)) !== String(stageId)) return s;
-            const list = (s.stages ?? []).map(ss => {
-              if (String(getSubId(ss)) === String(subId)) return { ...ss, deleted: true };
-              return ss;
-            });
-            return { ...s, stages: list };
-          }));
-        }
-      } catch (err) {
-        console.error(err);
-        failures.push(`${subId}: ${err.message}`);
-      }
-    }
+  // new: deselect all substages for a stage
+  function deselectAllSubstagesFor(stageId) {
     setSelectedSubstages(prev => {
       const copy = { ...prev };
-      delete copy[stageId];
+      if (copy[stageId]) delete copy[stageId];
       return copy;
     });
-    setStageSubSelectMode(prev => ({ ...prev, [stageId]: false }));
-    if (failures.length > 0) {
-      console.error("Some substage deletes failed:", failures);
-      setError(`Some deletes failed:\n${failures.join("\n")}`);
-    }
+  }
+
+  function requestDeleteSelectedSubstages(stageId) {
+    const set = selectedSubstages[stageId];
+    if (!set || set.size === 0) return;
+    setDeleteConfirm({ type: 'multipleSubstages', stageId, ids: Array.from(set) });
   }
 
   // ---------- create / update / delete (unchanged except including position) ----------
@@ -374,7 +345,12 @@ export default function StagePage() {
     }
   }
 
-  async function deleteStage(stageId) {
+  // replace immediate delete with modal request; actual performs are below
+  function requestDeleteStage(stageId, name) {
+    setDeleteConfirm({ type: 'stage', stageId, name });
+  }
+
+  async function performDeleteStage(stageId) {
     try {
       const res = await fetch(`https://villagerelocation.onrender.com/stages/${encodeURIComponent(stageId)}`, {
         method: "DELETE",
@@ -460,7 +436,12 @@ export default function StagePage() {
     }
   }
 
-  async function deleteSubstage(stageId, subStageId) {
+  // request single-substage delete via modal
+  function requestDeleteSubstage(stageId, subStageId, name) {
+    setDeleteConfirm({ type: 'substage', stageId, subStageId, name });
+  }
+
+  async function performDeleteSubstage(stageId, subStageId) {
     try {
       const res = await fetch(`https://villagerelocation.onrender.com/sstages/${encodeURIComponent(stageId)}/${encodeURIComponent(subStageId)}`, {
         method: "DELETE",
@@ -489,7 +470,7 @@ export default function StagePage() {
     }
   }
 
-  // ---------- single global "deleted stages" toggle (unchanged) ----------
+  // ---------- deleted stages global toggle (unchanged) ----------
   async function toggleDeletedStagesGlobal() {
     if (showDeletedStages) {
       setShowDeletedStages(false);
@@ -529,12 +510,22 @@ export default function StagePage() {
   }
 
   // ---------- helper render for substage row (active list) ----------
-  function renderSubstageRow(stageId, ss) {
+  function renderSubstageRow(stageId, ss, indexInStage) {
     const subId = getSubId(ss);
     const perStageSelecting = !!stageSubSelectMode[stageId];
     const subSelected = !!(selectedSubstages[stageId] && selectedSubstages[stageId].has(subId));
+    const isDraggingOver = String(pendingSubstageReorder?.stageId) === String(stageId) && pendingSubstageReorder?.insertAt === indexInStage && pendingSubstageReorder?.movedId === subId ? true : false;
+
     return (
-      <div key={String(subId)} className="flex flex-col gap-2 p-2 border rounded bg-white">
+      <div
+        key={String(subId)}
+        draggable={!globalSelectMode && !perStageSelecting}
+        onDragStart={(e) => handleSubDragStart(e, stageId, indexInStage)}
+        onDragOver={(e) => handleSubDragOver(e, stageId, indexInStage)}
+        onDrop={(e) => handleSubDrop(e, stageId, indexInStage)}
+        onDragEnd={() => { setSubDragInfo(null); setSubDragOver({ stageId: null, index: null }); }}
+        className={`flex flex-col gap-2 p-2 border rounded bg-white ${isDraggingOver ? 'border-dashed border-2' : ''}`}
+      >
         <div className="flex items-center justify-between gap-3 min-w-0">
           <div className="flex items-center gap-3 min-w-0">
             {perStageSelecting && (
@@ -554,7 +545,6 @@ export default function StagePage() {
             {!perStageSelecting && (
               <>
                 <button onClick={() => setEditSubstage({ stageId, subStageId: subId, name: ss.name ?? "", desc: ss.desc ?? "" })} className="px-2 py-1 rounded bg-indigo-50 text-sm">Edit</button>
-                {!ss.deleted && <button onClick={() => deleteSubstage(stageId, subId)} className="px-2 py-1 rounded bg-red-50 text-sm">Delete</button>}
               </>
             )}
           </div>
@@ -563,154 +553,446 @@ export default function StagePage() {
     );
   }
 
-  // ---------- Drag & Drop handlers ----------
-  // Updated drag & drop handlers — replace the existing implementations in your StagePage component
-function handleDragStart(e, index) {
-  if (globalSelectMode) return; // disable while selecting
-  setDragIndex(index);
-  e.dataTransfer.effectAllowed = "move";
-  try {
-    // store index as fallback and the stageId for robustness
-    e.dataTransfer.setData("text/plain", String(index));
-    const sid = getStageId(stages[index]);
-    e.dataTransfer.setData("application/json", JSON.stringify({ stageId: sid }));
-  } catch (err) {
-    // some browsers restrict setData for certain types
-  }
-}
+  // ---------- Stage drag & drop handlers (modified to respect expanded cards) ----------
+  function handleDragStart(e, index) {
+    if (globalSelectMode) return; // disable while selecting
+    // if the stage at index is expanded, disallow dragging
+    const stage = stages[index];
+    if (!stage) return;
+    const stageId = getStageId(stage);
+    if (expandedStageIds.has(stageId)) return;
 
-function handleDragOver(e, index) {
-  e.preventDefault();
-  if (globalSelectMode) return;
-  setDragOverIndex(index);
-}
-
-async function handleDrop(e, targetIndex) {
-  e.preventDefault();
-  if (globalSelectMode) return;
-
-  // Determine sourceIndex robustly (use state first, fallback to dataTransfer)
-  let sourceIndex = dragIndex;
-  if (sourceIndex === null || sourceIndex === undefined) {
+    setDragIndex(index);
+    e.dataTransfer.effectAllowed = "move";
     try {
-      const dt = e.dataTransfer.getData("text/plain");
-      sourceIndex = dt !== "" ? Number(dt) : null;
+      // store index as fallback and the stageId for robustness
+      e.dataTransfer.setData("text/plain", String(index));
+      e.dataTransfer.setData("application/json", JSON.stringify({ stageId }));
     } catch (err) {
-      sourceIndex = null;
+      // some browsers restrict setData for certain types
     }
   }
 
-  if (sourceIndex === null || sourceIndex === undefined || isNaN(sourceIndex)) {
-    setDragIndex(null);
-    setDragOverIndex(null);
-    return;
+  function handleDragOver(e, index) {
+    e.preventDefault();
+    if (globalSelectMode) return;
+    // disallow dragging over an expanded stage card
+    const target = stages[index];
+    if (!target) return;
+    const targetId = getStageId(target);
+    if (expandedStageIds.has(targetId)) {
+      // do not set drag over if the target is expanded
+      setDragOverIndex(null);
+      return;
+    }
+    setDragOverIndex(index);
   }
 
-  // no-op if dropped on same index
-  if (sourceIndex === targetIndex) {
-    setDragIndex(null);
-    setDragOverIndex(null);
-    return;
-  }
+  async function handleDrop(e, targetIndex) {
+    e.preventDefault();
+    if (globalSelectMode) return;
 
-  // Optimistic reorder locally
-  const newStages = stages.slice();
-  const [moved] = newStages.splice(sourceIndex, 1);
-  const insertAt = Math.max(0, Math.min(targetIndex, newStages.length));
-  newStages.splice(insertAt, 0, moved);
-
-  // normalize positions to 0-based contiguous indices locally (optimistic UI)
-  const withPos = newStages.map((s, i) => ({ ...s, position: i }));
-  setStages(withPos);
-
-  // reset drag state
-  setDragIndex(null);
-  setDragOverIndex(null);
-
-  // Persist the moved stage's new position to server
-  const movedId = getStageId(moved);
-  const url = `https://villagerelocation.onrender.com/stages/${encodeURIComponent(movedId)}`;
-
-  // Helper: build payload ensuring 'name' is present (server validation requires it)
-  async function buildPayload() {
-    // prefer local fields if available
-    const name = (moved.name ?? "").toString();
-    const desc = moved.desc ?? undefined;
-    const deleted = !!moved.deleted;
-    if (name && name.trim() !== "") {
-      return { name: name.trim(), desc, deleted, position: insertAt };
+    // Determine sourceIndex robustly (use state first, fallback to dataTransfer)
+    let sourceIndex = dragIndex;
+    if (sourceIndex === null || sourceIndex === undefined) {
+      try {
+        const dt = e.dataTransfer.getData("text/plain");
+        sourceIndex = dt !== "" ? Number(dt) : null;
+      } catch (err) {
+        sourceIndex = null;
+      }
     }
 
-    // fallback: fetch canonical stage from server to obtain required fields
-    try {
-      const r = await fetch(url);
-      if (!r.ok) {
-        // can't get canonical record — return minimal payload (will likely fail validation)
+    // Validate indexes
+    if (sourceIndex === null || sourceIndex === undefined || isNaN(sourceIndex)) {
+      setDragIndex(null);
+      setDragOverIndex(null);
+      return;
+    }
+
+    // if source or target correspond to expanded stage, cancel
+    const srcStage = stages[sourceIndex];
+    const tgtStage = stages[targetIndex];
+    if (!srcStage || !tgtStage) { setDragIndex(null); setDragOverIndex(null); return; }
+    if (expandedStageIds.has(getStageId(srcStage)) || expandedStageIds.has(getStageId(tgtStage))) {
+      // cancel reordering when either source or target is an expanded card
+      setDragIndex(null);
+      setDragOverIndex(null);
+      return;
+    }
+
+    // no-op if dropped on same index
+    if (sourceIndex === targetIndex) {
+      setDragIndex(null);
+      setDragOverIndex(null);
+      return;
+    }
+
+    // Keep a copy of prev stages so we can revert if user cancels
+    const prevStages = stages.slice();
+
+    // Optimistic reorder locally
+    const newStages = stages.slice();
+    const [moved] = newStages.splice(sourceIndex, 1);
+    const insertAt = Math.max(0, Math.min(targetIndex, newStages.length));
+    newStages.splice(insertAt, 0, moved);
+
+    // normalize positions to 0-based contiguous indices locally (optimistic UI)
+    const withPos = newStages.map((s, i) => ({ ...s, position: i }));
+    setStages(withPos);
+
+    // reset drag state
+    setDragIndex(null);
+    setDragOverIndex(null);
+
+    // Save pending reorder; do NOT call server yet. Wait for user confirmation.
+    setPendingReorder({
+      moved: moved,
+      movedId: getStageId(moved),
+      prevStages,
+      newStages: withPos,
+      insertAt,
+      sourceIndex,
+      targetIndex: insertAt,
+    });
+  }
+
+  function handleDragEnd() {
+    setDragIndex(null);
+    setDragOverIndex(null);
+  }
+
+  // Confirm/cancel handlers for the pending reorder (stages)
+  async function confirmReorder() {
+    if (!pendingReorder) return;
+    setPersisting(true);
+    setError(null);
+
+    const { moved, movedId, insertAt } = pendingReorder;
+    const url = `https://villagerelocation.onrender.com/stages/${encodeURIComponent(movedId)}`;
+
+    // Helper: build payload ensuring 'name' is present (server validation requires it)
+    async function buildPayload() {
+      // prefer local fields if available
+      const name = (moved.name ?? "").toString();
+      const desc = moved.desc ?? undefined;
+      const deleted = !!moved.deleted;
+      if (name && name.trim() !== "") {
+        return { name: name.trim(), desc, deleted, position: insertAt };
+      }
+
+      // fallback: fetch canonical stage from server to obtain required fields
+      try {
+        const r = await fetch(url);
+        if (!r.ok) {
+          // can't get canonical record — return minimal payload (will likely fail validation)
+          return { name: "", desc, deleted, position: insertAt };
+        }
+        const data = await r.json();
+        const serverObj = data?.result ?? data;
+        const serverName = serverObj?.name ?? "";
+        const serverDesc = serverObj?.desc ?? desc;
+        const serverDeleted = serverObj?.deleted ?? deleted;
+        return { name: (serverName ?? "").toString().trim(), desc: serverDesc, deleted: !!serverDeleted, position: insertAt };
+      } catch (err) {
         return { name: "", desc, deleted, position: insertAt };
       }
-      const data = await r.json();
-      // server may wrap in result or return the object directly; try common shapes
-      const serverObj = data?.result ?? data;
-      const serverName = serverObj?.name ?? "";
-      const serverDesc = serverObj?.desc ?? desc;
-      const serverDeleted = serverObj?.deleted ?? deleted;
-      return { name: (serverName ?? "").toString().trim(), desc: serverDesc, deleted: !!serverDeleted, position: insertAt };
+    }
+
+    try {
+      const payload = await buildPayload();
+
+      if (!payload.name || payload.name.trim() === "") {
+        throw new Error("Reorder failed: stage name required by server validation. Reloading from server.");
+      }
+
+      const res = await fetch(url, {
+        method: "PUT",
+        headers: authHeaders(),
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        let bodyText = "";
+        try {
+          const txt = await res.text();
+          try {
+            const j = JSON.parse(txt);
+            bodyText = typeof j === "object" ? JSON.stringify(j) : txt;
+          } catch {
+            bodyText = txt;
+          }
+        } catch (e) {
+          bodyText = `${res.status}`;
+        }
+        throw new Error(`Reorder failed: ${res.status} ${bodyText}`);
+      }
+
+      // success — reload canonical order from the server to ensure positions are authoritative
+      await reloadStages();
+      setPendingReorder(null);
     } catch (err) {
-      return { name: "", desc, deleted, position: insertAt };
+      console.error(err);
+      setError(err.message || "Failed to update positions");
+      // revert to server state
+      await reloadStages();
+      setPendingReorder(null);
+    } finally {
+      setPersisting(false);
     }
   }
 
-  try {
-    const payload = await buildPayload();
+  function cancelReorder() {
+    if (!pendingReorder) return;
+    // revert UI to the previous order we saved
+    setStages(pendingReorder.prevStages || []);
+    setPendingReorder(null);
+  }
 
-    // if payload.name is still empty, give a helpful error instead of blindly calling the server
-    if (!payload.name || payload.name.trim() === "") {
-      throw new Error("Reorder failed: stage name required by server validation. Reloading from server.");
+  // ---------- Substage reorder (up/down) - now creates pendingSubstageReorder ----------
+  function reorderSubstage(stageId, subId, dir) {
+    // dir: -1 for up, +1 for down
+    setError(null);
+    const sIndex = stages.findIndex(st => String(getStageId(st)) === String(stageId));
+    if (sIndex === -1) return;
+    const stage = stages[sIndex];
+    const list = Array.isArray(stage.stages) ? stage.stages.slice() : [];
+    const idx = list.findIndex(x => String(getSubId(x)) === String(subId));
+    if (idx === -1) return;
+    const newIdx = Math.max(0, Math.min(list.length - 1, idx + dir));
+    if (newIdx === idx) return;
+
+    // optimistic local reorder
+    const newList = list.slice();
+    const [moved] = newList.splice(idx, 1);
+    newList.splice(newIdx, 0, moved);
+    // normalize positions locally
+    const withPos = newList.map((ss, i) => ({ ...ss, position: i }));
+
+    setStages(prev => prev.map((st, ii) => {
+      if (ii !== sIndex) return st;
+      return { ...st, stages: withPos };
+    }));
+
+    // save pending substage reorder for confirmation
+    setPendingSubstageReorder({
+      stageId: String(stageId),
+      stageIndex: sIndex,
+      moved,
+      movedId: String(subId),
+      prevList: list,
+      newList: withPos,
+      insertAt: newIdx,
+      sourceIndex: idx,
+      targetIndex: newIdx,
+    });
+  }
+
+  // ---------- Substage drag handlers (per-stage drag-and-drop) ----------
+  // { stageId, sourceIndex }
+  const [subDragInfo, setSubDragInfo] = useState(null);
+  const [subDragOver, setSubDragOver] = useState({ stageId: null, index: null });
+
+  function handleSubDragStart(e, stageId, sourceIndex) {
+    if (globalSelectMode) return;
+    setSubDragInfo({ stageId: String(stageId), sourceIndex });
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', String(sourceIndex)); e.dataTransfer.setData('application/json', JSON.stringify({ stageId })); } catch (err) {}
+  }
+
+  function handleSubDragOver(e, stageId, overIndex) {
+    e.preventDefault();
+    if (globalSelectMode) return;
+    // only show/drop if same stage
+    if (!subDragInfo) return;
+    if (String(subDragInfo.stageId) !== String(stageId)) return;
+    setSubDragOver({ stageId: String(stageId), index: overIndex });
+  }
+
+  async function handleSubDrop(e, stageId, targetIndex) {
+    e.preventDefault();
+    if (globalSelectMode) return;
+    // determine source index (prefer state fallback to dataTransfer)
+    let sourceIndex = subDragInfo?.sourceIndex;
+    if (sourceIndex === null || sourceIndex === undefined) {
+      try { const dt = e.dataTransfer.getData('text/plain'); sourceIndex = dt !== '' ? Number(dt) : null; } catch (err) { sourceIndex = null; }
     }
+    // must be valid and same stage
+    if (sourceIndex === null || sourceIndex === undefined || isNaN(sourceIndex)) { setSubDragInfo(null); setSubDragOver({ stageId: null, index: null }); return; }
+    if (!subDragInfo || String(subDragInfo.stageId) !== String(stageId)) { setSubDragInfo(null); setSubDragOver({ stageId: null, index: null }); return; }
 
-    const res = await fetch(url, {
-      method: "PUT",
-      headers: authHeaders(),
-      body: JSON.stringify(payload),
+    // no-op
+    if (sourceIndex === targetIndex) { setSubDragInfo(null); setSubDragOver({ stageId: null, index: null }); return; }
+
+    // find stage
+    const sIndex = stages.findIndex(st => String(getStageId(st)) === String(stageId));
+    if (sIndex === -1) { setSubDragInfo(null); setSubDragOver({ stageId: null, index: null }); return; }
+
+    const stage = stages[sIndex];
+    const list = Array.isArray(stage.stages) ? stage.stages.slice() : [];
+    if (sourceIndex < 0 || sourceIndex >= list.length) { setSubDragInfo(null); setSubDragOver({ stageId: null, index: null }); return; }
+    const newIdx = Math.max(0, Math.min(list.length - 1, targetIndex));
+
+    // optimistic local reorder
+    const newList = list.slice();
+    const [moved] = newList.splice(sourceIndex, 1);
+    // if targetIndex is after removal point, adjust insert index
+    const insertAt = (sourceIndex < newIdx) ? newIdx : newIdx;
+    newList.splice(insertAt, 0, moved);
+    const withPos = newList.map((ss, i) => ({ ...ss, position: i }));
+
+    setStages(prev => prev.map((st, ii) => ii === sIndex ? { ...st, stages: withPos } : st));
+
+    // save pending substage reorder for confirmation
+    setPendingSubstageReorder({
+      stageId: String(stageId),
+      stageIndex: sIndex,
+      moved,
+      movedId: String(getSubId(moved)),
+      prevList: list,
+      newList: withPos,
+      insertAt,
+      sourceIndex,
+      targetIndex: insertAt,
     });
 
-    if (!res.ok) {
-      // try to parse JSON body for a readable validation error
-      let bodyText = "";
-      try {
-        const txt = await res.text();
-        // if response is JSON try pretty parse
-        try {
-          const j = JSON.parse(txt);
-          bodyText = typeof j === "object" ? JSON.stringify(j) : txt;
-        } catch {
-          bodyText = txt;
-        }
-      } catch (e) {
-        bodyText = `${res.status}`;
+    setSubDragInfo(null);
+    setSubDragOver({ stageId: null, index: null });
+  }
+
+  // ---------- Confirm / Cancel for substage reorder ----------
+  async function confirmSubstageReorder() {
+    if (!pendingSubstageReorder) return;
+    setPersistingSubstage(String(pendingSubstageReorder.movedId));
+    setError(null);
+
+    const { stageId, moved, movedId, insertAt } = pendingSubstageReorder;
+
+    async function buildSubPayload(movedObj, position) {
+      const name = (movedObj.name ?? "").toString();
+      const desc = movedObj.desc ?? undefined;
+      const deleted = !!movedObj.deleted;
+      if (name && name.trim() !== "") {
+        return { name: name.trim(), desc, deleted, position };
       }
-      throw new Error(`Reorder failed: ${res.status} ${bodyText}`);
+      // fallback: fetch canonical substage
+      try {
+        const r = await fetch(`https://villagerelocation.onrender.com/sstages/${encodeURIComponent(stageId)}/${encodeURIComponent(movedId)}`);
+        if (!r.ok) return { name: "", desc, deleted, position };
+        const d = await r.json();
+        const serverObj = d?.result ?? d;
+        const serverName = serverObj?.name ?? "";
+        const serverDesc = serverObj?.desc ?? desc;
+        const serverDeleted = serverObj?.deleted ?? deleted;
+        return { name: (serverName ?? "").toString().trim(), desc: serverDesc, deleted: !!serverDeleted, position };
+      } catch (e) {
+        return { name: "", desc, deleted, position };
+      }
     }
 
-    // success — reload canonical order from the server to ensure positions are authoritative
-    await reloadStages();
-  } catch (err) {
-    console.error(err);
-    setError(err.message || "Failed to update positions");
-    // revert to server state
-    await reloadStages();
+    try {
+      const payload = await buildSubPayload(moved, insertAt);
+      if (!payload.name || payload.name.trim() === "") {
+        throw new Error("Reorder failed: substage name required by server validation. Reloading from server.");
+      }
+
+      const res = await fetch(`https://villagerelocation.onrender.com/sstages/${encodeURIComponent(stageId)}/${encodeURIComponent(movedId)}`, {
+        method: 'PUT', headers: authHeaders(), body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        let txt = '';
+        try { txt = await res.text(); } catch {}
+        throw new Error(`Substage reorder failed: ${res.status} ${txt}`);
+      }
+
+      await reloadStages();
+      setPendingSubstageReorder(null);
+    } catch (err) {
+      console.error(err);
+      setError(err.message || 'Failed to reorder substage');
+      await reloadStages();
+      setPendingSubstageReorder(null);
+    } finally {
+      setPersistingSubstage(null);
+    }
   }
-}
 
+  function cancelSubstageReorder() {
+    if (!pendingSubstageReorder) return;
+    const { stageId, prevList, stageIndex } = pendingSubstageReorder;
+    setStages(prev => prev.map((st, ii) => {
+      if (ii !== stageIndex) return st;
+      return { ...st, stages: prevList };
+    }));
+    setPendingSubstageReorder(null);
+  }
 
-function handleDragEnd() {
-  setDragIndex(null);
-  setDragOverIndex(null);
-}
+  // ---------- Perform delete operations after confirmation ----------
+  async function performDeleteConfirmed() {
+    if (!deleteConfirm) return;
+    setPerformingDelete(true);
+    setError(null);
+    try {
+      if (deleteConfirm.type === 'stage') {
+        await performDeleteStage(deleteConfirm.stageId);
+      } else if (deleteConfirm.type === 'substage') {
+        await performDeleteSubstage(deleteConfirm.stageId, deleteConfirm.subStageId);
+      } else if (deleteConfirm.type === 'multipleStages') {
+        const failures = [];
+        for (const id of (deleteConfirm.ids || [])) {
+          try {
+            const res = await fetch(`https://villagerelocation.onrender.com/stages/${encodeURIComponent(id)}`, { method: 'DELETE', headers: authHeaders() });
+            if (!res.ok) {
+              const txt = await res.text().catch(() => '');
+              failures.push(`${id}: ${res.status} ${txt}`);
+            }
+          } catch (e) {
+            failures.push(`${id}: ${e.message}`);
+          }
+        }
+        await reloadStages();
+        setSelectedStageIds(new Set());
+        setGlobalSelectMode(false);
+        if (failures.length > 0) setError(`Some deletes failed:\n${failures.join('\n')}`);
+      } else if (deleteConfirm.type === 'multipleSubstages') {
+        const failures = [];
+        for (const sid of (deleteConfirm.ids || [])) {
+          try {
+            const res = await fetch(`https://villagerelocation.onrender.com/sstages/${encodeURIComponent(deleteConfirm.stageId)}/${encodeURIComponent(sid)}`, { method: 'DELETE', headers: authHeaders() });
+            if (!res.ok) {
+              const txt = await res.text().catch(() => '');
+              failures.push(`${sid}: ${res.status} ${txt}`);
+            }
+          } catch (e) {
+            failures.push(`${sid}: ${e.message}`);
+          }
+        }
+        // update UI to mark deleted
+        setStages(prev => prev.map(s => {
+          if (String(getStageId(s)) !== String(deleteConfirm.stageId)) return s;
+          const list = (s.stages ?? []).map(ss => {
+            if ((deleteConfirm.ids || []).some(x => String(x) === String(getSubId(ss)))) return { ...ss, deleted: true };
+            return ss;
+          });
+          return { ...s, stages: list };
+        }));
+        setStageSubSelectMode(prev => ({ ...prev, [deleteConfirm.stageId]: false }));
+        setSelectedSubstages(prev => { const c = { ...prev }; delete c[deleteConfirm.stageId]; return c; });
+        if (failures.length > 0) setError(`Some substage deletes failed:\n${failures.join('\n')}`);
+      }
+    } catch (err) {
+      console.error(err);
+      setError(err.message || "Delete failed");
+      await reloadStages();
+    } finally {
+      setPerformingDelete(false);
+      setDeleteConfirm(null);
+    }
+  }
 
   // ---------- UI ----------
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-[#f8f0dc] font-sans">
       <MainNavbar />
       <div className="max-w-6xl mx-auto px-4 py-4 sm:px-6 lg:px-8">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-3">
@@ -742,14 +1024,27 @@ function handleDragEnd() {
             </button>
 
             {globalSelectMode && (
-              <button
-                onClick={deleteSelectedStages}
-                disabled={selectedStageIds.size === 0}
-                className={`px-4 py-2 rounded-md ${selectedStageIds.size === 0 ? "bg-red-100 text-red-300 cursor-not-allowed" : "bg-red-600 text-white"} w-full sm:w-auto text-sm`}
-                title={selectedStageIds.size === 0 ? "No stages selected" : `Delete selected (${selectedStageIds.size})`}
-              >
-                Delete selected ({selectedStageIds.size})
-              </button>
+              <div className="flex gap-2 w-full sm:w-auto">
+                <button
+                  onClick={requestDeleteSelectedStages}
+                  disabled={selectedStageIds.size === 0}
+                  className={`px-4 py-2 rounded-md ${selectedStageIds.size === 0 ? "bg-red-100 text-red-300 cursor-not-allowed" : "bg-red-600 text-white"} w-full sm:w-auto text-sm`}
+                  title={selectedStageIds.size === 0 ? "No stages selected" : `Delete selected (${selectedStageIds.size})`}
+                >
+                  Delete ({selectedStageIds.size})
+                </button>
+
+                {/* show deselect all only when there are selected items */}
+                {selectedStageIds.size > 0 && (
+                  <button
+                    onClick={deselectAllStages}
+                    className="px-4 py-2 rounded-md bg-gray-200 text-gray-700 w-full sm:w-auto text-sm"
+                    title="Deselect all selected stages"
+                  >
+                    Deselect all
+                  </button>
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -821,18 +1116,26 @@ function handleDragEnd() {
               return (
                 <div
                   key={String(stageId)}
-                  draggable={!globalSelectMode}
+                  // draggable disabled if selecting, if reorder pending, or if this card is expanded (showing substages)
+                  draggable={!globalSelectMode && !pendingReorder && !expanded}
                   onDragStart={(e) => handleDragStart(e, index)}
                   onDragOver={(e) => handleDragOver(e, index)}
                   onDrop={(e) => handleDrop(e, index)}
                   onDragEnd={handleDragEnd}
                   className={`bg-white rounded-lg shadow p-4 border relative ${isDragOver ? "border-dashed border-2" : ""}`}
-                  style={{ cursor: globalSelectMode ? "default" : "grab" }}
+                  style={{ cursor: globalSelectMode ? "default" : (expanded ? "default" : "grab") }}
                 >
                   <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                     <div className="flex items-center gap-3 min-w-0">
+                      {/* Global select mode: render a checkbox for stage selection */}
                       {globalSelectMode && (
-                        <input type="checkbox" checked={stageSelected} onChange={() => toggleStageCheckbox(stageId)} />
+                        <input
+                          type="checkbox"
+                          checked={stageSelected}
+                          onChange={() => toggleStageCheckbox(stageId)}
+                          className="w-4 h-4"
+                          aria-label={stageSelected ? "Deselect stage" : "Select stage"}
+                        />
                       )}
 
                       <div>
@@ -862,25 +1165,51 @@ function handleDragEnd() {
                     <div className="mt-4 border-t pt-4 space-y-4">
                       <div className="flex flex-col sm:flex-row sm:items-center items-start justify-between gap-3">
                         <div className="text-sm text-gray-600">Sub-stages ({activeSubs.length})</div>
+
+                        {/* Per-stage select toggle (button). Only show it if there are substages (activeSubs.length > 0). */}
                         <div className="flex items-center gap-2">
-                          <label className="inline-flex items-center gap-2 text-sm">
-                            <input type="checkbox" checked={!!stageSubSelectMode[stageId]} onChange={() => toggleStageSubSelectMode(stageId)} />
-                            <span>Select</span>
-                          </label>
+                          {activeSubs.length > 0 && (
+                            <>
+                              <button
+                                onClick={() => toggleStageSubSelectMode(stageId)}
+                                className={`px-2 py-1 rounded text-sm ${stageSubSelectMode[stageId] ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-700'}`}
+                                aria-pressed={!!stageSubSelectMode[stageId]}
+                                title={stageSubSelectMode[stageId] ? 'Exit sub-stage select' : 'Select sub-stages'}
+                              >
+                                {stageSubSelectMode[stageId] ? 'Done' : 'Select'}
+                              </button>
+
+                              {/* Render delete selected and deselect all only when there are selected substages */}
+                              {stageSubSelectMode[stageId] && selectedSubstages[stageId] && selectedSubstages[stageId].size > 0 && (
+                                <>
+                                  <button
+                                    onClick={() => requestDeleteSelectedSubstages(stageId)}
+                                    disabled={!(selectedSubstages[stageId] && selectedSubstages[stageId].size > 0)}
+                                    className={`px-3 py-1 rounded ${!(selectedSubstages[stageId] && selectedSubstages[stageId].size > 0) ? "bg-red-100 text-red-300 cursor-not-allowed" : "bg-red-600 text-white"} text-sm`}
+                                    title={!(selectedSubstages[stageId] && selectedSubstages[stageId].size > 0) ? "No sub-stages selected" : `Delete selected (${selectedSubstages[stageId].size})`}
+                                  >
+                                    Delete selected ({selectedSubstages[stageId]?.size ?? 0})
+                                  </button>
+
+                                  <button
+                                    onClick={() => deselectAllSubstagesFor(stageId)}
+                                    className="px-3 py-1 rounded bg-gray-200 text-gray-700 text-sm"
+                                    title="Deselect all selected sub-stages in this stage"
+                                  >
+                                    Deselect all
+                                  </button>
+                                </>
+                              )}
+                            </>
+                          )}
                         </div>
                       </div>
-
-                      {stageSubSelectMode[stageId] && selectedSubstages[stageId] && selectedSubstages[stageId].size > 0 && (
-                        <div className="flex justify-end">
-                          <button onClick={() => deleteSelectedSubstages(stageId)} className="px-3 py-1 bg-red-600 text-white rounded">Delete selected ({selectedSubstages[stageId].size})</button>
-                        </div>
-                      )}
 
                       <div className="space-y-2 max-h-[50vh] sm:max-h-[40vh] overflow-auto">
                         {activeSubs.length === 0 ? (
                           <div className="text-xs text-gray-500">No sub-stages</div>
                         ) : (
-                          activeSubs.map(ss => renderSubstageRow(stageId, ss))
+                          activeSubs.map((ss, i) => renderSubstageRow(stageId, ss, i))
                         )}
                       </div>
 
@@ -956,7 +1285,7 @@ function handleDragEnd() {
               </div>
 
               {showDeletedStages && (
-                <div className="mt-3 bg-gray-50 p-3 rounded border">
+                <div className="mt-7 ">
                   {deletedStagesLoading ? (
                     <div className="text-sm text-gray-600">Loading deleted stages…</div>
                   ) : deletedStagesError ? (
@@ -964,13 +1293,13 @@ function handleDragEnd() {
                   ) : deletedStagesCache.length === 0 ? (
                     <div className="text-sm text-gray-500">No deleted stages</div>
                   ) : (
-                    <div className="space-y-2">
+                    <div className="space-y-4">
                       {deletedStagesCache.map(ds => {
                         const id = ds.stageId ?? ds.stage_id ?? ds.id;
                         const dsSub = ds.stages ?? ds.subStages ?? ds.sub_stages ?? [];
                         const isExpanded = expandedDeletedStageIds.has(id);
                         return (
-                          <div key={String(id)} className="p-2 border rounded bg-white">
+                          <div key={String(id)} className="p-4 border rounded-xl bg-gray-100 ">
                             <div className="flex items-start justify-between gap-4">
                               <div className="min-w-0">
                                 <div className="font-medium truncate">{ds.name}</div>
@@ -1072,6 +1401,70 @@ function handleDragEnd() {
                   <button type="button" onClick={() => setEditSubstage(null)} className="px-4 py-2 border rounded">Cancel</button>
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+
+        {/* Centered confirmation modal for pending reorder (stages) */}
+        {pendingReorder && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40 p-4">
+            <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-md mx-3 sm:mx-0">
+              <h3 className="text-lg font-semibold mb-2">Confirm reorder</h3>
+              <div className="text-sm text-gray-700 mb-4">
+                Move "<span className="font-medium">{pendingReorder.moved?.name ?? pendingReorder.movedId}</span>" to position <span className="font-medium">{pendingReorder.insertAt}</span>?
+              </div>
+              {error && <div className="text-sm text-red-600 mb-3">{error}</div>}
+              <div className="flex justify-end gap-2">
+                <button onClick={cancelReorder} disabled={persisting} className="px-4 py-2 border rounded">Cancel</button>
+                <button onClick={confirmReorder} disabled={persisting} className="px-4 py-2 bg-blue-600 text-white rounded">{persisting ? "Saving…" : "Confirm"}</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Centered confirmation modal for pending substage reorder */}
+        {pendingSubstageReorder && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40 p-4">
+            <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-md mx-3 sm:mx-0">
+              <h3 className="text-lg font-semibold mb-2">Confirm sub-stage reorder</h3>
+              <div className="text-sm text-gray-700 mb-4">
+                Move "<span className="font-medium">{pendingSubstageReorder.moved?.name ?? pendingSubstageReorder.movedId}</span>" to position <span className="font-medium">{pendingSubstageReorder.insertAt}</span> in stage <span className="font-medium">{(stages[pendingSubstageReorder.stageIndex]?.name) ?? pendingSubstageReorder.stageId}</span>?
+              </div>
+              {error && <div className="text-sm text-red-600 mb-3">{error}</div>}
+              <div className="flex justify-end gap-2">
+                <button onClick={cancelSubstageReorder} disabled={!!persistingSubstage} className="px-4 py-2 border rounded">Cancel</button>
+                <button onClick={confirmSubstageReorder} disabled={!!persistingSubstage} className="px-4 py-2 bg-blue-600 text-white rounded">{persistingSubstage ? "Saving…" : "Confirm"}</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Centered confirmation modal for delete operations */}
+        {deleteConfirm && (
+          <div className="fixed inset-0 z-60 flex items-center justify-center bg-black bg-opacity-40 p-4">
+            <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-md mx-3 sm:mx-0">
+              <h3 className="text-lg font-semibold mb-2">Confirm delete</h3>
+              <div className="text-sm text-gray-700 mb-4">
+                {deleteConfirm.type === 'stage' && (
+                  <>Are you sure you want to delete stage "<span className="font-medium">{deleteConfirm.name ?? deleteConfirm.stageId}</span>"?</>
+                )}
+                {deleteConfirm.type === 'substage' && (
+                  <>Are you sure you want to delete sub-stage "<span className="font-medium">{deleteConfirm.name ?? deleteConfirm.subStageId}</span>"?</>
+                )}
+                {deleteConfirm.type === 'multipleStages' && (
+                  <>Are you sure you want to delete <span className="font-medium">{(deleteConfirm.ids || []).length}</span> selected stages?</>
+                )}
+                {deleteConfirm.type === 'multipleSubstages' && (
+                  <>Are you sure you want to delete <span className="font-medium">{(deleteConfirm.ids || []).length}</span> selected sub-stages?</>
+                )}
+              </div>
+
+              {error && <div className="text-sm text-red-600 mb-3">{error}</div>}
+
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setDeleteConfirm(null)} disabled={performingDelete} className="px-4 py-2 border rounded">Cancel</button>
+                <button onClick={performDeleteConfirmed} disabled={performingDelete} className="px-4 py-2 bg-red-600 text-white rounded">{performingDelete ? "Deleting…" : "Delete"}</button>
+              </div>
             </div>
           </div>
         )}
