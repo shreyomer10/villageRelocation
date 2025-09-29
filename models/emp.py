@@ -1,7 +1,7 @@
 
 
 from enum import Enum
-from typing import Optional
+from typing import List, Optional
 from pydantic import BaseModel, Field
 
 
@@ -19,16 +19,7 @@ class UserInsert(BaseModel):
     name: str
     role: UserRole
     mobile: str
-    password:Optional[str]=None
-    villageId:str
-    range: Optional[str]=None
-    sd1: Optional[str]=None
-    fd: Optional[str]=None
-    gramPanchayat: Optional[str]=None
-    tehsil: Optional[str]=None
-    janpad: Optional[str]=None
-    subD2: Optional[str]=None
-    district: Optional[str]=None
+    villageID:List[str]= Field(default_factory=list)
     activated:Optional[bool]=False
     deleted:Optional[bool]=False
 
@@ -41,21 +32,22 @@ class UserUpdate(BaseModel):
     name:  Optional[str]=None
     #role: UserRole
     mobile:  Optional[str]=None
-    password: Optional[str]=None
-    villageId: Optional[str]=None
-    range: Optional[str]=None
-    sd1: Optional[str]=None
-    fd: Optional[str]=None
-    gramPanchayat: Optional[str]=None
-    tehsil: Optional[str]=None
-    janpad: Optional[str]=None
-    subD2: Optional[str]=None
-    district: Optional[str]=None
+    villageID:Optional[List[str]]= None
     activated:Optional[bool]=False
     deleted:Optional[bool]=False
 
+    class Config:
+        extra = "forbid"  
 
 class Users(UserInsert):
     userId:str
     password:str
+    verified:bool
     
+    @classmethod
+    def from_mongo(cls, doc: dict):
+        if not doc:
+            return None
+        # remove _id if present
+        doc.pop("_id", None)
+        return cls.parse_obj(doc)   # validates against schema

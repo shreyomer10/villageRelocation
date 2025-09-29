@@ -19,8 +19,8 @@ class VillageUpdatesInsert(BaseModel):
         extra = "forbid"
 
 class VillageUpdatesUpdate(BaseModel):
-    currentStage:Optional[str]=None
-    currentSubStage:Optional[str]=None
+    # currentStage:Optional[str]=None
+    # currentSubStage:Optional[str]=None
 
     name:Optional[str]=None
     docs:Optional[List[str]]=Field(default_factory=list)
@@ -108,8 +108,9 @@ class Stages(StageInsert):
 class VillageCard(BaseModel):
     villageId: str
     name: str
-    currentStage: int
-    currentSubStage:int
+    currentStage: str
+    currentSubStage:str
+    completed_substages:List[str]=None
     updatedAt: str 
     updatedBy:str
     siteOfRelocation:str
@@ -140,29 +141,40 @@ class Village(BaseModel):
     villageId: str
     name: str
     siteOfRelocation: str
-    range: str
-    sd1: str
     fd: str
+    sd:str
+    range:Optional[str]
+    circle:Optional[str]
+    beat:Optional[str]
     gramPanchayat: str
     tehsil: str
     janpad: str
-    subD2: str
     district: str
     lat: float
     long: float
-    kme: str
-
+    kml: str
+    
+    # fdUpdated: str
+    # sdUpdated:str
+    # rangeUpdated:Optional[str]
+    # circleUpdated:Optional[str]
+    # beatUpdated:Optional[str]
+    # gramPanchayatUpdated: str
+    # tehsilUpdated: str
+    # janpadUpdated: str
+    # districtUpdated: str
+    # latUpdated: float
+    # longUpdated: float
     docs: List[Documents] = []
     photos: List[str] = []
-    logs: List[VillageLog] = []
+    logs: Optional[List[VillageLog]] = Field(default_factory=list)
     familyMasterList:str
-
 
     currentStage:str
     currentSubStage: str
 
-    updates:List[VillageUpdates]= Field(default_factory=list)
-    completed_substages:List[str]=Field(default_factory=list)
+    updates:Optional[List[VillageUpdates]]= Field(default_factory=list)
+    completed_substages:Optional[List[str]]=Field(default_factory=list)
 
     # Example: ensure latitude/longitude look like numbers
     @field_validator("lat", "long")

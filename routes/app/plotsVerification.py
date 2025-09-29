@@ -292,8 +292,6 @@ def insert_verification(plotId):
         return make_response(True, f"Error inserting verification: {str(e)}", status=500)
 
 
-
-
 @plots_BP.route("/field_verification/<plotId>/<verificationId>", methods=["PUT"])
 def update_verification(plotId, verificationId):
     try:

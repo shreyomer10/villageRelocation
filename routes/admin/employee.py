@@ -1,12 +1,11 @@
 import datetime as dt
-from flask import Flask, Blueprint, logging,request, jsonify
+from flask import Flask, Blueprint,request, jsonify
 from flask_cors import CORS
 from pydantic import ValidationError
 from pymongo import  ASCENDING, DESCENDING, ReturnDocument,errors as mongo_errors
 from utils.helpers import hash_password, make_response, validation_error_response
 from models.counters import get_next_user_id
 from models.emp import UserInsert, UserUpdate, Users
-from models.village import FamilyCount, SubStage, Village, VillageCard
 from config import JWT_EXPIRE_MIN, db
 from pymongo.errors import DuplicateKeyError
 
@@ -17,6 +16,21 @@ villages = db.villages
 
 emp_bp = Blueprint("emp",__name__)
 
+def validate_village_ids(village_ids: list):
+    if not village_ids:
+        return True, []
+    
+    # Fetch all valid village IDs from villages collection
+    valid_villages = set(v["villageID"] for v in villages.find({}, {"villageID": 1, "_id": 0}))
+    
+    # Find invalid IDs
+    invalid_ids = [vid for vid in village_ids if vid not in valid_villages]
+    
+    return len(invalid_ids) == 0, invalid_ids
+
+
+
+
 @emp_bp.route("/employee/add", methods=["POST"])
 def add_employee():
     try:
@@ -25,6 +39,9 @@ def add_employee():
             return make_response(True, "Missing request body/ password not required", status=400)
         try:
             emp = UserInsert(**payload)
+            is_valid, invalid_ids = validate_village_ids(emp.villageID)
+            if not is_valid:
+                return make_response(True, f"Invalid villageIDs: {invalid_ids}", status=400)
 
         except ValidationError as ve:
             return validation_error_response(ve)
@@ -38,6 +55,7 @@ def add_employee():
         comp_emp=Users(
             userId=userId,
             activated=True,
+            verified=False,
             password="",
              **emp_dict
                     
@@ -93,7 +111,13 @@ def bulk_add_employees():
                     continue
 
                 emp = UserInsert(**emp_payload)  # validate first
-
+                is_valid, invalid_ids = validate_village_ids(emp.villageID)
+                if not is_valid:
+                    errors_list.append({
+                        "employee_name": emp.name,
+                        "error": f"Invalid villageIDs: {invalid_ids}"
+                    })
+                    continue
                 # Check duplicates
                 if users.find_one({"email": emp.email, "deleted": False}):
                     skipped.append({"email": emp.email, "reason": "Email already exists"})
@@ -108,6 +132,8 @@ def bulk_add_employees():
                 comp_emp = Users(
                     userId=userId,
                     activated=True,
+                    verified=False,
+
                     password="",
                     **emp_dict
                 )
@@ -159,6 +185,10 @@ def update_employee(emp_id):
             update_data = UserUpdate(**payload).model_dump(exclude_none=True)
         except ValidationError as ve:
             return validation_error_response(ve)
+        if "villageID" in update_data:
+            is_valid, invalid_ids = validate_village_ids(update_data["villageID"])
+            if not is_valid:
+                return make_response(True, f"Invalid villageIDs: {invalid_ids}", status=400)
 
         if not update_data:
             return make_response(True, "No valid fields to update", status=400)
@@ -238,7 +268,8 @@ def get_employee_details(emp_id):
         if not emp_id or not isinstance(emp_id, str):
             return make_response(True, "Invalid or missing emp_id", status=400)
 
-        emp = users.find_one({"userId": emp_id}, {"_id": 0})
+        emp = users.find_one({"userId": emp_id,"deleted":False},{"_id": 0,"otp":0}
+)
         if not emp:
             return make_response(True, "Employee not found", status=404)
 

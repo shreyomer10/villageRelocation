@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from pymongo import  ASCENDING, DESCENDING
 from models.counters import get_next_family_id, get_next_family_update_id, get_next_member_update_id
 from utils.helpers import make_response, validation_error_response
-from models.family import Family, FamilyCard, FamilyComplete, FamilyUpdate, Member, StatusHistory, Updates, UpdatesInsert
+from models.family import Family, FamilyCard, FamilyComplete, FamilyUpdate, Member, StatusHistory, Updates, UpdatesInsert, UpdatesUpdate
 from config import JWT_EXPIRE_MIN, db
 
 from pymongo import errors  
@@ -306,7 +306,7 @@ def insert_family_update(familyId):
 
 
         # 2️⃣ Fetch option details
-        option = options.find_one({"optionId": fam.get("relocationOption")}, {"_id": 0})
+        option = options.find_one({"optionId": fam.get("relocationOption"),"deleted":False}, {"_id": 0})
         if not option:
             return make_response(True, "Relocation option not found", status=404)
 
@@ -363,6 +363,8 @@ def insert_family_update(familyId):
             {
                 "$push": {"updates": fam_update.model_dump(exclude_none=True)},
                 "$addToSet": {"stagesCompleted": current_stage},
+                "$set": {"currentStage": current_stage},  # ✅ maintain currentStage
+
             },
         )
         return make_response(
@@ -404,11 +406,13 @@ def insert_member_update(familyId):
         # 2️⃣ Find the member directly from dict (use nameUpdate)
         members = family_doc.get("members", [])
         member = next(
-            (m for m in members if m.get("name") == nameUpdate 
-                                and str(m.get("age"))== str(age)
-                                and m.get("gender", "").lower() == gender.lower()),
+            (m for m in members 
+            if m.get("name","").strip().lower() == nameUpdate.strip().lower()
+            and str(m.get("age")) == str(age)
+            and m.get("gender","").lower() == gender.lower()),
             None
         )
+
         if not member:
             return make_response(True, "Member not found in family", status=404)
 
@@ -485,6 +489,264 @@ def insert_member_update(familyId):
         return validation_error_response(ve)
     except Exception as e:
         return make_response(True, f"Unexpected error: {str(e)}", status=500)
+
+@family_bp.route("/family_updates/<familyId>/<updateId>", methods=["PUT"])
+def update_family_update(familyId, updateId):
+    try:
+        payload = request.get_json(force=True)
+        userId = payload.pop("userId", None)
+        if not payload or not userId:
+            return make_response(True, "Missing request body or userId", status=400)
+
+        # Validate payload using Pydantic
+        try:
+            update_obj = UpdatesUpdate(**payload)  # similar to VillageUpdatesUpdate
+        except ValidationError as ve:
+            return validation_error_response(ve)
+
+        # Fetch family document
+        family_doc = families.find_one({"familyId": familyId})
+        if not family_doc:
+            return make_response(True, "Family not found", status=404)
+
+        # Locate the specific update
+        update_item = next(
+            (u for u in family_doc.get("updates", []) if u["updateId"] == updateId),
+            None
+        )
+
+        if not update_item:
+            return make_response(True, "Update not found", status=404)
+        if update_item.get("deleted", False):
+            return make_response(True, "Cannot update deleted update", status=400)
+
+        # Stage/subStage should not be changed
+        # if update_obj.currentStage and update_obj.currentStage != update_item.get("currentStage"):
+        #     return make_response(True, "Updating currentStage not allowed", status=400)
+
+        # Build updated dictionary
+        now = dt.datetime.utcnow().isoformat()
+        update_dict = update_obj.model_dump(exclude_none=True)
+        update_dict.update({"verifiedAt": now, "verifiedBy": userId})
+
+        # Update the specific update inside the updates array
+        families.update_one(
+            {"familyId": familyId, "updates.updateId": updateId},
+            {"$set": {f"updates.$.{k}": v for k, v in update_dict.items()}}
+        )
+
+        # Optional: Recompute currentStage if needed
+        # If the update being modified changes its status, you may want to recompute
+        # family_doc["currentStage"] = max of all verified updates in order of option stages
+
+        return make_response(
+            False,
+            f"Family update {updateId} modified successfully",
+            result=update_dict,
+            status=200
+        )
+
+    except ValidationError as ve:
+        return validation_error_response(ve)
+    except Exception as e:
+        return make_response(True, f"Unexpected error: {str(e)}", status=500)
+
+@family_bp.route("/member_updates/<familyId>/<updateId>", methods=["PUT"])
+def update_member_update(familyId, updateId):
+    try:
+        payload = request.get_json(force=True)
+        userId = payload.pop("userId", None)
+        if not payload or not userId:
+            return make_response(True, "Missing request body or userId", status=400)
+
+        # Validate payload
+        try:
+            update_obj = UpdatesUpdate(**payload)
+        except ValidationError as ve:
+            return validation_error_response(ve)
+
+        # Fetch family document
+        family_doc = families.find_one({"familyId": familyId})
+        if not family_doc:
+            return make_response(True, "Family not found", status=404)
+
+        # Locate the member who owns this update
+        member_item = None
+        for m in family_doc.get("members", []):
+            update_item = next(
+                (u for u in m.get("updates", []) if u["updateId"] == updateId),
+                None
+            )
+            if update_item:
+                member_item = (m, update_item)
+                break
+
+        if not member_item:
+            return make_response(True, "Update not found for any member", status=404)
+
+        member, update_item = member_item
+
+        if update_item.get("deleted", False):
+            return make_response(True, "Cannot update deleted update", status=400)
+
+        # Stage should not be changed
+        # if update_obj.currentStage and update_obj.currentStage != update_item.get("currentStage"):
+        #     return make_response(True, "Updating currentStage not allowed", status=400)
+
+        # Build updated dictionary
+        now = dt.datetime.utcnow().isoformat()
+        update_dict = update_obj.model_dump(exclude_none=True)
+        update_dict.update({"verifiedAt": now, "verifiedBy": userId})
+
+        # Update the specific update inside the member's updates array
+        families.update_one(
+            {
+                "familyId": familyId,
+                "members.name": member.get("name"),
+                "members.age": member.get("age"),
+                "members.gender": member.get("gender")
+            },
+            {
+                "$set": {f"members.$.updates.$[u].{k}": v for k, v in update_dict.items()}
+            },
+            array_filters=[{"u.updateId": updateId}]
+        )
+
+        # Optional: Update member's currentStage if needed
+        # stagesCompleted can also be recomputed if update status affects it
+
+        return make_response(
+            False,
+            f"Member update {updateId} modified successfully",
+            result=update_dict,
+            status=200
+        )
+
+    except ValidationError as ve:
+        return validation_error_response(ve)
+    except Exception as e:
+        return make_response(True, f"Unexpected error: {str(e)}", status=500)
+
+
+@family_bp.route("/updates/delete", methods=["DELETE"])
+def delete_update():
+    try:
+        payload = request.get_json(force=True)
+        if not payload:
+            return make_response(True, "Missing request body", status=400)
+
+        update_type = payload.get("type")  # "family" or "member"
+        familyId = payload.get("familyId")
+        updateId = payload.get("updateId")
+        userId = payload.get("userId")
+
+        if not all([update_type, familyId, updateId, userId]):
+            return make_response(True, "Missing required fields", status=400)
+
+        # Fetch family
+        family_doc = families.find_one({"familyId": familyId})
+        if not family_doc:
+            return make_response(True, "Family not found", status=404)
+
+        if update_type == "family":
+            # ---------- Family Update ----------
+            update_item = next(
+                (u for u in family_doc.get("updates", []) if u["updateId"] == updateId and not u.get("deleted", False)),
+                None
+            )
+            if not update_item:
+                return make_response(True, "Update not found", status=404)
+
+            stage_to_remove = update_item.get("currentStage")
+
+            # Count non-deleted updates for this stage
+            non_deleted_count = sum(
+                1 for u in family_doc.get("updates", []) 
+                if u.get("currentStage") == stage_to_remove and not u.get("deleted", False)
+            )
+
+            update_ops = {"$set": {"updates.$.deleted": True}}
+            if non_deleted_count == 1:
+                update_ops["$pull"] = {"stagesCompleted": stage_to_remove}
+
+            families.update_one(
+                {"familyId": familyId, "updates.updateId": updateId},
+                update_ops
+            )
+
+            # Recalculate currentStage
+            remaining_updates = [
+                u for u in family_doc.get("updates", []) if not u.get("deleted", False) and u["updateId"] != updateId
+            ]
+            new_current_stage = remaining_updates[-1]["currentStage"] if remaining_updates else None
+            families.update_one(
+                {"familyId": familyId},
+                {"$set": {"currentStage": new_current_stage}}
+            )
+
+        elif update_type == "member":
+            # ---------- Member Update ----------
+            memberName = payload.get("name")
+            age = payload.get("age")
+            gender = payload.get("gender")
+
+            if not all([memberName, age, gender]):
+                return make_response(True, "Missing member identifiers", status=400)
+
+            members = family_doc.get("members", [])
+            member = next(
+                (m for m in members 
+                 if m.get("name","").strip().lower() == memberName.strip().lower()
+                 and str(m.get("age")) == str(age)
+                 and m.get("gender","").lower() == gender.lower()),
+                None
+            )
+            if not member:
+                return make_response(True, "Member not found", status=404)
+
+            update_item = next(
+                (u for u in member.get("updates", []) if u["updateId"] == updateId and not u.get("deleted", False)),
+                None
+            )
+            if not update_item:
+                return make_response(True, "Update not found", status=404)
+
+            stage_to_remove = update_item.get("currentStage")
+
+            non_deleted_count = sum(
+                1 for u in member.get("updates", []) 
+                if u.get("currentStage") == stage_to_remove and not u.get("deleted", False)
+            )
+
+            update_ops = {"$set": {"members.$.updates.$[u].deleted": True}}
+            array_filters = [{"u.updateId": updateId}]
+            if non_deleted_count == 1:
+                update_ops["$pull"] = {"members.$.stagesCompleted": stage_to_remove}
+
+            families.update_one(
+                {"familyId": familyId, "members.name": memberName, "members.age": age, "members.gender": gender},
+                update_ops,
+                array_filters=array_filters
+            )
+
+            # Recalculate member currentStage
+            remaining_updates = [
+                u for u in member.get("updates", []) if not u.get("deleted", False) and u["updateId"] != updateId
+            ]
+            new_current_stage = remaining_updates[-1]["currentStage"] if remaining_updates else None
+            families.update_one(
+                {"familyId": familyId, "members.name": memberName, "members.age": age, "members.gender": gender},
+                {"$set": {"members.$.currentStage": new_current_stage}}
+            )
+
+        else:
+            return make_response(True, "Invalid type. Must be 'family' or 'member'", status=400)
+
+        return make_response(False, f"{update_type.capitalize()} update {updateId} deleted successfully")
+
+    except Exception as e:
+        return make_response(True, f"Error deleting update: {str(e)}", status=500)
+
 
 @family_bp.route("/verification/verify", methods=["POST"])
 def verify_update():
@@ -608,7 +870,7 @@ def get_updates(familyId):
 
         else:  # member updates
             name = request.args.get("name")
-            age = request.args.get("age", type=int)
+            age = request.args.get("age")
             gender = request.args.get("gender")
 
             if not all([name, age, gender]):
@@ -616,9 +878,12 @@ def get_updates(familyId):
 
             member = next(
                 (m for m in family.get("members", [])
-                 if m["name"] == name and m["age"] == age and m["gender"].lower() == gender.lower()),
+                if m["name"].strip().lower() == name.strip().lower()
+                and str(m["age"]) == str(age)
+                and m["gender"].lower() == gender.lower()),
                 None
             )
+
             if not member:
                 return make_response(True, "Member not found", status=404)
 

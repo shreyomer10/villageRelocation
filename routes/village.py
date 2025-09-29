@@ -30,6 +30,7 @@ def get_all_villages():
             "name": 1,
             "currentStage": 1,
             "currentSubStage": 1,
+            "completed_substages":1,
             "updatedAt": 1,
             "updatedBy": 1,
             "siteOfRelocation": 1,

@@ -18,7 +18,7 @@ class UpdatesInsert(BaseModel):
         extra = "forbid"
 
 class UpdatesUpdate(BaseModel):
-    currentStage:Optional[str]=None
+  #  currentStage:Optional[str]=None
     name:Optional[str]=None
     docs:Optional[List[str]]=Field(default_factory=list)
     notes:Optional[str]=None

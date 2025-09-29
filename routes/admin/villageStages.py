@@ -349,17 +349,28 @@ def insert_village_update(villageId):
             return make_response(True, f"Village {villageId} not found", status=404)
 
         # -------- Validate Stage --------
-        stage_doc = stages.find_one({"stageId": data.currentStage}, {"_id": 0})
+        stage_doc = stages.find_one({"stageId": data.currentStage,"deleted":False}, {"_id": 0})
         if not stage_doc:
             return make_response(True, f"Stage {data.currentStage} not found", status=400)
 
-        # -------- Validate SubStage inside Stage --------
-        if data.currentSubStage not in stage_doc.get("subStages", []):
-            return make_response(True, f"SubStage {data.currentSubStage} not found in Stage {data.currentStage}", status=400)
+        # -------- Extract subStageIds for current stage --------
+        sub_stage_ids = [s.get("subStageId") for s in stage_doc.get("stages", []) if not s.get("deleted", False)]
 
-        # -------- Flatten All SubStages --------
-        all_stages = list(stages.find({}, {"_id": 0, "stageId": 1, "subStages": 1}))
-        flattened = [sub for st in all_stages for sub in st.get("subStages", [])]
+        if data.currentSubStage not in sub_stage_ids:
+            return make_response(
+                True,
+                f"SubStage {data.currentSubStage} not found in Stage {data.currentStage}",
+                status=400
+            )
+
+        # -------- Flatten All SubStages across all stages --------
+        all_stages = list(stages.find({"deleted":False}, {"_id": 0, "stageId": 1, "stages.subStageId": 1, "stages.deleted": 1}))
+        flattened = [
+            sub.get("subStageId")
+            for st in all_stages
+            for sub in st.get("stages", [])
+            if not sub.get("deleted", False)
+        ]
 
         if data.currentSubStage not in flattened:
             return make_response(True, f"Invalid SubStage {data.currentSubStage}", status=400)
@@ -372,15 +383,15 @@ def insert_village_update(villageId):
         missing = [p for p in prereqs if p not in completed]
         if missing:
             return make_response(True, f"Missing prerequisite SubStages: {missing}", status=400)
-        new_update_id=get_next_villageStageUpdate_id(db,villageId=villageId)
+
         # -------- Create Update Record --------
+        new_update_id = get_next_villageStageUpdate_id(db, villageId=villageId)
         update_obj = VillageUpdates(
             **data.dict(),
             updateId=new_update_id,
             verifiedBy="system",   # later replace with auth user
             verifiedAt=datetime.utcnow().isoformat()
         ).dict()
-
 
         # -------- Update Village --------
         villages.update_one(
@@ -391,7 +402,7 @@ def insert_village_update(villageId):
                     "currentSubStage": data.currentSubStage,
                 },
                 "$addToSet": {"completed_substages": data.currentSubStage},
-                "$push": {"updates": update_obj},  # insert into updates array
+                "$push": {"updates": update_obj},
             },
         )
 
@@ -401,7 +412,6 @@ def insert_village_update(villageId):
         return make_response(True, ve.errors(), status=400)
     except Exception as e:
         return make_response(True, str(e), status=500)
-
 
 @villageStages_BP.route("/village_updates/<villageId>/<updateId>", methods=["PUT"])
 def update_village_update(villageId, updateId):
@@ -416,9 +426,9 @@ def update_village_update(villageId, updateId):
         except ValidationError as ve:
             return validation_error_response(ve)
 
-        # Stage/subStage cannot be changed
-        if update_obj.currentStage or update_obj.currentSubStage:
-            return make_response(True, "Updating stage/subStage not allowed", status=400)
+        # # Stage/subStage cannot be changed
+        # if update_obj.currentStage or update_obj.currentSubStage:
+        #     return make_response(True, "Updating stage/subStage not allowed", status=400)
 
         # Fetch village and target update
         village = villages.find_one({"villageId": villageId})
@@ -451,7 +461,6 @@ def delete_village_update(villageId, updateId):
     try:
         payload = request.get_json(force=True)
         userId = payload.get("userId") if payload else None
-       # comments = payload.get("comments", "Deleted by user") if payload else "Deleted by user"
 
         if not userId:
             return make_response(True, "Missing userId in request body", status=400)
@@ -460,23 +469,63 @@ def delete_village_update(villageId, updateId):
         if not village:
             return make_response(True, "Village not found", status=404)
 
-        update_item = next((u for u in village.get("updates", []) if u["updateId"] == updateId), None)
+        update_item = next(
+            (u for u in village.get("updates", []) if u["updateId"] == updateId and not u.get("deleted", False)),
+            None
+        )
         if not update_item:
             return make_response(True, "Update not found", status=404)
 
-        now = datetime.utcnow().isoformat()
+        # Check if this is the only non-deleted update for that stage/substage
+        stage = update_item["currentStage"]
+        substage = update_item["currentSubStage"]
 
-
-        villages.update_one(
-            {"villageId": villageId, "updates.updateId": updateId},
-            {
-                "$set": {"updates.$.deleted": True},
-            },
+        non_deleted_count = sum(
+            1 for u in village.get("updates", [])
+            if u.get("currentStage") == stage and u.get("currentSubStage") == substage and not u.get("deleted", False)
         )
 
+        update_ops = {"$set": {"updates.$.deleted": True}}
+
+        if non_deleted_count == 1:
+            # Remove substage from completed_substages
+            update_ops["$pull"] = {"completed_substages": substage}
+
+        # Apply deletion update
+        villages.update_one(
+            {"villageId": villageId, "updates.updateId": updateId},
+            update_ops
+        )
+
+        # Now recalculate currentStage/currentSubStage
+        remaining_updates = [
+            u for u in village.get("updates", []) if not u.get("deleted", False) and u["updateId"] != updateId
+        ]
+
+        if remaining_updates:
+            # Take latest by verifiedAt (or fall back to order)
+            latest_update = sorted(
+                remaining_updates, key=lambda x: x.get("verifiedAt", ""), reverse=True
+            )[0]
+            villages.update_one(
+                {"villageId": villageId},
+                {"$set": {
+                    "currentStage": latest_update["currentStage"],
+                    "currentSubStage": latest_update["currentSubStage"]
+                }}
+            )
+        else:
+            # Reset stage/substage if no updates left
+            villages.update_one(
+                {"villageId": villageId},
+                {"$set": {"currentStage": None, "currentSubStage": None}}
+            )
+
         return make_response(False, "Village update deleted successfully")
+
     except Exception as e:
         return make_response(True, f"Error deleting village update: {str(e)}", status=500)
+
 
 
 @villageStages_BP.route("/village_updates/<villageId>", methods=["GET"])
