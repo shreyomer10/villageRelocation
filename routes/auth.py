@@ -139,7 +139,7 @@ def login():
                 "error": False,
                 "message": "Login successfull",
                 "user": user_dict
-            }),200
+            })
             response.set_cookie(
                 "token",
                 token,
