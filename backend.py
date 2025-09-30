@@ -15,7 +15,7 @@ from routes.app.optionStageVerification import option_verification_BP
 from routes.options import options_BP
 from routes.admin.villageStages import villageStages_BP
 from routes.admin.employee import emp_bp
-
+from routes.admin.analytics import analytics_BP
 
 app = Flask(__name__)
 CORS(app,
@@ -49,6 +49,7 @@ app.register_blueprint(options_BP,url_prefix="/")
 app.register_blueprint(emp_bp,url_prefix="/")
 app.register_blueprint(villageStages_BP,url_prefix="/")
 app.register_blueprint(option_verification_BP,url_prefix="/")
+app.register_blueprint(analytics_BP,url_prefix="/")
 
 
 @app.route("/", methods=["GET"])

@@ -167,6 +167,23 @@ def get_plots(villageId):
         if typeId:
             query["typeId"] = typeId
 
+        docs = list(plots.find(query, {"_id": 0,"docs":0}))
+
+        if not docs:
+            return make_response(True, "No plots found", status=404)
+
+        return make_response(False, "Plots fetched successfully", result={"count": len(docs), "items": docs}, status=200)
+    except Exception as e:
+        return make_response(True, f"Error fetching plots: {str(e)}", status=500)
+
+@plots_BP.route("/plots/<villageId>/<plotId>", methods=["GET"])
+def get_plot_complete(villageId,plotId):
+    try:
+        typeId = request.args.get("typeId")
+        query = {"villageId": villageId, "deleted": False,"plotId":plotId}
+        if typeId:
+            query["typeId"] = typeId
+
         docs = list(plots.find(query, {"_id": 0}))
 
         if not docs:
@@ -175,6 +192,7 @@ def get_plots(villageId):
         return make_response(False, "Plots fetched successfully", result={"count": len(docs), "items": docs}, status=200)
     except Exception as e:
         return make_response(True, f"Error fetching plots: {str(e)}", status=500)
+    
 
 
 @plots_BP.route("/deleted_plots/<villageId>", methods=["GET"])

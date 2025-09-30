@@ -64,47 +64,9 @@ def get_all_villages():
         }), 500
 
 
-@village_bp.route("/villages/family-count", defaults={"village_id": None}, methods=["GET"])
-@village_bp.route("/villages/<village_id>/family-count", methods=["GET"])
-def get_family_count(village_id):
-    try:
-        pipeline = []
 
-        # Only match villageId if a specific village_id is passed
-        if village_id:
-            pipeline.append({"$match": {"villageId": village_id}})
 
-        # Group by relocationOption
-        pipeline.append({
-            "$group": {
-                "_id": "$relocationOption",
-                "count": {"$sum": 1}
-            }
-        })
 
-        counts = {"total": 0, "option1": 0, "option2": 0}
-        for row in families.aggregate(pipeline):
-            counts["total"] += row["count"]
-            if row["_id"] in (1, "1", "Option1"):
-                counts["option1"] = row["count"]
-            elif row["_id"] in (2, "2", "Option2"):
-                counts["option2"] = row["count"]
-
-        # Use Pydantic to validate/output
-        family_count = FamilyCount.from_counts(village_id or "All", counts)
-        return jsonify({
-            "error": False,
-            "message": "Successfully Fetched Count",
-            "result": family_count.model_dump()
-        }), 200
-
-    except Exception as e:
-        logging.exception("Error fetching family count")
-        return jsonify({
-            "error": True,
-            "message": str(e),
-            "result": None
-        }), 500
 
 @village_bp.route("/villages/<village_id>", methods=["GET"])
 def get_village_data(village_id):
@@ -142,3 +104,4 @@ def get_village_data(village_id):
             "message": f"Failed to fetch village: {e}",
             "result": None
         }), 500
+

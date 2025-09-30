@@ -60,21 +60,87 @@ def get_beneficiaries(village_id):
         logging.error(f"Unexpected error in get_beneficiaries: {str(e)}")
         return make_response(True, f"Internal server error {str(e)}", status=500)
 
+#static data only 
+
 @family_bp.route("/families/<family_id>", methods=["GET"])
 def get_family_data(family_id):
     try:
         if not family_id or not isinstance(family_id, str):
             return make_response(True, "Invalid or missing family_id", status=400)
 
+        # Fetch whole doc except Mongo _id
         f = families.find_one({"familyId": family_id}, {"_id": 0})
         if not f:
             return make_response(True, "Family not found", status=404)
-        
+
+        # Remove top-level updates
+        f.pop("updates", None)
+
+        # Remove updates inside each member
+        if "members" in f and isinstance(f["members"], list):
+            for member in f["members"]:
+                member.pop("updates", None)
 
         return make_response(False, "Family fetched successfully", result=f, status=200)
 
     except Exception as e:
         return make_response(True, "Internal server error", status=500)
+
+@family_bp.route("/families/<family_id>/updates", methods=["GET"])
+def get_family_updates(family_id):
+    try:
+        # -------- Input Validation -------- #
+        if not family_id or not isinstance(family_id, str):
+            return make_response(True, "Invalid or missing family_id", status=400)
+
+        # -------- Fetch Family -------- #
+        try:
+            f = families.find_one({"familyId": family_id}, {"_id": 0})
+        except Exception as db_err:
+            return make_response(True, f"Database query failed: {str(db_err)}", status=500)
+
+        if not f:
+            return make_response(True, "Family not found", status=404)
+
+        # -------- Build Response -------- #
+        updates_data = {
+            "familyId": family_id,
+            "familyUpdates": [],
+            "memberUpdates": []
+        }
+
+        # Safely extract family updates
+        try:
+            if isinstance(f.get("updates"), list):
+                updates_data["familyUpdates"] = f["updates"]
+        except Exception:
+            updates_data["familyUpdates"] = []
+
+        # Safely extract member updates
+        try:
+            if "members" in f and isinstance(f["members"], list):
+                for member in f["members"]:
+                    try:
+                        member_updates = member.get("updates", [])
+                        if isinstance(member_updates, list) and member_updates:
+                            updates_data["memberUpdates"].append({
+                                "name": member.get("name"),
+                                "age": member.get("age"),
+                                "gender": member.get("gender"),
+                                "updates": member_updates
+                            })
+                    except Exception:
+                        # If one member is malformed, skip instead of crashing
+                        continue
+        except Exception:
+            updates_data["memberUpdates"] = []
+
+        # -------- Return Response -------- #
+        return make_response(False, "Family updates fetched successfully", result=updates_data, status=200)
+
+    except Exception as e:
+        # Catch any unexpected errors at the outer level
+        return make_response(True, f"Internal server error: {str(e)}", status=500)
 
 #Static API's FOR ADMIN PURPOSE
 
