@@ -268,8 +268,7 @@ def get_employee_details(emp_id):
         if not emp_id or not isinstance(emp_id, str):
             return make_response(True, "Invalid or missing emp_id", status=400)
 
-        emp = users.find_one({"userId": emp_id,"deleted":False},{"_id": 0,"otp":0}
-)
+        emp = users.find_one({"userId": emp_id,"deleted":False},{"_id": 0,"otp":0,"password":0})
         if not emp:
             return make_response(True, "Employee not found", status=404)
 

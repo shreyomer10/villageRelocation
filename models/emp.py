@@ -20,7 +20,7 @@ class UserInsert(BaseModel):
     role: UserRole
     mobile: str
     villageID:List[str]= Field(default_factory=list)
-    activated:Optional[bool]=False
+    activated:Optional[bool]=True
     deleted:Optional[bool]=False
 
     class Config:

@@ -135,11 +135,11 @@ def login():
                 "user": user_dict
             }), 200
         else:
-            response = make_response(jsonify({
+            response = jsonify({
                 "error": False,
-                "message": "Login successful",
+                "message": "Login successfull",
                 "user": user_dict
-            }))
+            }),200
             response.set_cookie(
                 "token",
                 token,
