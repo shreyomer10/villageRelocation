@@ -4,7 +4,7 @@ import logging
 
 from flask import Blueprint, logging,request, jsonify
 from pydantic import ValidationError
-from back.models.village import FamilyCount
+from models.village import FamilyCount
 from utils.helpers import make_response
 from config import  db
 
