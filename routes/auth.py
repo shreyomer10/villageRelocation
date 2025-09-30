@@ -36,7 +36,7 @@ def register():
 
         # -------- Find Employee -------- #
         emp_doc = users.find_one(
-            {"userId": emp_id, "mobile": mobile_number, "role": role},
+            {"userId": emp_id, "mobile": mobile_number, "role": role,"deleted":False},
             {"_id": 0}
         )
         if not emp_doc:
@@ -118,7 +118,9 @@ def login():
                 "role": user.role,
                 "name": user.name,
                 "ip": ip_address,
-                "ua": user_agent
+                "ua": user_agent,
+                "is_app": is_app  # ✅ store this in JWT
+
             })
         except Exception as e:
             return make_response(True, f"JWT creation failed: {str(e)}", status=500)
@@ -168,7 +170,7 @@ def refresh_token(decoded_data):
             return make_response(True, "Invalid token: missing subject", status=400)
 
         # -------- Fetch latest user -------- #
-        user_doc = users.find_one({"userId": user_id}, {"_id": 0})
+        user_doc = users.find_one({"userId": user_id,"deleted":False}, {"_id": 0,"otp":0,})
         if not user_doc:
             return make_response(True, "User not found", status=404)
 
@@ -180,7 +182,8 @@ def refresh_token(decoded_data):
             user = Users.from_mongo(user_doc)
         except ValidationError as ve:
             return make_response(True, f"User data validation error: {ve.errors()}", status=500)
-        
+        is_app = decoded_data.get("is_app", False)
+
         # -------- Generate New JWT -------- #
         try:
             token = make_jwt({
@@ -188,23 +191,38 @@ def refresh_token(decoded_data):
                 "role": user.role,
                 "name": user.name,
                 "ip": ip_address,
-                "ua": user_agent
+                "ua": user_agent,
+                "is_app": is_app
             })
         except Exception as e:
             return make_response(True, f"JWT creation failed: {str(e)}", status=500)
         user_dict = user.model_dump(mode="json")
         user_dict.pop("password", None)  # remove before sending
         
-        # -------- Response -------- #
-        return make_response(
-            False,
-            "Token refreshed successfully",
-            result={
+        if is_app:
+            # For app → return token in JSON
+            return jsonify({
+                "error": False,
+                "message": "Token refreshed successfully",
                 "token": token,
                 "user": user_dict
-            },
-            status=200
-        )
+            }), 200
+        else:
+            # For web → set token in cookie
+            response = jsonify({
+                "error": False,
+                "message": "Token refreshed successfully",
+                "user": user_dict
+            })
+            response.set_cookie(
+                "token",
+                token,
+                httponly=True,
+                secure=True,
+                samesite="None",
+                max_age=JWT_EXPIRE_MIN
+            )
+            return response, 200
 
     except mongo_errors.PyMongoError as e:
         return make_response(True, f"Database error: {str(e)}", status=500)
@@ -225,11 +243,11 @@ def update_password():
 
     try:
         # Fetch user using userId (emp_id) + mobile + role
-        emp_doc = users.find_one({"userId": emp_id, "mobile": mobile_number, "role": role})
+        emp_doc = users.find_one({"userId": emp_id, "mobile": mobile_number, "role": role,"deleted":False})
         if not emp_doc:
             return make_response({"error": "Employee not found. Please contact admin."}, 404)
         otp_doc = emp_doc.get("otp")
-        if not otp_doc or not otp_doc.get("used") or not otp_doc.get("passed") or datetime.utcnow() > otp_doc.get("expiresAt"):
+        if not otp_doc or not otp_doc.get("used") or not otp_doc.get("passed") or dt.utcnow() > otp_doc.get("expiresAt"):
             return jsonify({"error": "OTP verification required"}), 403
 
         prev_hashes = []
@@ -287,7 +305,7 @@ def verify_employee():
         return jsonify({"error": "Invalid value for changePass"}), 400
 
     try:
-        emp_doc = users.find_one({"mobile": mobile_number, "userId": empId, "role": role})
+        emp_doc = users.find_one({"mobile": mobile_number, "userId": empId, "role": role,"deleted":False})
         if not emp_doc:
             return make_response(True, "Employee not found", status=404)
         if changePass=="0":
@@ -343,7 +361,7 @@ def verify_otp():
     role = data.get("role")
     otp = data.get("otp")
 
-    emp_doc = users.find_one({"userId": emp_id, "mobile": mobile, "role": role})
+    emp_doc = users.find_one({"userId": emp_id, "mobile": mobile, "role": role,"deleted":False})
     if not emp_doc or not emp_doc.get("otp"):
         return make_response(True, "OTP not found. Please request a new OTP.", status=404)
 
