@@ -187,12 +187,12 @@ def refresh_token(decoded_data):
         # -------- Generate New JWT -------- #
         try:
             token = make_jwt({
-                "sub": user.userId,
+                "userId": user.userId,   # use userId, not undefined sub
                 "role": user.role,
                 "name": user.name,
                 "ip": ip_address,
                 "ua": user_agent,
-                "is_app": is_app
+                "is_app": is_app  # ✅ store this in JWT
             })
         except Exception as e:
             return make_response(True, f"JWT creation failed: {str(e)}", status=500)
