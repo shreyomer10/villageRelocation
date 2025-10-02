@@ -4,7 +4,7 @@ from flask import Flask, Blueprint, logging,request, jsonify
 from flask_cors import CORS
 from pydantic import ValidationError
 from pymongo import  ASCENDING, DESCENDING
-from back.utils.helpers import make_response
+from utils.helpers import make_response
 from models.village import FamilyCount, SubStage, Village, VillageCard
 from config import JWT_EXPIRE_MIN, db
 
