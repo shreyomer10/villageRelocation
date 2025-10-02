@@ -1,9 +1,10 @@
 
 import datetime as dt
-from flask import Flask, Blueprint, logging,request, jsonify,make_response
+from flask import Flask, Blueprint, logging,request, jsonify
 from flask_cors import CORS
 from pydantic import ValidationError
 from pymongo import  ASCENDING, DESCENDING
+from back.utils.helpers import make_response
 from models.village import FamilyCount, SubStage, Village, VillageCard
 from config import JWT_EXPIRE_MIN, db
 
@@ -64,6 +65,25 @@ def get_all_villages():
         }), 500
 
 
+@village_bp.route("/villagesId", methods=["GET"])
+def get_all_villages_ids():
+    try:
+        projection = {
+            "_id": 0,
+            "villageId": 1,
+            "name": 1,
+        }
+
+        cursor = villages.find({}, projection).sort("name", ASCENDING)
+        
+        # Convert cursor to list of dicts
+        result = list(cursor)
+        return make_response(error=False,message="Successfully fetched VillageId's.",result=result,status=200)
+
+
+    except Exception as e:
+        #logging.exception("Error fetching villages")
+        return make_response(error=True,message= str(e),result=None,status=500)
 
 
 

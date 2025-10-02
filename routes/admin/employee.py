@@ -21,7 +21,7 @@ def validate_village_ids(village_ids: list):
         return True, []
     
     # Fetch all valid village IDs from villages collection
-    valid_villages = set(v["villageID"] for v in villages.find({}, {"villageID": 1, "_id": 0}))
+    valid_villages = set(v["villageId"] for v in villages.find({}, {"villageId": 1, "_id": 0}))
     
     # Find invalid IDs
     invalid_ids = [vid for vid in village_ids if vid not in valid_villages]

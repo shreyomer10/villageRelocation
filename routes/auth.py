@@ -40,14 +40,23 @@ def register():
             {"_id": 0}
         )
         if not emp_doc:
-            return jsonify({"error": "Employee not found. Please contact admin."}), 404
+            return make_response(error=True,message="Employee not found. Please contact admin.",status=404)
+            #return jsonify({"error": "Employee not found. Please contact admin."}), 404
+        if  not emp_doc.get("verified"):
+            return make_response(error=True,message="Employee not verified yet. Please verify first.",status=400)
+
+            #return jsonify({"error": "Employee not verified yet. Please verify first."}), 400
         otp_doc = emp_doc.get("otp")
         if not otp_doc or not otp_doc.get("used") or not otp_doc.get("passed") or dt.utcnow() > otp_doc.get("expiresAt"):
-            return jsonify({"error": "OTP verification required"}), 403
+            return make_response(error=True,message="OTP verification required",status=403)
+
+           # return jsonify({"error": "OTP verification required"}), 403
 
         # -------- Check if Already Registered -------- #
         if emp_doc.get("password"):  # password field already exists and not empty
-            return jsonify({"error": "Employee already registered. Please login."}), 400
+            return make_response(error=True,message="Employee already registered. Please login.",status=400)
+
+          #  return jsonify({"error": "Employee already registered. Please login."}), 400
 
         # -------- Hash and Update Password -------- #
         hashed_password = hash_password(raw_password)
@@ -63,8 +72,9 @@ def register():
             "previous_password": hashed_password,
             "changed_at": dt.utcnow()
         })
+        return make_response(error=True,message="Registration successful. Please login.",status=200)
 
-        return jsonify({"message": "Registration successful. Please login."}), 200
+        #return jsonify({"message": "Registration successful. Please login."}), 200
 
     except mongo_errors.PyMongoError as e:
         return make_response(True, f"Database error: {str(e)}", status=500)
@@ -92,11 +102,15 @@ def login():
 
         # -------- Fetch User from Mongo -------- #
         emp_doc = users.find_one(
-            {"userId": emp_id, "mobile": mobile_number, "role": role,"verified":True,"deleted":False},
+            {"userId": emp_id, "mobile": mobile_number, "role": role,"deleted":False},
             {"_id": 0,"otp":0}
         )
         if not emp_doc:
-            return make_response(True, "Employee not found", status=404)
+            return make_response(error=True,message="Employee not found. Please contact admin.",status=404)
+            #return jsonify({"error": "Employee not found. Please contact admin."}), 404
+        if  not emp_doc.get("verified"):
+            return make_response(error=True,message="Employee not verified yet. Please verify first.",status=400)
+
         if not emp_doc.get("password"):
             return make_response(True, "Not yet Registered", status=404)
 
@@ -356,7 +370,7 @@ def send_otp():
 @auth_bp.route("/verifyOtp", methods=["POST"])
 def verify_otp():
     data = request.get_json(force=True)
-    emp_id = data.get("emp_Id")
+    emp_id = data.get("emp_id")
     mobile = data.get("mobile_number")
     role = data.get("role")
     otp = data.get("otp")
