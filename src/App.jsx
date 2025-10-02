@@ -1,21 +1,18 @@
-// App.jsx
+// src/App.jsx
 import React from "react";
 import { Routes, Route } from "react-router-dom";
-import { AuthContext } from "./context/AuthContext.jsx"; // keep path if using index.jsx wrapper
+
 import Auth from "./pages/Auth.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 import Home from "./pages/VillageHome.jsx";
-import FamilyList from "./pages/FamilyList";
-import PrivateRoute from "./component/PrivateRoute"; // new file below
+import FamilyList from "./pages/FamilyList.jsx";
+import PrivateRoute from "./component/PrivateRoute.jsx";
 import LandingPage from "./pages/LandingPage.jsx";
-// import at top of your router file
-import StagePage from "./pages/StagePage";
+import StagePage from "./pages/StagePage.jsx";
 import EmployeesPage from "./pages/EmployeePages.jsx";
 import MeetingsPage from "./pages/MeetingPages.jsx";
 import OptionPage from "./pages/OptionPage.jsx";
 import Building from "./pages/Buildings.jsx";
-
-
 
 export default function App() {
   return (
@@ -40,16 +37,53 @@ export default function App() {
           </PrivateRoute>
         }
       />
-      
 
-<Route path="/stages" element={<PrivateRoute> <StagePage /> </PrivateRoute>} />
-<Route path="/stages" element={<PrivateRoute> <Building /> </PrivateRoute>} />
-<Route path="/admin/employees" element={<PrivateRoute> <EmployeesPage /> </PrivateRoute>} />
+      <Route
+        path="/stages"
+        element={
+          <PrivateRoute>
+            <StagePage />
+          </PrivateRoute>
+        }
+      />
 
-<Route path="/meetings" element={<PrivateRoute> <MeetingsPage /></PrivateRoute>} />
-<Route path="/options" element={<PrivateRoute> <OptionPage /> </PrivateRoute>} />
-// or if you pass village id param:
-<Route path="/meetings/:villageId" element={<PrivateRoute> <MeetingsPage /> </PrivateRoute>} />
+      {/* Give Building a dedicated path instead of duplicating `/stages` */}
+      <Route
+        path="/buildings"
+        element={
+          <PrivateRoute>
+            <Building />
+          </PrivateRoute>
+        }
+      />
+
+      <Route
+        path="/admin/employees"
+        element={
+          <PrivateRoute>
+            <EmployeesPage />
+          </PrivateRoute>
+        }
+      />
+
+      <Route
+        path="/meetings"
+        element={
+          <PrivateRoute>
+            <MeetingsPage />
+          </PrivateRoute>
+        }
+      />
+
+      <Route
+        path="/options"
+        element={
+          <PrivateRoute>
+            <OptionPage />
+          </PrivateRoute>
+        }
+      />
+
       <Route
         path="/family"
         element={
@@ -59,7 +93,7 @@ export default function App() {
         }
       />
 
-      {/* Fallback - optional */}
+      {/* Fallback: show Auth (or replace with NotFound/Redirect) */}
       <Route path="*" element={<Auth />} />
     </Routes>
   );
