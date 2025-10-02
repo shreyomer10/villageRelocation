@@ -1,5 +1,8 @@
 import bcrypt
 from flask import jsonify
+import datetime as dt
+
+import pytz
 
 
 def hash_password(plain: str) -> bytes:
@@ -50,3 +53,35 @@ def validation_error_response(err: ValidationError, status: int = 400):
         result={"details": details},
         status=status
     )
+STATUS_TRANSITIONS = {
+    "ra": 1,  # range Assistant can transition a plot with status 1 to status 2
+    "ro": 2,  # range Officer can transition a plot with status 2 to status 3
+    "ad": 3,  # Admin can transition a plot with status 3 to status 4
+}
+
+def nowIST():
+    """
+    Returns the current time in IST as a string "YYYY-MM-DD HH:MM:SS"
+    """
+    ist = dt.datetime.now(pytz.timezone("Asia/Kolkata"))
+    return ist.strftime("%Y-%m-%d %H:%M:%S")
+
+def str_to_ist_datetime(time_str):
+    """
+    Convert a string "YYYY-MM-DD HH:MM:SS" to a datetime object in IST
+    """
+    try:
+        dt_obj = dt.datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
+        dt_obj = dt_obj.replace(tzinfo=pytz.timezone("Asia/Kolkata"))
+        return dt_obj
+    except Exception as e:
+        raise ValueError(f"Invalid time format: {time_str}") from e
+
+def is_time_past(time_str1, time_str2):
+    """
+    Compare two time strings in IST format.
+    Returns True if time_str1 > time_str2
+    """
+    dt1 = str_to_ist_datetime(time_str1)
+    dt2 = str_to_ist_datetime(time_str2)
+    return dt1 > dt2

@@ -9,7 +9,7 @@ from flask import Flask, Blueprint,request, jsonify
 from pydantic import ValidationError
 from models.emp import Users
 from config import JWT_EXPIRE_MIN, db,OTP_EXPIRE_MIN,RECIEVER_EMAIL,SENDER_EMAIL,APP_PASSWORD
-from utils.helpers import hash_password, make_response, verify_password
+from utils.helpers import hash_password, is_time_past, make_response, nowIST, str_to_ist_datetime, verify_password
 from utils.tokenAuth import auth_required,make_jwt
 from pymongo import errors as mongo_errors
 users = db.users
@@ -47,7 +47,9 @@ def register():
 
             #return jsonify({"error": "Employee not verified yet. Please verify first."}), 400
         otp_doc = emp_doc.get("otp")
-        if not otp_doc or not otp_doc.get("used") or not otp_doc.get("passed") or dt.utcnow() > otp_doc.get("expiresAt"):
+        now = nowIST()
+
+        if not otp_doc or not otp_doc.get("used") or not otp_doc.get("passed") or now> otp_doc.get("expiresAt"):
             return make_response(error=True,message="OTP verification required",status=403)
 
            # return jsonify({"error": "OTP verification required"}), 403
@@ -70,7 +72,7 @@ def register():
         password_history.insert_one({
             "userId": emp_id,
             "previous_password": hashed_password,
-            "changed_at": dt.utcnow()
+            "changed_at": now
         })
         return make_response(error=True,message="Registration successful. Please login.",status=200)
 
@@ -245,7 +247,8 @@ def refresh_token(decoded_data):
 
 # ---------------- UPDATE PASSWORD (admin-style: identify by emp_id, mobile, role) ---------------- #
 @auth_bp.route('/updatePassword', methods=['POST'])
-def update_password():
+@auth_required
+def update_password(decoded_data):
     data = request.get_json(force=True)
     emp_id = data.get('emp_id')
     mobile_number = data.get('mobile_number')
@@ -254,6 +257,11 @@ def update_password():
 
     if not emp_id or not mobile_number or not role or not raw_password:
         return make_response({"error": "Missing emp_id, mobile_number, role, or password"}, 400)
+    user_id = decoded_data.get("userId")
+    if not user_id:
+        return make_response(True, "Invalid token: missing subject", status=400)
+    if user_id!=emp_id:
+        return make_response(True, "Who are you?", status=403)
 
     try:
         # Fetch user using userId (emp_id) + mobile + role
@@ -261,7 +269,8 @@ def update_password():
         if not emp_doc:
             return make_response({"error": "Employee not found. Please contact admin."}, 404)
         otp_doc = emp_doc.get("otp")
-        if not otp_doc or not otp_doc.get("used") or not otp_doc.get("passed") or dt.utcnow() > otp_doc.get("expiresAt"):
+        now = nowIST()
+        if not otp_doc or not otp_doc.get("used") or not otp_doc.get("passed") or is_time_past(now, otp_doc.get("expiresAt")):
             return jsonify({"error": "OTP verification required"}), 403
 
         prev_hashes = []
@@ -293,7 +302,7 @@ def update_password():
         password_history.insert_one({
             "userId": emp_id,
             "previous_password": new_hashed,
-            "changed_at": dt.utcnow()
+            "changed_at": now
         })
 
         return make_response({"message": "Password updated successfully. Please login."}, 200)
@@ -354,7 +363,13 @@ def send_otp():
         return make_response(True, "Employee not found", status=404)
 
     otp = str(random.randint(100000, 999999))
-    expires_at = dt.utcnow() + timedelta(minutes=OTP_EXPIRE_MIN)
+    now_dt = str_to_ist_datetime(nowIST())  # use your helper to convert string to datetime
+
+    # Add OTP expiry minutes
+    expires_dt = now_dt + timedelta(minutes=OTP_EXPIRE_MIN)
+
+    # Format as string
+    expires_at = expires_dt.strftime("%Y-%m-%d %H:%M:%S")
 
     # Overwrite latest OTP in user document
     users.update_one(
@@ -382,8 +397,8 @@ def verify_otp():
     otp_doc = emp_doc["otp"]
     if otp_doc["used"]:
         return make_response(True, "OTP already used. Please request a new OTP.", status=400)
-
-    if dt.utcnow() > otp_doc["expiresAt"]:
+    now = nowIST()
+    if is_time_past(now, otp_doc.get("expiresAt")):
         return make_response(True, "OTP expired. Please request a new OTP.", status=400)
 
     if otp_doc["code"] == otp:
@@ -402,7 +417,17 @@ def verify_otp():
 def send_email_otp(receiver_email, otp, userId, name, mobile_number):
     sender_email = SENDER_EMAIL
     app_password = APP_PASSWORD # Gmail app password
-    expires_at = (dt.utcnow() + timedelta(minutes=OTP_EXPIRE_MIN)).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    # Get current IST as datetime
+    now_dt = str_to_ist_datetime(nowIST())  # use your helper to convert string to datetime
+
+    # Add OTP expiry minutes
+    
+    expires_dt = now_dt + timedelta(minutes=OTP_EXPIRE_MIN)
+
+    # Format as string
+    expires_at = expires_dt.strftime("%Y-%m-%d %H:%M:%S")
+
 
     msg_body = f"""
     Dear {name},

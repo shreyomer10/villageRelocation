@@ -4,9 +4,10 @@ import logging
 
 from flask import Blueprint, logging,request, jsonify
 from pydantic import ValidationError
+from utils.tokenAuth import auth_required
 from models.stages import FieldLevelVerification, FieldLevelVerificationInsert, FieldLevelVerificationUpdate, Plots, PlotsInsert, PlotsUpdate, statusHistory
 from models.counters import get_next_plot_id, get_next_verification_id
-from utils.helpers import make_response, validation_error_response
+from utils.helpers import STATUS_TRANSITIONS, make_response, nowIST, validation_error_response
 from config import  db
 
 from pymongo import errors  
@@ -215,13 +216,19 @@ def get_deleted_plots(villageId):
 
 
 @plots_BP.route("/field_verification/insert/<plotId>", methods=["POST"])
-def insert_verification(plotId):
+@auth_required
+def insert_verification(decoded_data,plotId):
     try:
         payload = request.get_json(force=True)
         userId = payload.pop("userId", None)
         if not payload or not userId:
             return make_response(True, "Missing request body or userId", status=400)
-
+        user_id = decoded_data.get("userId")
+        user_role=decoded_data.get("role")
+        if not user_id or not user_role:
+            return make_response(True, "Invalid token: missing userId", status=400)
+        if user_id!=userId:
+            return make_response(True, "Unauthorized access", status=403)
         try:
             verification_obj = FieldLevelVerificationInsert(**payload)
         except ValidationError as ve:
@@ -273,7 +280,7 @@ def insert_verification(plotId):
 
         # Passed validation → insert verification
         new_verification_id = get_next_verification_id(db, plot["villageId"], plot["typeId"])
-        now = datetime.utcnow().isoformat()
+        now = nowIST()
         history=statusHistory(
             status=1,
             comments=verification_obj.notes,
@@ -311,7 +318,8 @@ def insert_verification(plotId):
 
 
 @plots_BP.route("/field_verification/<plotId>/<verificationId>", methods=["PUT"])
-def update_verification(plotId, verificationId):
+@auth_required
+def update_verification(decoded_data,plotId, verificationId):
     try:
         payload = request.get_json(force=True)
         userId = payload.pop("userId", None)
@@ -335,7 +343,12 @@ def update_verification(plotId, verificationId):
             return make_response(True, "Verification not found", status=404)
         if verification.get("deleted", False):
             return make_response(True, "Cannot update deleted verification", status=400)
-        now = datetime.utcnow().isoformat()
+        previous_status = verification.get("status", 1) 
+        if previous_status >=3:
+            return make_response(True, "Cannot update freezed", status=400)
+
+
+        now = nowIST()
 
         update_dict = verification_obj.model_dump(exclude_none=True)
         update_dict.update({"verifiedAt": now})
@@ -359,8 +372,10 @@ def update_verification(plotId, verificationId):
 
 
 @plots_BP.route("/field_verification/verify/<plotId>/<verificationId>", methods=["POST"])
-def verify_verification(plotId, verificationId):
+@auth_required
+def verify_verification(decoded_data,plotId, verificationId):
     try:
+    
         payload = request.get_json(force=True)
         userId = payload.get("userId")
         status = payload.get("status")  # 1 = accept, -1 = send back
@@ -368,6 +383,12 @@ def verify_verification(plotId, verificationId):
 
         if not userId or not comments or status not in [1, -1]:
             return make_response(True, "Missing userId ,comments or invalid status (must be 1 or -1)", status=400)
+        user_id = decoded_data.get("userId")
+        user_role=decoded_data.get("role")
+        if not user_id or not user_role:
+            return make_response(True, "Invalid token: missing userId", status=400)
+        if user_id!=userId:
+            return make_response(True, "Unauthorized access", status=403)
 
         # Fetch plot
         plot = plots.find_one({"plotId": plotId, "deleted": False})
@@ -381,8 +402,12 @@ def verify_verification(plotId, verificationId):
         if verification.get("deleted", False):
             return make_response(True, "Cannot verify deleted verification", status=400)
 
-        now = datetime.utcnow().isoformat()
+        now = nowIST()
         previous_status = verification.get("status", 1) 
+        
+        required_status = STATUS_TRANSITIONS.get(user_role)
+        if not required_status or previous_status != required_status:
+            return make_response(True, f"Unauthorized: {user_role} cannot verify status {previous_status}", status=403)
 
         final_status = min(max(previous_status + status, 1), 4)
         new_history = {
@@ -411,7 +436,8 @@ def verify_verification(plotId, verificationId):
 
 
 @plots_BP.route("/field_verification/<plotId>/<verificationId>", methods=["DELETE"])
-def delete_verification(plotId, verificationId):
+@auth_required
+def delete_verification(decoded_data,plotId, verificationId):
     try:
         payload = request.get_json(force=True)
         userId = payload.get("userId") if payload else None
@@ -419,7 +445,12 @@ def delete_verification(plotId, verificationId):
 
         if not userId:
             return make_response(True, "Missing userId in request body", status=400)
-
+        user_id = decoded_data.get("userId")
+        user_role=decoded_data.get("role")
+        if not user_id or not user_role:
+            return make_response(True, "Invalid token: missing userId", status=400)
+        if user_id!=userId:
+            return make_response(True, "Unauthorized access", status=403)
         plot = plots.find_one({"plotId": plotId, "deleted": False})
         if not plot:
             return make_response(True, "Plot not found", status=404)
@@ -427,8 +458,10 @@ def delete_verification(plotId, verificationId):
         verification = next((d for d in plot.get("docs", []) if d["verificationId"] == verificationId), None)
         if not verification:
             return make_response(True, "Verification not found", status=404)
-
-        now = datetime.utcnow().isoformat()
+        previous_status = verification.get("status", 1) 
+        if previous_status >=2:
+            return make_response(True, "Cannot update freezed verifications.", status=400)
+        now = nowIST()
 
         # History entry for deletion
         history_entry = {

@@ -6,8 +6,9 @@ import logging
 from flask import  Blueprint, logging,request, jsonify
 from pydantic import ValidationError
 from pymongo import  ASCENDING, DESCENDING
+from utils.tokenAuth import auth_required
 from models.counters import get_next_family_update_id, get_next_member_update_id
-from utils.helpers import make_response, validation_error_response
+from utils.helpers import STATUS_TRANSITIONS, make_response, nowIST, validation_error_response
 from models.family import StatusHistory, Updates, UpdatesInsert, UpdatesUpdate
 from config import JWT_EXPIRE_MIN, db
 
@@ -21,12 +22,19 @@ option_verification_BP = Blueprint("optionsVerification",__name__)
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 @option_verification_BP.route("/family_updates/insert/<familyId>", methods=["POST"])
-def insert_family_update(familyId):
+@auth_required
+def insert_family_update(decoded_data,familyId):
     try:
         payload = request.get_json(force=True)
         userId = payload.pop("userId", None)
         if not payload or not userId:
             return make_response(True, "Missing userId or req body", status=400)
+        user_id = decoded_data.get("userId")
+        user_role=decoded_data.get("role")
+        if not user_id or not user_role:
+            return make_response(True, "Invalid token: missing userId", status=400)
+        if user_id!=userId:
+            return make_response(True, "Unauthorized access", status=403)
         try:
             verification_obj = UpdatesInsert(**payload)
         except ValidationError as ve:
@@ -75,7 +83,7 @@ def insert_family_update(familyId):
         update_id = get_next_family_update_id(
             db, fam.get("villageId"), option["optionId"]
         )
-        now = dt.datetime.utcnow().isoformat()
+        now = nowIST()
         history=StatusHistory(
             status=1,
             comments=verification_obj.notes,
@@ -116,13 +124,19 @@ def insert_family_update(familyId):
         return make_response(True, f"Unexpected error: {str(e)}", status=500)
 
 @option_verification_BP.route("/member_updates/insert/<familyId>", methods=["POST"])
-def insert_member_update(familyId):
+@auth_required
+def insert_member_update(decoded_data,familyId):
     try:
         payload = request.get_json(force=True)
         userId = payload.pop("userId", None)
         if not payload or not userId:
             return make_response(True, "Missing userId or req body", status=400)
-
+        user_id = decoded_data.get("userId")
+        user_role=decoded_data.get("role")
+        if not user_id or not user_role:
+            return make_response(True, "Invalid token: missing userId", status=400)
+        if user_id!=userId:
+            return make_response(True, "Unauthorized access", status=403)
         # Required fields
         name = payload.get("name")              # update name
         nameUpdate = payload.get("nameUpdate")  # existing member name
@@ -183,7 +197,7 @@ def insert_member_update(familyId):
         # 6️⃣ Generate member updateId
         update_id = get_next_member_update_id(db, family_doc["familyId"], option["optionId"])
 
-        now = dt.datetime.utcnow().isoformat()
+        now = nowIST()
         history = StatusHistory(
             status=1,
             comments=notes,
@@ -227,13 +241,19 @@ def insert_member_update(familyId):
         return make_response(True, f"Unexpected error: {str(e)}", status=500)
 
 @option_verification_BP.route("/family_updates/<familyId>/<updateId>", methods=["PUT"])
-def update_family_update(familyId, updateId):
+@auth_required
+def update_family_update(decoded_data,familyId, updateId):
     try:
         payload = request.get_json(force=True)
         userId = payload.pop("userId", None)
         if not payload or not userId:
             return make_response(True, "Missing request body or userId", status=400)
-
+        user_id = decoded_data.get("userId")
+        user_role=decoded_data.get("role")
+        if not user_id or not user_role:
+            return make_response(True, "Invalid token: missing userId", status=400)
+        if user_id!=userId:
+            return make_response(True, "Unauthorized access", status=403)
         # Validate payload using Pydantic
         try:
             update_obj = UpdatesUpdate(**payload)  # similar to VillageUpdatesUpdate
@@ -255,13 +275,16 @@ def update_family_update(familyId, updateId):
             return make_response(True, "Update not found", status=404)
         if update_item.get("deleted", False):
             return make_response(True, "Cannot update deleted update", status=400)
+        previous_status = update_item.get("status", 1) 
+        if previous_status >=3:
+            return make_response(True, "Cannot update freezed", status=400)
 
         # Stage/subStage should not be changed
         # if update_obj.currentStage and update_obj.currentStage != update_item.get("currentStage"):
         #     return make_response(True, "Updating currentStage not allowed", status=400)
 
         # Build updated dictionary
-        now = dt.datetime.utcnow().isoformat()
+        now = nowIST()
         update_dict = update_obj.model_dump(exclude_none=True)
         update_dict.update({"verifiedAt": now, "verifiedBy": userId})
 
@@ -288,13 +311,19 @@ def update_family_update(familyId, updateId):
         return make_response(True, f"Unexpected error: {str(e)}", status=500)
 
 @option_verification_BP.route("/member_updates/<familyId>/<updateId>", methods=["PUT"])
-def update_member_update(familyId, updateId):
+@auth_required
+def update_member_update(decoded_data,familyId, updateId):
     try:
         payload = request.get_json(force=True)
         userId = payload.pop("userId", None)
         if not payload or not userId:
             return make_response(True, "Missing request body or userId", status=400)
-
+        user_id = decoded_data.get("userId")
+        user_role=decoded_data.get("role")
+        if not user_id or not user_role:
+            return make_response(True, "Invalid token: missing userId", status=400)
+        if user_id!=userId:
+            return make_response(True, "Unauthorized access", status=403)
         # Validate payload
         try:
             update_obj = UpdatesUpdate(**payload)
@@ -324,13 +353,16 @@ def update_member_update(familyId, updateId):
 
         if update_item.get("deleted", False):
             return make_response(True, "Cannot update deleted update", status=400)
+        previous_status = update_item.get("status", 1) 
+        if previous_status >=3:
+            return make_response(True, "Cannot update freezed", status=400)
 
         # Stage should not be changed
         # if update_obj.currentStage and update_obj.currentStage != update_item.get("currentStage"):
         #     return make_response(True, "Updating currentStage not allowed", status=400)
 
         # Build updated dictionary
-        now = dt.datetime.utcnow().isoformat()
+        now = nowIST()
         update_dict = update_obj.model_dump(exclude_none=True)
         update_dict.update({"verifiedAt": now, "verifiedBy": userId})
 
@@ -365,7 +397,8 @@ def update_member_update(familyId, updateId):
 
 
 @option_verification_BP.route("/updates/delete", methods=["DELETE"])
-def delete_update():
+@auth_required
+def delete_update(decoded_data):
     try:
         payload = request.get_json(force=True)
         if not payload:
@@ -378,7 +411,12 @@ def delete_update():
 
         if not all([update_type, familyId, updateId, userId]):
             return make_response(True, "Missing required fields", status=400)
-
+        user_id = decoded_data.get("userId")
+        user_role=decoded_data.get("role")
+        if not user_id or not user_role:
+            return make_response(True, "Invalid token: missing userId", status=400)
+        if user_id!=userId:
+            return make_response(True, "Unauthorized access", status=403)
         # Fetch family
         family_doc = families.find_one({"familyId": familyId})
         if not family_doc:
@@ -392,7 +430,9 @@ def delete_update():
             )
             if not update_item:
                 return make_response(True, "Update not found", status=404)
-
+            previous_status = update_item.get("status", 1) 
+            if previous_status >=2:
+                return make_response(True, "Cannot delete freezed verifications.", status=400)
             stage_to_remove = update_item.get("currentStage")
 
             # Count non-deleted updates for this stage
@@ -446,7 +486,9 @@ def delete_update():
             )
             if not update_item:
                 return make_response(True, "Update not found", status=404)
-
+            previous_status = update_item.get("status", 1) 
+            if previous_status >=2:
+                return make_response(True, "Cannot delete freezed verifications.", status=400)
             stage_to_remove = update_item.get("currentStage")
 
             non_deleted_count = sum(
@@ -485,7 +527,8 @@ def delete_update():
 
 
 @option_verification_BP.route("/verification/verify", methods=["POST"])
-def verify_update():
+@auth_required
+def verify_update(decoded_data):
     """
     Verify family or member updates.
     - If type = 'family'  -> require familyId
@@ -506,6 +549,12 @@ def verify_update():
             return make_response(True, "Invalid type (must be 'family' or 'member')", status=400)
         if not familyId or not updateId or not userId or not comments or status not in [1, -1]:
             return make_response(True, "Missing required fields", status=400)
+        user_id = decoded_data.get("userId")
+        user_role=decoded_data.get("role")
+        if not user_id or not user_role:
+            return make_response(True, "Invalid token: missing userId", status=400)
+        if user_id!=userId:
+            return make_response(True, "Unauthorized access", status=403)
 
         # Fetch family
         family = families.find_one({"familyId": familyId})
@@ -532,10 +581,15 @@ def verify_update():
             return make_response(True, "Update not found", status=404)
         if update.get("deleted", False):
             return make_response(True, "Cannot verify deleted update", status=400)
+        previous_status = update.get("status", 1) 
+        
+        required_status = STATUS_TRANSITIONS.get(user_role)
+        if not required_status or previous_status != required_status:
+            return make_response(True, f"Unauthorized: {user_role} cannot verify status {previous_status}", status=403)
+
 
         # Update status
-        now = dt.datetime.utcnow().isoformat()
-        previous_status = update.get("status", 1)
+        now = nowIST()
         final_status = min(max(previous_status + status, 1), 4)
 
         new_history = {
