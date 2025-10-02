@@ -3,14 +3,10 @@ import { useNavigate } from "react-router-dom";
 import MainNavbar from "../component/MainNavbar";
 
 /**
- * StagePage (updated)
- * - Stage-level selection uses a checkbox when global select mode is active.
- * - Per-stage "Select" button appears only when the stage has substages (active, non-deleted).
- * - "Deselect all" buttons added:
- *    - Global: appears next to the global Delete button when any stages are selected.
- *    - Per-stage: appears next to the per-stage Delete selected button when any substages are selected.
- * - Stage drag/drop disabled for expanded cards (no reordering while expanded).
- * - All other existing behaviors retained.
+ * OptionPage.jsx — updated
+ * - Fixed adding sub-stages: submitAddSubstage implemented and integrated.
+ * - Top-level option reorder still disabled per requirements.
+ * - Uses existing backend endpoints: /ostages/insert/<optionId>, etc.
  */
 
 export default function StagePage() {
@@ -20,15 +16,11 @@ export default function StagePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // drag & drop state for stages
+  // drag state for stages (kept but top-level dragging disabled in UI)
   const [dragIndex, setDragIndex] = useState(null);
   const [dragOverIndex, setDragOverIndex] = useState(null);
 
-  // pending reorder waiting for user confirmation (for stages)
-  const [pendingReorder, setPendingReorder] = useState(null);
-  const [persisting, setPersisting] = useState(false);
-
-  // pending substage reorder waiting for user confirmation
+  // substage pending reorder waiting for user confirmation
   const [pendingSubstageReorder, setPendingSubstageReorder] = useState(null);
   const [persistingSubstage, setPersistingSubstage] = useState(null); // subId being persisted
 
@@ -73,7 +65,7 @@ export default function StagePage() {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch("https://villagerelocation.onrender.com/stages");
+        const res = await fetch("https://villagerelocation.onrender.com/options");
         if (res.status === 404) {
           if (!mounted) return;
           setStages([]);
@@ -91,7 +83,7 @@ export default function StagePage() {
         else if (Array.isArray(payload)) items = payload;
         else if (Array.isArray(payload.items)) items = payload.items;
         if (!mounted) return;
-        // ensure sorting by position
+        // ensure sorting by position if present
         items = (items || []).slice().sort((a, b) => (Number(a.position ?? 0) - Number(b.position ?? 0)));
         setStages(items);
       } catch (err) {
@@ -107,7 +99,7 @@ export default function StagePage() {
 
   async function reloadStages() {
     try {
-      const res = await fetch("https://villagerelocation.onrender.com/stages");
+      const res = await fetch("https://villagerelocation.onrender.com/options");
       if (!res.ok) return;
       const payload = await res.json();
       let items = [];
@@ -128,8 +120,9 @@ export default function StagePage() {
   }
 
   // ---------- Helpers for ID detection ----------
-  const getStageId = (s) => s.stageId ?? s.stage_id ?? s.id;
-  const getSubId = (ss) => ss.subStageId ?? ss.sub_stage_id ?? ss.id ?? ss.sub_id ?? ss.subId ?? ss.name;
+  // options use `optionId` in backend; substages use `stageId`
+  const getStageId = (s) => s.optionId ?? s.option_id ?? s.stageId ?? s.stage_id ?? s.id;
+  const getSubId = (ss) => ss.stageId ?? ss.subStageId ?? ss.sub_stage_id ?? ss.id ?? ss.sub_id ?? ss.subId ?? ss.name;
 
   // ---------- Global select ----------
   function toggleGlobalSelect() {
@@ -159,7 +152,7 @@ export default function StagePage() {
     });
   }
 
-  // new: deselect all global
+  // deselect all global
   function deselectAllStages() {
     setSelectedStageIds(new Set());
   }
@@ -182,62 +175,50 @@ export default function StagePage() {
   }
 
   // Toggle showing deleted substages inline within an expanded stage card.
-  // Toggle showing deleted substages inline within an expanded stage card.
-async function toggleShowDeletedInline(stageId) {
-  const currently = !!showDeletedInExpanded[stageId];
-  if (currently) {
-    setShowDeletedInExpanded(prev => ({ ...prev, [stageId]: false }));
-    return;
-  }
+  async function toggleShowDeletedInline(stageId) {
+    const currently = !!showDeletedInExpanded[stageId];
+    if (currently) {
+      setShowDeletedInExpanded(prev => ({ ...prev, [stageId]: false }));
+      return;
+    }
 
-  const s = stages.find(x => String(getStageId(x)) === String(stageId));
-  const localDeleted = Array.isArray(s?.stages) ? s.stages.filter(ss => ss.deleted === true) : [];
-  // If there are local deleted items already present, show them immediately
-  if (localDeleted.length > 0) {
-    setShowDeletedInExpanded(prev => ({ ...prev, [stageId]: true }));
-    return;
-  }
+    const s = stages.find(x => String(getStageId(x)) === String(stageId));
+    const localDeleted = Array.isArray(s?.stages) ? s.stages.filter(ss => ss.deleted === true) : [];
+    if (localDeleted.length > 0) {
+      setShowDeletedInExpanded(prev => ({ ...prev, [stageId]: true }));
+      return;
+    }
 
-  // If we've previously fetched deleted-substage cache for this stage
-  // only show the link/panel if the cached list actually contains items.
-  if (Object.prototype.hasOwnProperty.call(deletedSubstageCache, stageId)) {
-    const cached = deletedSubstageCache[stageId] || [];
-    if (cached.length > 0) {
-      // merge into stage list and show
+    if (deletedSubstageCache[stageId] && deletedSubstageCache[stageId].length > 0) {
       setStages(prev => prev.map(st => {
         if (String(getStageId(st)) !== String(stageId)) return st;
         const existing = Array.isArray(st.stages) ? st.stages.slice() : [];
         const existingIds = new Set(existing.map(x => String(getSubId(x))));
-        const toAdd = cached.filter(x => !existingIds.has(String(getSubId(x))));
+        const toAdd = deletedSubstageCache[stageId].filter(x => !existingIds.has(String(getSubId(x))));
         return { ...st, stages: [...existing, ...toAdd] };
       }));
       setShowDeletedInExpanded(prev => ({ ...prev, [stageId]: true }));
-    }
-    // if cached is empty, do nothing (don't show link/panel)
-    return;
-  }
-
-  // Use existing backend route for deleted sub-stages
-  try {
-    const res = await fetch(`https://villagerelocation.onrender.com/deleted_ostages/${encodeURIComponent(stageId)}`);
-    if (res.status === 404) {
-      // backend says there are no deleted sub-stages -> cache empty but do NOT open the panel
-      setDeletedSubstageCache(prev => ({ ...prev, [stageId]: [] }));
       return;
     }
-    if (!res.ok) {
-      const txt = await res.text().catch(() => "");
-      throw new Error(`Failed: ${res.status} ${txt}`);
-    }
-    const data = await res.json();
-    const items = data?.result?.items ?? [];
-    const marked = items.map(it => ({ ...it, deleted: true }));
 
-    // cache the fetched deleted items
-    setDeletedSubstageCache(prev => ({ ...prev, [stageId]: marked }));
+    // Use existing backend route for deleted sub-stages
+    try {
+      const res = await fetch(`https://villagerelocation.onrender.com/deleted_ostages/${encodeURIComponent(stageId)}`);
+      if (res.status === 404) {
+        // backend says there are no deleted sub-stages -> show empty
+        setDeletedSubstageCache(prev => ({ ...prev, [stageId]: [] }));
+        setShowDeletedInExpanded(prev => ({ ...prev, [stageId]: true }));
+        return;
+      }
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(`Failed: ${res.status} ${txt}`);
+      }
+      const data = await res.json();
+      const items = data?.result?.items ?? [];
+      const marked = items.map(it => ({ ...it, deleted: true }));
+      setDeletedSubstageCache(prev => ({ ...prev, [stageId]: marked }));
 
-    if (marked.length > 0) {
-      // only merge and show if we actually found deleted items
       setStages(prev => prev.map(st => {
         if (String(getStageId(st)) !== String(stageId)) return st;
         const existing = Array.isArray(st.stages) ? st.stages.slice() : [];
@@ -247,14 +228,11 @@ async function toggleShowDeletedInline(stageId) {
       }));
 
       setShowDeletedInExpanded(prev => ({ ...prev, [stageId]: true }));
+    } catch (err) {
+      console.error(err);
+      setError(err.message || "Failed to fetch deleted sub-stages");
     }
-    // if none found, leave the UI without the link/panel
-  } catch (err) {
-    console.error(err);
-    setError(err.message || "Failed to fetch deleted sub-stages");
   }
-}
-
 
   function toggleStageSubSelectMode(stageId) {
     setStageSubSelectMode(prev => {
@@ -281,7 +259,7 @@ async function toggleShowDeletedInline(stageId) {
     });
   }
 
-  // new: deselect all substages for a stage
+  // deselect all substages for a stage
   function deselectAllSubstagesFor(stageId) {
     setSelectedSubstages(prev => {
       const copy = { ...prev };
@@ -306,10 +284,9 @@ async function toggleShowDeletedInline(stageId) {
         name: createName.trim(),
         desc: createDesc?.trim() || undefined,
         deleted: false,
-        position: createPosition !== "" ? Number(createPosition) : undefined,
         stages: createSubstages.map(s => ({ name: (s.name || "").trim(), desc: (s.desc || "").trim() || undefined })).filter(x => x.name),
       };
-      const res = await fetch("https://villagerelocation.onrender.com/stages/insert", {
+      const res = await fetch("https://villagerelocation.onrender.com/options/insert", {
         method: "POST",
         headers: authHeaders(),
         body: JSON.stringify(payload),
@@ -321,7 +298,6 @@ async function toggleShowDeletedInline(stageId) {
       const data = await res.json();
       const inserted = data?.result ?? null;
       if (inserted) {
-        // reload to get canonical positions from server
         await reloadStages();
       } else {
         await reloadStages();
@@ -336,90 +312,58 @@ async function toggleShowDeletedInline(stageId) {
     }
   }
 
-  async function submitStageUpdate(e) {
-    e && e.preventDefault();
-    if (!editStage || !editStage.stageId) return;
-    if (!editStage.name || editStage.name.trim() === "") return;
-    try {
-      const body = { name: editStage.name.trim(), desc: editStage.desc ?? undefined, deleted: !!editStage.deleted };
-      const res = await fetch(`https://villagerelocation.onrender.com/stages/${encodeURIComponent(editStage.stageId)}`, {
-        method: "PUT",
-        headers: authHeaders(),
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        const txt = await res.text().catch(() => "");
-        throw new Error(`Update failed: ${res.status} ${txt}`);
-      }
-      const payload = await res.json();
-      const updated = payload?.result ?? body;
-      setStages(prev => prev.map(s => {
-        if (String(getStageId(s)) === String(editStage.stageId)) return { ...s, ...updated };
-        return s;
-      }));
-      setEditStage(null);
-    } catch (err) {
-      console.error(err);
-      setError(err.message || "Failed to update stage");
-    }
-  }
+  // ---------- NEW: submitAddSubstage (fixed) ----------
+  async function submitAddSubstage(e, optionId, payload) {
+    // payload expected: { name, desc?, deleted?, position? }
+    e && e.preventDefault && e.preventDefault();
+    setError(null);
 
-  // replace immediate delete with modal request; actual performs are below
-  function requestDeleteStage(stageId, name) {
-    setDeleteConfirm({ type: 'stage', stageId, name });
-  }
-
-  async function performDeleteStage(stageId) {
-    try {
-      const res = await fetch(`https://villagerelocation.onrender.com/stages/${encodeURIComponent(stageId)}`, {
-        method: "DELETE",
-        headers: authHeaders(),
-      });
-      if (!res.ok) {
-        const txt = await res.text().catch(() => "");
-        throw new Error(`Delete failed: ${res.status} ${txt}`);
-      }
-      // reload from server to get canonical positions
-      await reloadStages();
-      setSelectedStageIds(prev => { const c = new Set(prev); c.delete(stageId); return c; });
-    } catch (err) {
-      console.error(err);
-      setError(err.message || "Failed to delete stage");
-    }
-  }
-
-  async function submitAddSubstage(e, stageId, payload) {
-    e && e.preventDefault();
-    if (!payload?.name || !payload.name.trim()) {
+    if (!payload || !payload.name || String(payload.name).trim() === "") {
+      setError("Sub-stage name is required");
       return;
     }
+
     try {
-      const res = await fetch(`https://villagerelocation.onrender.com/substage/insert/${encodeURIComponent(stageId)}`, {
+      const res = await fetch(`https://villagerelocation.onrender.com/ostages/insert/${encodeURIComponent(optionId)}`, {
         method: "POST",
         headers: authHeaders(),
         body: JSON.stringify(payload),
       });
+
+      // If backend returns 404 for option not found, surface that nicely
+      if (res.status === 404) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(`Option not found: ${txt}`);
+      }
+
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
         throw new Error(`Insert failed: ${res.status} ${txt}`);
       }
+
       const data = await res.json();
       const inserted = data?.result ?? null;
+
       if (inserted) {
-        setStages(prev => prev.map(s => {
-          if (String(getStageId(s)) === String(stageId)) {
-            const arr = Array.isArray(s.stages) ? s.stages.slice() : [];
-            return { ...s, stages: [...arr, inserted] };
-          }
-          return s;
+        // Insert into local state in the correct option (avoid duplicate IDs)
+        setStages(prev => prev.map(opt => {
+          if (String(getStageId(opt)) !== String(optionId)) return opt;
+          const arr = Array.isArray(opt.stages) ? opt.stages.slice() : [];
+          // Avoid duplicate
+          const exists = arr.some(s => String(getSubId(s)) === String(getSubId(inserted)));
+          if (!exists) arr.splice((typeof payload.position === "number" ? payload.position : arr.length), 0, inserted);
+          return { ...opt, stages: arr };
         }));
       } else {
+        // fallback: reload list
         await reloadStages();
       }
+
+      // close add form
       setShowAddFormFor(null);
     } catch (err) {
       console.error(err);
-      setError(err.message || "Failed to insert substage");
+      setError(err.message || "Failed to add sub-stage");
     }
   }
 
@@ -429,7 +373,7 @@ async function toggleShowDeletedInline(stageId) {
     const { stageId, subStageId, name, desc } = editSubstage;
     if (!name || !subStageId) return;
     try {
-      const res = await fetch(`https://villagerelocation.onrender.com/sstages/${encodeURIComponent(stageId)}/${encodeURIComponent(subStageId)}`, {
+      const res = await fetch(`https://villagerelocation.onrender.com/ostages/${encodeURIComponent(stageId)}/${encodeURIComponent(subStageId)}`, {
         method: "PUT",
         headers: authHeaders(),
         body: JSON.stringify({ name: name.trim(), desc: desc ?? undefined }),
@@ -462,7 +406,7 @@ async function toggleShowDeletedInline(stageId) {
 
   async function performDeleteSubstage(stageId, subStageId) {
     try {
-      const res = await fetch(`https://villagerelocation.onrender.com/sstages/${encodeURIComponent(stageId)}/${encodeURIComponent(subStageId)}`, {
+      const res = await fetch(`https://villagerelocation.onrender.com/ostages/${encodeURIComponent(stageId)}/${encodeURIComponent(subStageId)}`, {
         method: "DELETE",
         headers: authHeaders(),
       });
@@ -489,7 +433,7 @@ async function toggleShowDeletedInline(stageId) {
     }
   }
 
-  // ---------- deleted stages global toggle (unchanged) ----------
+  // ---------- deleted stages global toggle (updated to handle 404 as 'no deleted') ----------
   async function toggleDeletedStagesGlobal() {
     if (showDeletedStages) {
       setShowDeletedStages(false);
@@ -502,7 +446,13 @@ async function toggleShowDeletedInline(stageId) {
     setDeletedStagesLoading(true);
     setDeletedStagesError(null);
     try {
-      const res = await fetch("https://villagerelocation.onrender.com/deleted_stages");
+      const res = await fetch("https://villagerelocation.onrender.com/deleted_options");
+      if (res.status === 404) {
+        // backend indicates no deleted options -> show empty message
+        setDeletedStagesCache([]);
+        setShowDeletedStages(true);
+        return;
+      }
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
         throw new Error(`Failed: ${res.status} ${txt}`);
@@ -572,201 +522,11 @@ async function toggleShowDeletedInline(stageId) {
     );
   }
 
-  // ---------- Stage drag & drop handlers (modified to respect expanded cards) ----------
-  function handleDragStart(e, index) {
-    if (globalSelectMode) return; // disable while selecting
-    // if the stage at index is expanded, disallow dragging
-    const stage = stages[index];
-    if (!stage) return;
-    const stageId = getStageId(stage);
-    if (expandedStageIds.has(stageId)) return;
-
-    setDragIndex(index);
-    e.dataTransfer.effectAllowed = "move";
-    try {
-      // store index as fallback and the stageId for robustness
-      e.dataTransfer.setData("text/plain", String(index));
-      e.dataTransfer.setData("application/json", JSON.stringify({ stageId }));
-    } catch (err) {
-      // some browsers restrict setData for certain types
-    }
-  }
-
-  function handleDragOver(e, index) {
-    e.preventDefault();
-    if (globalSelectMode) return;
-    // disallow dragging over an expanded stage card
-    const target = stages[index];
-    if (!target) return;
-    const targetId = getStageId(target);
-    if (expandedStageIds.has(targetId)) {
-      // do not set drag over if the target is expanded
-      setDragOverIndex(null);
-      return;
-    }
-    setDragOverIndex(index);
-  }
-
-  async function handleDrop(e, targetIndex) {
-    e.preventDefault();
-    if (globalSelectMode) return;
-
-    // Determine sourceIndex robustly (use state first, fallback to dataTransfer)
-    let sourceIndex = dragIndex;
-    if (sourceIndex === null || sourceIndex === undefined) {
-      try {
-        const dt = e.dataTransfer.getData("text/plain");
-        sourceIndex = dt !== "" ? Number(dt) : null;
-      } catch (err) {
-        sourceIndex = null;
-      }
-    }
-
-    // Validate indexes
-    if (sourceIndex === null || sourceIndex === undefined || isNaN(sourceIndex)) {
-      setDragIndex(null);
-      setDragOverIndex(null);
-      return;
-    }
-
-    // if source or target correspond to expanded stage, cancel
-    const srcStage = stages[sourceIndex];
-    const tgtStage = stages[targetIndex];
-    if (!srcStage || !tgtStage) { setDragIndex(null); setDragOverIndex(null); return; }
-    if (expandedStageIds.has(getStageId(srcStage)) || expandedStageIds.has(getStageId(tgtStage))) {
-      // cancel reordering when either source or target is an expanded card
-      setDragIndex(null);
-      setDragOverIndex(null);
-      return;
-    }
-
-    // no-op if dropped on same index
-    if (sourceIndex === targetIndex) {
-      setDragIndex(null);
-      setDragOverIndex(null);
-      return;
-    }
-
-    // Keep a copy of prev stages so we can revert if user cancels
-    const prevStages = stages.slice();
-
-    // Optimistic reorder locally
-    const newStages = stages.slice();
-    const [moved] = newStages.splice(sourceIndex, 1);
-    const insertAt = Math.max(0, Math.min(targetIndex, newStages.length));
-    newStages.splice(insertAt, 0, moved);
-
-    // normalize positions to 0-based contiguous indices locally (optimistic UI)
-    const withPos = newStages.map((s, i) => ({ ...s, position: i }));
-    setStages(withPos);
-
-    // reset drag state
-    setDragIndex(null);
-    setDragOverIndex(null);
-
-    // Save pending reorder; do NOT call server yet. Wait for user confirmation.
-    setPendingReorder({
-      moved: moved,
-      movedId: getStageId(moved),
-      prevStages,
-      newStages: withPos,
-      insertAt,
-      sourceIndex,
-      targetIndex: insertAt,
-    });
-  }
-
-  function handleDragEnd() {
-    setDragIndex(null);
-    setDragOverIndex(null);
-  }
-
-  // Confirm/cancel handlers for the pending reorder (stages)
-  async function confirmReorder() {
-    if (!pendingReorder) return;
-    setPersisting(true);
-    setError(null);
-
-    const { moved, movedId, insertAt } = pendingReorder;
-    const url = `https://villagerelocation.onrender.com/stages/${encodeURIComponent(movedId)}`;
-
-    // Helper: build payload ensuring 'name' is present (server validation requires it)
-    async function buildPayload() {
-      // prefer local fields if available
-      const name = (moved.name ?? "").toString();
-      const desc = moved.desc ?? undefined;
-      const deleted = !!moved.deleted;
-      if (name && name.trim() !== "") {
-        return { name: name.trim(), desc, deleted, position: insertAt };
-      }
-
-      // fallback: fetch canonical stage from server to obtain required fields
-      try {
-        const r = await fetch(url);
-        if (!r.ok) {
-          // can't get canonical record — return minimal payload (will likely fail validation)
-          return { name: "", desc, deleted, position: insertAt };
-        }
-        const data = await r.json();
-        const serverObj = data?.result ?? data;
-        const serverName = serverObj?.name ?? "";
-        const serverDesc = serverObj?.desc ?? desc;
-        const serverDeleted = serverObj?.deleted ?? deleted;
-        return { name: (serverName ?? "").toString().trim(), desc: serverDesc, deleted: !!serverDeleted, position: insertAt };
-      } catch (err) {
-        return { name: "", desc, deleted, position: insertAt };
-      }
-    }
-
-    try {
-      const payload = await buildPayload();
-
-      if (!payload.name || payload.name.trim() === "") {
-        throw new Error("Reorder failed: stage name required by server validation. Reloading from server.");
-      }
-
-      const res = await fetch(url, {
-        method: "PUT",
-        headers: authHeaders(),
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        let bodyText = "";
-        try {
-          const txt = await res.text();
-          try {
-            const j = JSON.parse(txt);
-            bodyText = typeof j === "object" ? JSON.stringify(j) : txt;
-          } catch {
-            bodyText = txt;
-          }
-        } catch (e) {
-          bodyText = `${res.status}`;
-        }
-        throw new Error(`Reorder failed: ${res.status} ${bodyText}`);
-      }
-
-      // success — reload canonical order from the server to ensure positions are authoritative
-      await reloadStages();
-      setPendingReorder(null);
-    } catch (err) {
-      console.error(err);
-      setError(err.message || "Failed to update positions");
-      // revert to server state
-      await reloadStages();
-      setPendingReorder(null);
-    } finally {
-      setPersisting(false);
-    }
-  }
-
-  function cancelReorder() {
-    if (!pendingReorder) return;
-    // revert UI to the previous order we saved
-    setStages(pendingReorder.prevStages || []);
-    setPendingReorder(null);
-  }
+  // ---------- Stage drag & drop handlers (top-level reordering disabled) ----------
+  function handleDragStart(e, index) { return; }
+  function handleDragOver(e, index) { return; }
+  async function handleDrop(e, targetIndex) { return; }
+  function handleDragEnd() { return; }
 
   // ---------- Substage reorder (up/down) - now creates pendingSubstageReorder ----------
   function reorderSubstage(stageId, subId, dir) {
@@ -808,7 +568,6 @@ async function toggleShowDeletedInline(stageId) {
   }
 
   // ---------- Substage drag handlers (per-stage drag-and-drop) ----------
-  // { stageId, sourceIndex }
   const [subDragInfo, setSubDragInfo] = useState(null);
   const [subDragOver, setSubDragOver] = useState({ stageId: null, index: null });
 
@@ -855,7 +614,6 @@ async function toggleShowDeletedInline(stageId) {
     // optimistic local reorder
     const newList = list.slice();
     const [moved] = newList.splice(sourceIndex, 1);
-    // if targetIndex is after removal point, adjust insert index
     const insertAt = (sourceIndex < newIdx) ? newIdx : newIdx;
     newList.splice(insertAt, 0, moved);
     const withPos = newList.map((ss, i) => ({ ...ss, position: i }));
@@ -887,6 +645,8 @@ async function toggleShowDeletedInline(stageId) {
 
     const { stageId, moved, movedId, insertAt } = pendingSubstageReorder;
 
+    // Don't attempt to GET canonical substage from backend (backend lacks GET /ostages/<optionId>/<stageId>)
+    // Instead require that moved.name exists locally (otherwise user must edit the substage first)
     async function buildSubPayload(movedObj, position) {
       const name = (movedObj.name ?? "").toString();
       const desc = movedObj.desc ?? undefined;
@@ -894,28 +654,14 @@ async function toggleShowDeletedInline(stageId) {
       if (name && name.trim() !== "") {
         return { name: name.trim(), desc, deleted, position };
       }
-      // fallback: fetch canonical substage
-      try {
-        const r = await fetch(`https://villagerelocation.onrender.com/sstages/${encodeURIComponent(stageId)}/${encodeURIComponent(movedId)}`);
-        if (!r.ok) return { name: "", desc, deleted, position };
-        const d = await r.json();
-        const serverObj = d?.result ?? d;
-        const serverName = serverObj?.name ?? "";
-        const serverDesc = serverObj?.desc ?? desc;
-        const serverDeleted = serverObj?.deleted ?? deleted;
-        return { name: (serverName ?? "").toString().trim(), desc: serverDesc, deleted: !!serverDeleted, position };
-      } catch (e) {
-        return { name: "", desc, deleted, position };
-      }
+      // If name is missing locally, abort and instruct user to edit the substage first.
+      throw new Error("Reorder failed: sub-stage must have a name locally. Please edit the sub-stage name before reordering.");
     }
 
     try {
       const payload = await buildSubPayload(moved, insertAt);
-      if (!payload.name || payload.name.trim() === "") {
-        throw new Error("Reorder failed: substage name required by server validation. Reloading from server.");
-      }
 
-      const res = await fetch(`https://villagerelocation.onrender.com/sstages/${encodeURIComponent(stageId)}/${encodeURIComponent(movedId)}`, {
+      const res = await fetch(`https://villagerelocation.onrender.com/ostages/${encodeURIComponent(stageId)}/${encodeURIComponent(movedId)}`, {
         method: 'PUT', headers: authHeaders(), body: JSON.stringify(payload)
       });
       if (!res.ok) {
@@ -960,7 +706,7 @@ async function toggleShowDeletedInline(stageId) {
         const failures = [];
         for (const id of (deleteConfirm.ids || [])) {
           try {
-            const res = await fetch(`https://villagerelocation.onrender.com/stages/${encodeURIComponent(id)}`, { method: 'DELETE', headers: authHeaders() });
+            const res = await fetch(`https://villagerelocation.onrender.com/options/${encodeURIComponent(id)}`, { method: 'DELETE', headers: authHeaders() });
             if (!res.ok) {
               const txt = await res.text().catch(() => '');
               failures.push(`${id}: ${res.status} ${txt}`);
@@ -977,7 +723,7 @@ async function toggleShowDeletedInline(stageId) {
         const failures = [];
         for (const sid of (deleteConfirm.ids || [])) {
           try {
-            const res = await fetch(`https://villagerelocation.onrender.com/sstages/${encodeURIComponent(deleteConfirm.stageId)}/${encodeURIComponent(sid)}`, { method: 'DELETE', headers: authHeaders() });
+            const res = await fetch(`https://villagerelocation.onrender.com/ostages/${encodeURIComponent(deleteConfirm.stageId)}/${encodeURIComponent(sid)}`, { method: 'DELETE', headers: authHeaders() });
             if (!res.ok) {
               const txt = await res.text().catch(() => '');
               failures.push(`${sid}: ${res.status} ${txt}`);
@@ -1135,14 +881,10 @@ async function toggleShowDeletedInline(stageId) {
               return (
                 <div
                   key={String(stageId)}
-                  // draggable disabled if selecting, if reorder pending, or if this card is expanded (showing substages)
-                  draggable={!globalSelectMode && !pendingReorder && !expanded}
-                  onDragStart={(e) => handleDragStart(e, index)}
-                  onDragOver={(e) => handleDragOver(e, index)}
-                  onDrop={(e) => handleDrop(e, index)}
-                  onDragEnd={handleDragEnd}
+                  /* Top-level reordering disabled: draggable set to false and drag handlers removed */
                   className={`bg-white rounded-lg shadow p-4 border relative ${isDragOver ? "border-dashed border-2" : ""}`}
-                  style={{ cursor: globalSelectMode ? "default" : (expanded ? "default" : "grab") }}
+                  draggable={false}
+                  style={{ cursor: "default" }}
                 >
                   <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                     <div className="flex items-center gap-3 min-w-0">
@@ -1314,7 +1056,7 @@ async function toggleShowDeletedInline(stageId) {
                   ) : (
                     <div className="space-y-4">
                       {deletedStagesCache.map(ds => {
-                        const id = ds.stageId ?? ds.stage_id ?? ds.id;
+                        const id = ds.stageId ?? ds.stage_id ?? ds.id ?? ds.optionId;
                         const dsSub = ds.stages ?? ds.subStages ?? ds.sub_stages ?? [];
                         const isExpanded = expandedDeletedStageIds.has(id);
                         return (
@@ -1341,7 +1083,7 @@ async function toggleShowDeletedInline(stageId) {
                               <div className="mt-3 space-y-2">
                                 {Array.isArray(dsSub) && dsSub.length > 0 ? (
                                   dsSub.map(sub => {
-                                    const subId = sub.subStageId ?? sub.sub_stage_id ?? sub.id ?? sub.sub_id ?? sub.subId ?? sub.name;
+                                    const subId = sub.subStageId ?? sub.sub_stage_id ?? sub.id ?? sub.sub_id ?? sub.subId ?? sub.stageId ?? sub.name;
                                     return (
                                       <div key={String(subId)} className="p-2 bg-gray-50 border rounded">
                                         <div className={`${sub.deleted ? "line-through text-gray-400" : "text-gray-800"} font-medium`}>{sub.name}</div>
@@ -1374,7 +1116,16 @@ async function toggleShowDeletedInline(stageId) {
                 <h4 className="font-semibold">Edit Stage</h4>
                 <button onClick={() => setEditStage(null)} className="text-gray-500">✕</button>
               </div>
-              <form onSubmit={submitStageUpdate} className="space-y-3">
+              <form onSubmit={async (e) => { e.preventDefault(); try {
+                    const payload = { name: editStage.name, desc: editStage.desc, deleted: !!editStage.deleted };
+                    const res = await fetch(`https://villagerelocation.onrender.com/options/${encodeURIComponent(editStage.stageId)}`, {
+                      method: 'PUT', headers: authHeaders(), body: JSON.stringify(payload)
+                    });
+                    if (!res.ok) { const t = await res.text().catch(()=> ''); throw new Error(`${res.status} ${t}`); }
+                    await reloadStages();
+                    setEditStage(null);
+                } catch(err) { setError(err.message); }
+              }} className="space-y-3">
                 <div>
                   <label className="block text-sm text-gray-700">Name</label>
                   <input className="w-full p-2 border rounded" value={editStage.name} onChange={(e) => setEditStage(p => ({ ...p, name: e.target.value }))} />
@@ -1420,23 +1171,6 @@ async function toggleShowDeletedInline(stageId) {
                   <button type="button" onClick={() => setEditSubstage(null)} className="px-4 py-2 border rounded">Cancel</button>
                 </div>
               </form>
-            </div>
-          </div>
-        )}
-
-        {/* Centered confirmation modal for pending reorder (stages) */}
-        {pendingReorder && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40 p-4">
-            <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-md mx-3 sm:mx-0">
-              <h3 className="text-lg font-semibold mb-2">Confirm reorder</h3>
-              <div className="text-sm text-gray-700 mb-4">
-                Move "<span className="font-medium">{pendingReorder.moved?.name ?? pendingReorder.movedId}</span>" to position <span className="font-medium">{pendingReorder.insertAt}</span>?
-              </div>
-              {error && <div className="text-sm text-red-600 mb-3">{error}</div>}
-              <div className="flex justify-end gap-2">
-                <button onClick={cancelReorder} disabled={persisting} className="px-4 py-2 border rounded">Cancel</button>
-                <button onClick={confirmReorder} disabled={persisting} className="px-4 py-2 bg-blue-600 text-white rounded">{persisting ? "Saving…" : "Confirm"}</button>
-              </div>
             </div>
           </div>
         )}

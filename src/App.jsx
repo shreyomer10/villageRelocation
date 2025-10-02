@@ -12,6 +12,8 @@ import LandingPage from "./pages/LandingPage.jsx";
 import StagePage from "./pages/StagePage";
 import EmployeesPage from "./pages/EmployeePages.jsx";
 import MeetingsPage from "./pages/MeetingPages.jsx";
+import OptionPage from "./pages/OptionPage.jsx";
+import Building from "./pages/Buildings.jsx";
 
 
 
@@ -41,9 +43,11 @@ export default function App() {
       
 
 <Route path="/stages" element={<PrivateRoute> <StagePage /> </PrivateRoute>} />
+<Route path="/stages" element={<PrivateRoute> <Building /> </PrivateRoute>} />
 <Route path="/admin/employees" element={<PrivateRoute> <EmployeesPage /> </PrivateRoute>} />
 
 <Route path="/meetings" element={<PrivateRoute> <MeetingsPage /></PrivateRoute>} />
+<Route path="/options" element={<PrivateRoute> <OptionPage /> </PrivateRoute>} />
 // or if you pass village id param:
 <Route path="/meetings/:villageId" element={<PrivateRoute> <MeetingsPage /> </PrivateRoute>} />
       <Route

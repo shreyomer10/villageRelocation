@@ -897,7 +897,7 @@ export default function Dashboard() {
   </button>
         <button
           role="menuitem"
-          onClick={() => { setAdminOpen(false); navigate("/admin/options"); }}
+          onClick={() => { setAdminOpen(false); navigate("/options"); }}
           className="w-full text-left px-3 py-2 rounded hover:bg-gray-50 focus:outline-none mt-1"
         >
           Options
