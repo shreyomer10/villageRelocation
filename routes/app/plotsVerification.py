@@ -18,8 +18,7 @@ families = db.testing
 
 plots_BP = Blueprint("plots",__name__)
 
-from datetime import datetime
-from pymongo import ReturnDocument
+
 
 # ------------------ PLOTS ----  --------------
 @plots_BP.route("/plots/insert", methods=["POST"])
