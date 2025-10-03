@@ -8,19 +8,14 @@ import {
   FileText,
   Clock,
   Search,
-  Filter,
   ChevronDown,
   ChevronUp,
-  File,
-  FileText as FileIcon,
-  CheckCircle,
-  Clock as ClockIcon,
-  XCircle
+  File
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { API_BASE } from "../config/Api.js";
 
-// FamilyDetailPage (updated updates UI, removed Edit/Export)
+// FamilyDetailPage (updated: fixed mojibake, cleaned imports)
 export default function FamilyDetailPage() {
   const { familyId } = useParams();
   const navigate = useNavigate();
@@ -115,7 +110,7 @@ export default function FamilyDetailPage() {
 
   function fmtDate(d) {
     try {
-      if (!d) return "-";
+      if (!d) return "—";
       const dt = new Date(d);
       return dt.toLocaleString("en-IN");
     } catch (e) {
@@ -171,7 +166,6 @@ export default function FamilyDetailPage() {
     const isDeleted = !!u.deleted || !!u.delete;
     const docs = Array.isArray(u.docs) ? u.docs : [];
     const latestTime = u.verifiedAt || (u.statusHistory && u.statusHistory.length ? u.statusHistory.slice(-1)[0]?.time : null);
-    const shortNotes = (u.notes || "").slice(0, 220);
     const expanded = expandedUpdate === u.updateId;
 
     return (
@@ -225,10 +219,10 @@ export default function FamilyDetailPage() {
 
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <StatusBadge status={u.status} />
-                <div className="text-xs text-gray-500">Stage: <span className="font-medium">{u.currentStage ?? "â€”"}</span></div>
-                <div className="text-xs text-gray-500">By: <span className="font-medium">{u.insertedBy ?? "â€”"}</span></div>
-                <div className="text-xs text-gray-500">Verified: <span className="font-medium">{u.verifiedBy ?? "â€”"}</span></div>
-                <div className="text-xs text-gray-400">â€¢ {fmtDate(latestTime)}</div>
+                <div className="text-xs text-gray-500">Stage: <span className="font-medium">{u.currentStage ?? "—"}</span></div>
+                <div className="text-xs text-gray-500">By: <span className="font-medium">{u.insertedBy ?? "—"}</span></div>
+                <div className="text-xs text-gray-500">Verified: <span className="font-medium">{u.verifiedBy ?? "—"}</span></div>
+                <div className="text-xs text-gray-400">• {fmtDate(latestTime)}</div>
               </div>
 
               {docs.length > 0 && (
@@ -243,7 +237,7 @@ export default function FamilyDetailPage() {
                         rel="noreferrer"
                         className="inline-flex items-center gap-2 px-2 py-1 border rounded-md text-xs hover:bg-gray-50"
                       >
-                        <FileIcon size={14} /> <span className="truncate max-w-[12rem]">{d.split("/").slice(-1)[0]}</span>
+                        <File size={14} /> <span className="truncate max-w-[12rem]">{d.split("/").slice(-1)[0]}</span>
                       </a>
                     ))}
                   </div>
@@ -259,7 +253,7 @@ export default function FamilyDetailPage() {
         <div className="mt-4">
           <details className="group">
             <summary className="flex items-center gap-2 cursor-pointer text-sm text-gray-600 list-none">
-              <ClockIcon size={14} /> View status history ({Array.isArray(u.statusHistory) ? u.statusHistory.length : 0})
+              <Clock size={14} /> View status history ({Array.isArray(u.statusHistory) ? u.statusHistory.length : 0})
               <span className="ml-2 text-xs text-gray-400 group-open:rotate-180 transition-transform"><ChevronDown size={14} /></span>
             </summary>
 
@@ -273,12 +267,10 @@ export default function FamilyDetailPage() {
                       </div>
                       <div className="flex-1 text-sm">
                         <div className="flex items-center justify-between gap-3">
-                          <div className="text-sm text-gray-800">
-                            {sh.comments || "â€”"}
-                          </div>
+                          <div className="text-sm text-gray-800">{sh.comments || "—"}</div>
                           <div className="text-xs text-gray-400">{fmtDate(sh.time)}</div>
                         </div>
-                        <div className="text-xs text-gray-500 mt-1">By: {sh.verifier ?? "â€”"} â€¢ Status: {statusMap[sh.status]?.label ?? sh.status}</div>
+                        <div className="text-xs text-gray-500 mt-1">By: {sh.verifier ?? "—"} • Status: {statusMap[sh.status]?.label ?? sh.status}</div>
                       </div>
                     </li>
                   ))}
@@ -295,7 +287,7 @@ export default function FamilyDetailPage() {
 
   // Reworked Updates tab rendering
   function renderUpdates() {
-    if (updatesLoading) return <div className="py-8 text-center">Loading updatesâ€¦</div>;
+    if (updatesLoading) return <div className="py-8 text-center">Loading updates…</div>;
     if (updatesError) return <div className="text-red-600">{updatesError}</div>;
 
     return (
@@ -354,7 +346,7 @@ export default function FamilyDetailPage() {
 
   // Overview and Members kept same as before (no change)
   function renderOverview() {
-    if (familyLoading) return <div className="py-8 text-center">Loading familyâ€¦</div>;
+    if (familyLoading) return <div className="py-8 text-center">Loading family…</div>;
     if (familyError) return <div className="text-red-600">{familyError}</div>;
     if (!family) return <div className="text-gray-700">No family data found.</div>;
 
@@ -369,21 +361,21 @@ export default function FamilyDetailPage() {
               className="w-28 h-28 object-cover rounded-full border"
             />
             <div>
-              <h2 className="text-2xl font-bold">{family.mukhiyaName || "â€”"}</h2>
+              <h2 className="text-2xl font-bold">{family.mukhiyaName || "—"}</h2>
               <p className="text-sm text-gray-600">Family ID: <span className="font-mono">{family.familyId}</span></p>
-              <p className="text-sm text-gray-600">Village: {family.villageId || "â€”"}</p>
-              <p className="text-sm text-gray-600">Relocation option: {family.relocationOption ?? "â€”"}</p>
+              <p className="text-sm text-gray-600">Village: {family.villageId || "—"}</p>
+              <p className="text-sm text-gray-600">Relocation option: {family.relocationOption ?? "—"}</p>
             </div>
           </div>
 
           <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <h4 className="text-sm text-gray-500">Address</h4>
-              <div className="text-base text-gray-800">{family.address || "â€”"}</div>
+              <div className="text-base text-gray-800">{family.address || "—"}</div>
             </div>
             <div>
               <h4 className="text-sm text-gray-500">Contact</h4>
-              <div className="text-base text-gray-800">{family.mobile || family.phone || "â€”"}</div>
+              <div className="text-base text-gray-800">{family.mobile || family.phone || "—"}</div>
             </div>
           </div>
 
@@ -399,7 +391,7 @@ export default function FamilyDetailPage() {
             <ol className="space-y-3">
               {family.statusHistory.map((s, i) => (
                 <li key={i} className="border-l-2 pl-3">
-                  <div className="text-sm font-medium">{s.status || "â€”"} <span className="text-xs text-gray-500 ml-2">{fmtDate(s.date)}</span></div>
+                  <div className="text-sm font-medium">{s.status || "—"} <span className="text-xs text-gray-500 ml-2">{fmtDate(s.date)}</span></div>
                   {s.notes && <div className="text-sm text-gray-600">{s.notes}</div>}
                 </li>
               ))}
@@ -413,7 +405,7 @@ export default function FamilyDetailPage() {
   }
 
   function renderMembers() {
-    if (familyLoading) return <div className="py-8 text-center">Loading family membersâ€¦</div>;
+    if (familyLoading) return <div className="py-8 text-center">Loading family members…</div>;
     if (familyError) return <div className="text-red-600">{familyError}</div>;
     const mems = Array.isArray(family?.members) ? family.members : [];
     if (!mems.length) return <div className="text-sm text-gray-600">No members recorded.</div>;
@@ -430,9 +422,9 @@ export default function FamilyDetailPage() {
                 className="w-14 h-14 rounded-full object-cover"
               />
               <div>
-                <div className="font-semibold">{m.name || "â€”"}</div>
-                <div className="text-sm text-gray-500">{m.gender || ""} â€¢ {m.age ?? "â€”"} yrs</div>
-                <div className="text-xs text-gray-500 mt-1">Stage: <span className="font-medium">{m.currentStage || "â€”"}</span></div>
+                <div className="font-semibold">{m.name || "—"}</div>
+                <div className="text-sm text-gray-500">{m.gender || ""} • {m.age ?? "—"} yrs</div>
+                <div className="text-xs text-gray-500 mt-1">Stage: <span className="font-medium">{m.currentStage || "—"}</span></div>
               </div>
             </div>
 
@@ -453,7 +445,7 @@ export default function FamilyDetailPage() {
   }
 
   function renderDocs() {
-    if (familyLoading) return <div className="py-8 text-center">Loadingâ€¦</div>;
+    if (familyLoading) return <div className="py-8 text-center">Loading…</div>;
     const photos = Array.isArray(family?.photos) ? family.photos : [];
     const docs = Array.isArray(family?.docs) ? family.docs : [];
 
@@ -513,13 +505,13 @@ export default function FamilyDetailPage() {
             </button>
             <div>
               <h1 className="text-2xl font-bold">Family Details</h1>
-              <div className="text-sm text-gray-600">{family?.mukhiyaName ?? "â€”"} â€¢ <span className="font-mono">{familyId}</span></div>
+              <div className="text-sm text-gray-600">{family?.mukhiyaName ?? "—"} • <span className="font-mono">{familyId}</span></div>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
             {/* Edit & Export removed as requested */}
-            <div className="text-sm text-gray-500">Last synced: <span className="font-mono">{family?.lastSync ? fmtDate(family.lastSync) : "â€”"}</span></div>
+            <div className="text-sm text-gray-500">Last synced: <span className="font-mono">{family?.lastSync ? fmtDate(family.lastSync) : "—"}</span></div>
           </div>
         </div>
 
@@ -530,16 +522,16 @@ export default function FamilyDetailPage() {
               <div className="flex items-center gap-3">
                 <img src={family?.mukhiyaPhoto || "/images/default-avatar.png"} onError={(e) => (e.currentTarget.src = "/images/default-avatar.png")} className="w-20 h-20 rounded-full object-cover" alt="mukhiya" />
                 <div>
-                  <div className="font-semibold">{family?.mukhiyaName ?? "â€”"}</div>
+                  <div className="font-semibold">{family?.mukhiyaName ?? "—"}</div>
                   <div className="text-xs text-gray-500">Family ID: <span className="font-mono">{family?.familyId}</span></div>
                 </div>
               </div>
 
               <div className="mt-4 space-y-2 text-sm text-gray-600">
-                <div>Village: {family?.villageId ?? "â€”"}</div>
-                <div>Option: {family?.relocationOption ?? "â€”"}</div>
+                <div>Village: {family?.villageId ?? "—"}</div>
+                <div>Option: {family?.relocationOption ?? "—"}</div>
                 <div>Members: {Array.isArray(family?.members) ? family.members.length : 0}</div>
-                <div>Stage: {family?.currentStage ?? "â€”"}</div>
+                <div>Stage: {family?.currentStage ?? "—"}</div>
               </div>
 
               <div className="mt-4 flex gap-2">

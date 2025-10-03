@@ -1,5 +1,7 @@
-﻿import React, { useEffect, useState, useRef } from "react";
+﻿// src/components/FamilyPieChart.jsx
+import React, { useEffect, useState, useRef } from "react";
 import { useNavigate as useRouterNavigate } from "react-router-dom";
+import { API_BASE } from "../config/Api.js";
 
 export default function FamilyPieChart({ villageId, navigate: navigateProp }) {
   const [total, setTotal] = useState(0);
@@ -14,12 +16,7 @@ export default function FamilyPieChart({ villageId, navigate: navigateProp }) {
   const containerRef = useRef(null);
 
   // Prefer navigate prop if provided, otherwise use react-router's hook
-  let routerNavigate = null;
-  try {
-    routerNavigate = useRouterNavigate();
-  } catch (e) {
-    routerNavigate = null;
-  }
+  const routerNavigate = useRouterNavigate();
   const navigate = typeof navigateProp === "function" ? navigateProp : routerNavigate;
 
   useEffect(() => {
@@ -33,9 +30,7 @@ export default function FamilyPieChart({ villageId, navigate: navigateProp }) {
 
     const controller = new AbortController();
     const signal = controller.signal;
-    const url = `https://villagerelocation.onrender.com/villages/${encodeURIComponent(
-      villageId
-    )}/family-count`;
+    const url = `${API_BASE}/villages/${encodeURIComponent(villageId)}/family-count`;
 
     async function fetchCounts() {
       try {
@@ -49,11 +44,11 @@ export default function FamilyPieChart({ villageId, navigate: navigateProp }) {
         });
 
         if (!res.ok) {
-          const text = await res.text();
+          const text = await res.text().catch(() => "");
           throw new Error(`HTTP ${res.status}: ${text}`);
         }
 
-        const json = await res.json();
+        const json = await res.json().catch(() => ({}));
         const r = json.result ?? json;
         const f1 = Number(r.familiesOption1 ?? r.families_option_1 ?? r.families_option1) || 0;
         const f2 = Number(r.familiesOption2 ?? r.families_option_2 ?? r.families_option2) || 0;
@@ -71,6 +66,7 @@ export default function FamilyPieChart({ villageId, navigate: navigateProp }) {
         }
       } finally {
         setLoading(false);
+        // small delay to allow DOM to update before animation
         setTimeout(() => setDrawn(true), 50);
       }
     }
@@ -121,7 +117,6 @@ export default function FamilyPieChart({ villageId, navigate: navigateProp }) {
     // prefer navigate prop / react-router navigate
     try {
       if (typeof navigate === "function") {
-        // prefer query route so FamilyList picks it up via useSearchParams
         navigate(url);
         return;
       }
@@ -163,7 +158,7 @@ export default function FamilyPieChart({ villageId, navigate: navigateProp }) {
         <h2 className="text-lg font-semibold text-gray-700 mb-4">Families / Beneficiaries</h2>
 
         <div className="relative w-48 h-48" aria-hidden={loading || total === 0}>
-          <svg viewBox="0 0 200 200" width="200" height="200" className="mx-auto">
+          <svg viewBox="0 0 200 200" width="200" height="200" className="mx-auto" role="img" aria-label="Family distribution donut chart">
             <defs>
               <linearGradient id="gOpt1" x1="0%" y1="0%" x2="100%" y2="100%">
                 <stop offset="0%" stopColor="#ff7a18" />
@@ -211,11 +206,11 @@ export default function FamilyPieChart({ villageId, navigate: navigateProp }) {
                 onMouseEnter={(e) => {
                   if (!selectedOption) {
                     setHovered("opt2");
-                    showTooltip(e, `Option 2 â€” ${opt2} (${Math.round(opt2Percent * 100)}%)`);
+                    showTooltip(e, `Option 2 — ${opt2} (${Math.round(opt2Percent * 100)}%)`);
                   }
                 }}
                 onMouseMove={(e) => {
-                  if (!selectedOption) showTooltip(e, `Option 2 â€” ${opt2} (${Math.round(opt2Percent * 100)}%)`);
+                  if (!selectedOption) showTooltip(e, `Option 2 — ${opt2} (${Math.round(opt2Percent * 100)}%)`);
                 }}
                 onMouseLeave={hideTooltip}
               />
@@ -232,7 +227,7 @@ export default function FamilyPieChart({ villageId, navigate: navigateProp }) {
                 strokeLinecap="round"
                 strokeDasharray={`${drawn ? opt1Len : 0} ${c - opt1Len}`}
                 strokeDashoffset={-opt2Len}
-                transform={`rotate(-90)`}
+                transform="rotate(-90)"
                 style={{
                   transition: "stroke-dasharray 900ms cubic-bezier(.2,.9,.2,1), transform 220ms, opacity 220ms",
                   cursor: selectedOption ? "default" : "pointer",
@@ -247,11 +242,11 @@ export default function FamilyPieChart({ villageId, navigate: navigateProp }) {
                 onMouseEnter={(e) => {
                   if (!selectedOption) {
                     setHovered("opt1");
-                    showTooltip(e, `Option 1 â€” ${opt1} (${Math.round(opt1Percent * 100)}%)`);
+                    showTooltip(e, `Option 1 — ${opt1} (${Math.round(opt1Percent * 100)}%)`);
                   }
                 }}
                 onMouseMove={(e) => {
-                  if (!selectedOption) showTooltip(e, `Option 1 â€” ${opt1} (${Math.round(opt1Percent * 100)}%)`);
+                  if (!selectedOption) showTooltip(e, `Option 1 — ${opt1} (${Math.round(opt1Percent * 100)}%)`);
                 }}
                 onMouseLeave={hideTooltip}
               />
@@ -265,7 +260,7 @@ export default function FamilyPieChart({ villageId, navigate: navigateProp }) {
               ) : (
                 <>
                   <text x="0" y="-6" textAnchor="middle" fontSize="20" fontWeight="700" fill="#0f172a">
-                    {loading ? "â€¦" : total}
+                    {loading ? "…" : total}
                   </text>
                   <text x="0" y="18" textAnchor="middle" fontSize="11" fill="#475569">
                     Total Families

@@ -397,7 +397,7 @@ function EmployeeForm({ initial = {}, onCancel, onSubmit }) {
                     </div>
 
                     <div className="mt-3 max-h-44 overflow-auto">
-                      {villLoading && <div className="text-sm text-gray-500 p-2">Loading villagesâ€¦</div>}
+                      {villLoading && <div className="text-sm text-gray-500 p-2">Loading villages…</div>}
                       {villError && <div className="text-sm text-red-600 p-2">{villError}</div>}
                       {!villLoading && !villError && visibleVillages.length === 0 && <div className="text-sm text-gray-500 p-2">No villages</div>}
 
@@ -634,7 +634,7 @@ export default function EmployeesPage() {
     const id = idFromPayload || idFromEditing || idFromSelected;
 
     if (!id) {
-      setUpdateError("Missing employee id â€” cannot update. The client could not determine the user's id.");
+      setUpdateError("Missing employee id — cannot update. The client could not determine the user's id.");
       return;
     }
     try {
@@ -839,12 +839,12 @@ export default function EmployeesPage() {
         ids.push(raw);
       } else if (villagesNameToId[lower]) {
         ids.push(villagesNameToId[lower]);
-        conversions.push(`${raw} â†’ ${villagesNameToId[lower]}`);
+        conversions.push(`${raw} → ${villagesNameToId[lower]}`);
       } else {
         const matchKey = Object.keys(villagesNameToId).find(k => k.includes(lower) || lower.includes(k));
         if (matchKey) {
           ids.push(villagesNameToId[matchKey]);
-          conversions.push(`${raw} â†’ ${villagesNameToId[matchKey]}`);
+          conversions.push(`${raw} → ${villagesNameToId[matchKey]}`);
         } else {
           unknowns.push(raw);
           ids.push(raw);
@@ -878,10 +878,10 @@ export default function EmployeesPage() {
       const preFriendly = [];
       if (conversionsAcc.length) {
         const uniq = Array.from(new Set(conversionsAcc));
-        uniq.forEach(c => preFriendly.push(`ðŸ” Converted: ${c}`));
+        uniq.forEach(c => preFriendly.push(`Converted: ${c}`));
       }
       if (unknownsAcc.length) {
-        unknownsAcc.forEach((u) => preFriendly.push(`â— ${u.name} â€” unknown villages: ${u.unknowns.join(", ")}`));
+        unknownsAcc.forEach((u) => preFriendly.push(`Unknown villages for ${u.name}: ${u.unknowns.join(", ")}`));
       }
       if (preFriendly.length) {
         setBulkProgress((p) => ({ ...(p || {}), status: "uploading", preFriendly }));
@@ -903,12 +903,12 @@ export default function EmployeesPage() {
 
       const summary = (json && json.result) ? json.result : (json || {});
       const friendly = [];
-      if (Array.isArray(summary.inserted) && summary.inserted.length) friendly.push(`âœ… Inserted: ${summary.inserted.join(", ")}`);
+      if (Array.isArray(summary.inserted) && summary.inserted.length) friendly.push(`✓ Inserted: ${summary.inserted.join(", ")}`);
       if (Array.isArray(summary.skipped_existing) && summary.skipped_existing.length) {
         summary.skipped_existing.forEach((s) => {
           const id = s.email || s.mobile || s.name || JSON.stringify(s);
           const reason = s.reason || s.message || "";
-          friendly.push(reason ? `â­ï¸ Skipped: ${id} â€” ${reason}` : `â­ï¸ Skipped: ${id}`);
+          friendly.push(reason ? `✖ Skipped: ${id} — ${reason}` : `✖ Skipped: ${id}`);
         });
       }
       if (Array.isArray(summary.validation_errors) && summary.validation_errors.length) {
@@ -932,7 +932,7 @@ export default function EmployeesPage() {
               else msg = err.replace(/\s+/g, " ").trim();
             }
           } else msg = String(err);
-          friendly.push(`âš ï¸ ${name} â€” ${msg}`);
+          friendly.push(`⚠ ${name} — ${msg}`);
         });
       }
 
@@ -975,11 +975,11 @@ export default function EmployeesPage() {
       <div className="px-4 md:px-6 py-6">
         <div className="max-w-6xl mx-auto">
           <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 mb-4">
-            <h1 className="text-2xl font-semibold">Employees ðŸ‘·â€â™‚</h1>
+            <h1 className="text-2xl font-semibold">Employees</h1>
 
             <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
               <div className="flex gap-2 items-center">
-                <button onClick={() => navigate("/dashboard")} className="px-3 py-2 border rounded-md bg-white text-sm">â† Back</button>
+                <button onClick={() => navigate("/dashboard")} className="px-3 py-2 border rounded-md bg-white text-sm">← Back</button>
               </div>
 
               <div className="flex gap-2 items-center">
@@ -1020,7 +1020,7 @@ export default function EmployeesPage() {
                   <div className="mt-3">
                     <div className="text-sm font-medium">Before sending</div>
                     <ul className="mt-2 space-y-1">
-                      {bulkProgress.preFriendly.map((line, i) => <li key={i} className="text-sm">â€¢ {line}</li>)}
+                      {bulkProgress.preFriendly.map((line, i) => <li key={i} className="text-sm">• {line}</li>)}
                     </ul>
                   </div>
                 )}
@@ -1030,10 +1030,10 @@ export default function EmployeesPage() {
                     <ul className="mt-2 space-y-1">
                       {bulkProgress.friendly.map((line, i) => (
                         <li key={i} className="flex items-start gap-3">
-                          <span className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-sm ${line.startsWith("âœ…") ? "bg-green-100 text-green-800" : line.startsWith("âš ï¸") ? "bg-yellow-100 text-yellow-800" : "bg-gray-100 text-gray-800"}`}>
-                            {line.startsWith("âœ…") ? "âœ“" : line.startsWith("âš ï¸") ? "!" : "â€¢"}
+                          <span className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-sm ${line.startsWith("✓") ? "bg-green-100 text-green-800" : line.startsWith("⚠") ? "bg-yellow-100 text-yellow-800" : line.startsWith("✖") ? "bg-red-100 text-red-800" : "bg-gray-100 text-gray-800"}`}>
+                            {line.startsWith("✓") ? "✓" : line.startsWith("⚠") ? "⚠" : line.startsWith("✖") ? "✖" : "•"}
                           </span>
-                          <div className="text-sm">{line.replace(/^âœ…\s|^âš ï¸\s|^â­ï¸\s/, "")}</div>
+                          <div className="text-sm">{line.replace(/^✓\s|^⚠\s|^✖\s/, "")}</div>
                         </li>
                       ))}
                     </ul>
@@ -1080,7 +1080,7 @@ export default function EmployeesPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {loading && (<tr><td colSpan={6} className="py-6 text-center">Loadingâ€¦</td></tr>)}
+                      {loading && (<tr><td colSpan={6} className="py-6 text-center">Loading…</td></tr>)}
                       {error && (<tr><td colSpan={6} className="py-6 text-center text-red-600">{error}</td></tr>)}
                       {!loading && !error && filtered.map((emp) => (
                         <tr key={emp.userId || emp._id || emp.id} className="hover:bg-gray-50 cursor-pointer">
@@ -1101,7 +1101,7 @@ export default function EmployeesPage() {
                 </div>
 
                 <div className="md:hidden">
-                  {loading && <div className="py-6 text-center">Loadingâ€¦</div>}
+                  {loading && <div className="py-6 text-center">Loading…</div>}
                   {error && <div className="py-6 text-center text-red-600">{error}</div>}
                   {!loading && !error && filtered.map(emp => (
                     <div key={emp.userId || emp._id || emp.id} className="mb-3">
@@ -1109,8 +1109,8 @@ export default function EmployeesPage() {
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex-1 min-w-0">
                             <div className="font-semibold text-sm truncate">{emp.name}</div>
-                            <div className="text-xs text-gray-500 truncate">{emp.email} â€¢ {emp.mobile}</div>
-                            <div className="text-xs text-gray-600 mt-1">{getRoleLabel(emp.role)}{emp.villageId ? ` â€¢ ${emp.villageId}` : ""}</div>
+                            <div className="text-xs text-gray-500 truncate">{emp.email} • {emp.mobile}</div>
+                            <div className="text-xs text-gray-600 mt-1">{getRoleLabel(emp.role)}{emp.villageId ? ` • ${emp.villageId}` : ""}</div>
                           </div>
                           <div className="flex items-start gap-2">
                             <button onClick={(e) => { e.stopPropagation(); handleStartEdit(emp); setUpdateError(null); }} className="p-2 bg-white rounded shadow"><Edit2 className="w-4 h-4" /></button>
@@ -1145,7 +1145,7 @@ export default function EmployeesPage() {
 
                 <div className="mt-4">
                   {selectedLoading ? (
-                    <div className="py-6 text-center">Loading detailsâ€¦</div>
+                    <div className="py-6 text-center">Loading details…</div>
                   ) : editingEmployee ? (
                     <div>
                       {updateError && <div className="mb-3 p-2 rounded bg-red-50 text-red-700">{updateError}</div>}
@@ -1155,12 +1155,12 @@ export default function EmployeesPage() {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       <div>
                         <div className="text-sm text-gray-500">Email</div>
-                        <div className="font-medium break-words">{selectedEmployee.email || "â€”"}</div>
+                        <div className="font-medium break-words">{selectedEmployee.email || "—"}</div>
                       </div>
 
                       <div>
                         <div className="text-sm text-gray-500">Mobile</div>
-                        <div className="font-medium">{selectedEmployee.mobile || "â€”"}</div>
+                        <div className="font-medium">{selectedEmployee.mobile || "—"}</div>
                       </div>
 
                       <div>
@@ -1174,14 +1174,14 @@ export default function EmployeesPage() {
                           {
                             (selectedEmployee.villageIDs && selectedEmployee.villageIDs.length)
                               ? villageIdsToNames(selectedEmployee.villageIDs).join(", ")
-                              : (selectedEmployee.villageId ? (villagesMap[String(selectedEmployee.villageId)] ? `${villagesMap[String(selectedEmployee.villageId)]} (${selectedEmployee.villageId})` : `${selectedEmployee.villageId} (name not found)`) : "â€”")
+                              : (selectedEmployee.villageId ? (villagesMap[String(selectedEmployee.villageId)] ? `${villagesMap[String(selectedEmployee.villageId)]} (${selectedEmployee.villageId})` : `${selectedEmployee.villageId} (name not found)`) : "—")
                           }
                         </div>
                       </div>
 
                       <div className="col-span-2">
                         <div className="text-sm text-gray-500">Location</div>
-                        <div className="font-medium">{[selectedEmployee.gramPanchayat, selectedEmployee.tehsil, selectedEmployee.district].filter(Boolean).join(" / ") || "â€”"}</div>
+                        <div className="font-medium">{[selectedEmployee.gramPanchayat, selectedEmployee.tehsil, selectedEmployee.district].filter(Boolean).join(" / ") || "—"}</div>
                       </div>
 
                       <div className="col-span-2 flex items-center justify-end gap-2 mt-4">

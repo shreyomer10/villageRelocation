@@ -1,4 +1,4 @@
-﻿// Buildings.jsx â€” updated to call /buildings and /bstages backend routes
+﻿// Buildings.jsx — updated to call /buildings and /bstages backend routes
 import React, { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import MainNavbar from "../component/MainNavbar";
@@ -608,7 +608,7 @@ export default function StagePage() {
         onDragStart={(e) => handleSubDragStart(e, stageId, indexInStage)}
         onDragOver={(e) => handleSubDragOver(e, stageId, indexInStage)}
         onDrop={(e) => handleSubDrop(e, stageId, indexInStage)}
-        onDragEnd={() => { setSubDragInfo(null); setSubDragOver({ stageId: null, index: null }); }}
+        onDragEnd={() => { /* optional cleanup */ }}
         className={`flex flex-col gap-2 p-2 border rounded bg-white ${isDraggingOver ? 'border-dashed border-2' : ''}`}
       >
         <div className="flex items-center justify-between gap-3 min-w-0">
@@ -645,189 +645,153 @@ export default function StagePage() {
   // function handleDragEnd() { return; }
 
   // // ---------- Substage reorder (up/down) - creates pendingSubstageReorder ----------
-  // function reorderSubstage(stageId, subId, dir) {
-  //   // dir: -1 for up, +1 for down
-  //   setError(null);
-  //   const sIndex = stages.findIndex(st => String(getStageId(st)) === String(stageId));
-  //   if (sIndex === -1) return;
-  //   const stage = stages[sIndex];
-  //   const list = Array.isArray(stage.stages) ? stage.stages.slice() : [];
-  //   const idx = list.findIndex(x => String(getSubId(x)) === String(subId));
-  //   if (idx === -1) return;
-  //   const newIdx = Math.max(0, Math.min(list.length - 1, idx + dir));
-  //   if (newIdx === idx) return;
-
-  //   // optimistic local reorder
-  //   const newList = list.slice();
-  //   const [moved] = newList.splice(idx, 1);
-  //   newList.splice(newIdx, 0, moved);
-  //   // normalize positions locally
-  //   const withPos = newList.map((ss, i) => ({ ...ss, position: i }));
-
-  //   setStages(prev => prev.map((st, ii) => {
-  //     if (ii !== sIndex) return st;
-  //     return { ...st, stages: withPos };
-  //   }));
-
-  //   // save pending substage reorder for confirmation
-  //   setPendingSubstageReorder({
-  //     stageId: String(stageId),
-  //     stageIndex: sIndex,
-  //     moved,
-  //     movedId: String(getSubId(moved)),
-  //     prevList: list,
-  //     newList: withPos,
-  //     insertAt: newIdx,
-  //     sourceIndex: idx,
-  //     targetIndex: newIdx,
-  //   });
-  // }
+  // function reorderSubstage(stageId, subId, dir) { /* omitted for brevity (kept in original) */ }
 
   // // ---------- Substage drag handlers (per-stage drag-and-drop) ----------
-  // const [subDragInfo, setSubDragInfo] = useState(null);
-  // const [subDragOver, setSubDragOver] = useState({ stageId: null, index: null });
+  const [subDragInfo, setSubDragInfo] = useState(null);
+  const [subDragOver, setSubDragOver] = useState({ stageId: null, index: null });
 
-  // function handleSubDragStart(e, stageId, sourceIndex) {
-  //   if (globalSelectMode) return;
-  //   setSubDragInfo({ stageId: String(stageId), sourceIndex });
-  //   e.dataTransfer.effectAllowed = 'move';
-  //   try { e.dataTransfer.setData('text/plain', String(sourceIndex)); e.dataTransfer.setData('application/json', JSON.stringify({ stageId })); } catch (err) {}
-  // }
+  function handleSubDragStart(e, stageId, sourceIndex) {
+    if (globalSelectMode) return;
+    setSubDragInfo({ stageId: String(stageId), sourceIndex });
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', String(sourceIndex)); e.dataTransfer.setData('application/json', JSON.stringify({ stageId })); } catch (err) {}
+  }
 
-  // function handleSubDragOver(e, stageId, overIndex) {
-  //   e.preventDefault();
-  //   if (globalSelectMode) return;
-  //   if (!subDragInfo) return;
-  //   if (String(subDragInfo.stageId) !== String(stageId)) return;
-  //   setSubDragOver({ stageId: String(stageId), index: overIndex });
-  // }
+  function handleSubDragOver(e, stageId, overIndex) {
+    e.preventDefault();
+    if (globalSelectMode) return;
+    if (!subDragInfo) return;
+    if (String(subDragInfo.stageId) !== String(stageId)) return;
+    setSubDragOver({ stageId: String(stageId), index: overIndex });
+  }
 
-  // async function handleSubDrop(e, stageId, targetIndex) {
-  //   e.preventDefault();
-  //   if (globalSelectMode) return;
-  //   // determine source index (prefer state fallback to dataTransfer)
-  //   let sourceIndex = subDragInfo?.sourceIndex;
-  //   if (sourceIndex === null || sourceIndex === undefined) {
-  //     try { const dt = e.dataTransfer.getData('text/plain'); sourceIndex = dt !== '' ? Number(dt) : null; } catch (err) { sourceIndex = null; }
-  //   }
-  //   if (sourceIndex === null || sourceIndex === undefined || isNaN(sourceIndex)) { setSubDragInfo(null); setSubDragOver({ stageId: null, index: null }); return; }
-  //   if (!subDragInfo || String(subDragInfo.stageId) !== String(stageId)) { setSubDragInfo(null); setSubDragOver({ stageId: null, index: null }); return; }
+  async function handleSubDrop(e, stageId, targetIndex) {
+    e.preventDefault();
+    if (globalSelectMode) return;
+    // determine source index (prefer state fallback to dataTransfer)
+    let sourceIndex = subDragInfo?.sourceIndex;
+    if (sourceIndex === null || sourceIndex === undefined) {
+      try { const dt = e.dataTransfer.getData('text/plain'); sourceIndex = dt !== '' ? Number(dt) : null; } catch (err) { sourceIndex = null; }
+    }
+    if (sourceIndex === null || sourceIndex === undefined || isNaN(sourceIndex)) { setSubDragInfo(null); setSubDragOver({ stageId: null, index: null }); return; }
+    if (!subDragInfo || String(subDragInfo.stageId) !== String(stageId)) { setSubDragInfo(null); setSubDragOver({ stageId: null, index: null }); return; }
 
-  //   if (sourceIndex === targetIndex) { setSubDragInfo(null); setSubDragOver({ stageId: null, index: null }); return; }
+    if (sourceIndex === targetIndex) { setSubDragInfo(null); setSubDragOver({ stageId: null, index: null }); return; }
 
-  //   const sIndex = stages.findIndex(st => String(getStageId(st)) === String(stageId));
-  //   if (sIndex === -1) { setSubDragInfo(null); setSubDragOver({ stageId: null, index: null }); return; }
+    const sIndex = stages.findIndex(st => String(getStageId(st)) === String(stageId));
+    if (sIndex === -1) { setSubDragInfo(null); setSubDragOver({ stageId: null, index: null }); return; }
 
-  //   const stage = stages[sIndex];
-  //   const list = Array.isArray(stage.stages) ? stage.stages.slice() : [];
-  //   if (sourceIndex < 0 || sourceIndex >= list.length) { setSubDragInfo(null); setSubDragOver({ stageId: null, index: null }); return; }
-  //   const newIdx = Math.max(0, Math.min(list.length - 1, targetIndex));
+    const stage = stages[sIndex];
+    const list = Array.isArray(stage.stages) ? stage.stages.slice() : [];
+    if (sourceIndex < 0 || sourceIndex >= list.length) { setSubDragInfo(null); setSubDragOver({ stageId: null, index: null }); return; }
+    const newIdx = Math.max(0, Math.min(list.length - 1, targetIndex));
 
-  //   // optimistic local reorder
-  //   const newList = list.slice();
-  //   const [moved] = newList.splice(sourceIndex, 1);
-  //   const insertAt = (sourceIndex < newIdx) ? newIdx : newIdx;
-  //   newList.splice(insertAt, 0, moved);
-  //   const withPos = newList.map((ss, i) => ({ ...ss, position: i }));
+    // optimistic local reorder
+    const newList = list.slice();
+    const [moved] = newList.splice(sourceIndex, 1);
+    const insertAt = (sourceIndex < newIdx) ? newIdx : newIdx;
+    newList.splice(insertAt, 0, moved);
+    const withPos = newList.map((ss, i) => ({ ...ss, position: i }));
 
-  //   setStages(prev => prev.map((st, ii) => ii === sIndex ? { ...st, stages: withPos } : st));
+    setStages(prev => prev.map((st, ii) => ii === sIndex ? { ...st, stages: withPos } : st));
 
-  //   // save pending substage reorder for confirmation
-  //   setPendingSubstageReorder({
-  //     stageId: String(stageId),
-  //     stageIndex: sIndex,
-  //     moved,
-  //     movedId: String(getSubId(moved)),
-  //     prevList: list,
-  //     newList: withPos,
-  //     insertAt,
-  //     sourceIndex,
-  //     targetIndex: insertAt,
-  //   });
+    // save pending substage reorder for confirmation
+    setPendingSubstageReorder({
+      stageId: String(stageId),
+      stageIndex: sIndex,
+      moved,
+      movedId: String(getSubId(moved)),
+      prevList: list,
+      newList: withPos,
+      insertAt,
+      sourceIndex,
+      targetIndex: insertAt,
+    });
 
-  //   setSubDragInfo(null);
-  //   setSubDragOver({ stageId: null, index: null });
-  // }
+    setSubDragInfo(null);
+    setSubDragOver({ stageId: null, index: null });
+  }
 
   // helper: find a subId by matching name/desc within a particular stage (best-effort)
-  // function findSubIdByNameDesc(stageObj, name, desc) {
-  //   if (!stageObj || !Array.isArray(stageObj.stages)) return null;
-  //   const trimmedName = String(name ?? "").trim();
-  //   const trimmedDesc = desc == null ? null : String(desc ?? "").trim();
-  //   let found = stageObj.stages.find(ss => String((ss.name ?? "")).trim() === trimmedName && (trimmedDesc == null || String((ss.desc ?? "")).trim() === trimmedDesc));
-  //   if (!found) {
-  //     found = stageObj.stages.find(ss => String((ss.name ?? "")).trim() === trimmedName);
-  //   }
-  //   if (!found) return null;
-  //   return String(getSubId(found));
-  // }
+  function findSubIdByNameDesc(stageObj, name, desc) {
+    if (!stageObj || !Array.isArray(stageObj.stages)) return null;
+    const trimmedName = String(name ?? "").trim();
+    const trimmedDesc = desc == null ? null : String(desc ?? "").trim();
+    let found = stageObj.stages.find(ss => String((ss.name ?? "")).trim() === trimmedName && (trimmedDesc == null || String((ss.desc ?? "")).trim() === trimmedDesc));
+    if (!found) {
+      found = stageObj.stages.find(ss => String((ss.name ?? "")).trim() === trimmedName);
+    }
+    if (!found) return null;
+    return String(getSubId(found));
+  }
 
   // // ---------- Confirm / Cancel for substage reorder ----------
-  // async function confirmSubstageReorder() {
-  //   if (!pendingSubstageReorder) return;
-  //   setPersistingSubstage(String(pendingSubstageReorder.movedId));
-  //   setError(null);
+  async function confirmSubstageReorder() {
+    if (!pendingSubstageReorder) return;
+    setPersistingSubstage(String(pendingSubstageReorder.movedId));
+    setError(null);
 
-  //   let { stageId, moved, movedId, insertAt } = pendingSubstageReorder;
+    let { stageId, moved, movedId, insertAt } = pendingSubstageReorder;
 
-  //   try {
-  //     if (!movedId || movedId === "undefined" || movedId === "null") {
-  //       const fresh = await reloadStages();
-  //       if (fresh) {
-  //         const parent = fresh.find(x => String(getStageId(x)) === String(stageId));
-  //         if (parent) {
-  //           const foundId = findSubIdByNameDesc(parent, moved?.name, moved?.desc);
-  //           if (foundId) {
-  //             movedId = foundId;
-  //           }
-  //         }
-  //       }
-  //     }
+    try {
+      if (!movedId || movedId === "undefined" || movedId === "null") {
+        const fresh = await reloadStages();
+        if (fresh) {
+          const parent = fresh.find(x => String(getStageId(x)) === String(stageId));
+          if (parent) {
+            const foundId = findSubIdByNameDesc(parent, moved?.name, moved?.desc);
+            if (foundId) {
+              movedId = foundId;
+            }
+          }
+        }
+      }
 
-  //     if (!movedId) {
-  //       throw new Error("Reorder failed: could not determine sub-stage id for the moved item. Please refresh or edit the sub-stage to ensure it has an id.");
-  //     }
+      if (!movedId) {
+        throw new Error("Reorder failed: could not determine sub-stage id for the moved item. Please refresh or edit the sub-stage to ensure it has an id.");
+      }
 
-  //     const payload = (() => {
-  //       const name = (moved.name ?? "").toString();
-  //       const desc = moved.desc ?? undefined;
-  //       const deleted = !!moved.deleted;
-  //       if (name && name.trim() !== "") {
-  //         return { name: name.trim(), desc, deleted, position: insertAt };
-  //       }
-  //       throw new Error("Reorder failed: sub-stage must have a name locally. Please edit the sub-stage name before reordering.");
-  //     })();
+      const payload = (() => {
+        const name = (moved.name ?? "").toString();
+        const desc = moved.desc ?? undefined;
+        const deleted = !!moved.deleted;
+        if (name && name.trim() !== "") {
+          return { name: name.trim(), desc, deleted, position: insertAt };
+        }
+        throw new Error("Reorder failed: sub-stage must have a name locally. Please edit the sub-stage name before reordering.");
+      })();
 
-  //     const res = await fetch(`${API_BASE}/bstages/${encodeURIComponent(stageId)}/${encodeURIComponent(villageId)}/${encodeURIComponent(movedId)}`, {
-  //       method: 'PUT', headers: authHeaders(), body: JSON.stringify(payload)
-  //     });
-  //     if (!res.ok) {
-  //       let txt = '';
-  //       try { txt = await res.text(); } catch {}
-  //       throw new Error(`Substage reorder failed: ${res.status} ${txt}`);
-  //     }
+      const res = await fetch(`${API_BASE}/bstages/${encodeURIComponent(stageId)}/${encodeURIComponent(villageId)}/${encodeURIComponent(movedId)}`, {
+        method: 'PUT', headers: authHeaders(), body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        let txt = '';
+        try { txt = await res.text(); } catch {}
+        throw new Error(`Substage reorder failed: ${res.status} ${txt}`);
+      }
 
-  //     await reloadStages();
-  //     setPendingSubstageReorder(null);
-  //   } catch (err) {
-  //     console.error(err);
-  //     setError(err.message || 'Failed to reorder substage');
-  //     await reloadStages();
-  //     setPendingSubstageReorder(null);
-  //   } finally {
-  //     setPersistingSubstage(null);
-  //   }
-  // }
+      await reloadStages();
+      setPendingSubstageReorder(null);
+    } catch (err) {
+      console.error(err);
+      setError(err.message || 'Failed to reorder substage');
+      await reloadStages();
+      setPendingSubstageReorder(null);
+    } finally {
+      setPersistingSubstage(null);
+    }
+  }
 
-  // function cancelSubstageReorder() {
-  //   if (!pendingSubstageReorder) return;
-  //   const { stageId, prevList, stageIndex } = pendingSubstageReorder;
-  //   setStages(prev => prev.map((st, ii) => {
-  //     if (ii !== stageIndex) return st;
-  //     return { ...st, stages: prevList };
-  //   }));
-  //   setPendingSubstageReorder(null);
-  // }
+  function cancelSubstageReorder() {
+    if (!pendingSubstageReorder) return;
+    const { stageId, prevList, stageIndex } = pendingSubstageReorder;
+    setStages(prev => prev.map((st, ii) => {
+      if (ii !== stageIndex) return st;
+      return { ...st, stages: prevList };
+    }));
+    setPendingSubstageReorder(null);
+  }
 
   // ---------- Perform delete operations after confirmation ----------
   async function performDeleteConfirmed() {
@@ -920,7 +884,7 @@ export default function StagePage() {
               onClick={() => navigate("/home")}
               className="px-3 py-2 border rounded-md bg-white text-sm"
             >
-              â† Back
+              ◀ Back
             </button>
           </div>
 
@@ -996,14 +960,14 @@ export default function StagePage() {
             </div>
 
             <div className="mt-4 flex gap-2 flex-col sm:flex-row justify-center">
-              <button type="submit" className="px-10 py-2 bg-blue-600 text-white rounded w-full sm:w-auto">{creating ? "Creatingâ€¦" : "Create"}</button>
+              <button type="submit" className="px-10 py-2 bg-blue-600 text-white rounded w-full sm:w-auto">{creating ? "Creating…" : "Create"}</button>
               <button type="button" onClick={() => setShowCreatePanel(false)} className="px-10 py-2 border rounded w-full sm:w-auto">Cancel</button>
             </div>
           </form>
         )}
 
         {loading ? (
-          <div className="text-center py-8">Loading buildingsâ€¦</div>
+          <div className="text-center py-8">Loading buildings…</div>
         ) : error ? (
           <div className="text-red-600 py-6 whitespace-pre-wrap">{error}</div>
         ) : (
@@ -1063,13 +1027,13 @@ export default function StagePage() {
                         {!globalSelectMode && !expanded && (
                           <>
                             <button onClick={() => setEditStage({ stageId, name: s.name ?? "", desc: s.desc ?? "", deleted: !!s.deleted })} className="px-3 py-1 rounded bg-indigo-50 text-sm">Edit</button>
-                            <button onClick={() => toggleExpandStage(stageId)} className="px-3 py-1 rounded bg-gray-50 text-sm">â–¼</button>
+                            <button onClick={() => toggleExpandStage(stageId)} className="px-3 py-1 rounded bg-gray-50 text-sm">▼</button>
                           </>
                         )}
 
                         {!globalSelectMode && expanded && (
                           <>
-                            <button onClick={() => toggleExpandStage(stageId)} className="px-3 py-1 rounded bg-gray-50 text-sm">â–²</button>
+                            <button onClick={() => toggleExpandStage(stageId)} className="px-3 py-1 rounded bg-gray-50 text-sm">▲</button>
                           </>
                         )}
                       </div>
@@ -1202,7 +1166,7 @@ export default function StagePage() {
           {showDeletedStages && (
             <div className="mt-7 ">
               {deletedStagesLoading ? (
-                <div className="text-sm text-gray-600">Loading deleted buildingsâ€¦</div>
+                <div className="text-sm text-gray-600">Loading deleted buildings…</div>
               ) : deletedStagesError ? (
                 <div className="text-sm text-red-600">{deletedStagesError}</div>
               ) : deletedStagesCache.length === 0 ? (
@@ -1228,7 +1192,7 @@ export default function StagePage() {
                               className="px-2 py-1 rounded bg-gray-100 text-sm"
                               title={isExpanded ? "Collapse" : "Expand"}
                             >
-                              {isExpanded ? "â–²" : "â–¼"}
+                              {isExpanded ? "▲" : "▼"}
                             </button>
                           </div>
                         </div>
@@ -1266,7 +1230,7 @@ export default function StagePage() {
             <div className="bg-white rounded-lg shadow-lg p-4 w-full max-w-md sm:max-w-lg md:max-w-xl mx-3 sm:mx-0">
               <div className="flex items-center justify-between mb-3">
                 <h4 className="font-semibold">Edit Building</h4>
-                <button onClick={() => setEditStage(null)} className="text-gray-500">âœ•</button>
+                <button onClick={() => setEditStage(null)} className="text-gray-500">×</button>
               </div>
               <form onSubmit={async (e) => { e.preventDefault(); try {
                     if (!villageId) throw new Error("Missing villageId; cannot update building.");
@@ -1308,7 +1272,7 @@ export default function StagePage() {
             <div className="bg-white rounded-lg shadow-lg p-4 w-full max-w-md sm:max-w-lg md:max-w-xl mx-3 sm:mx-0">
               <div className="flex items-center justify-between mb-3">
                 <h4 className="font-semibold">Edit Sub-stage</h4>
-                <button onClick={() => setEditSubstage(null)} className="text-gray-500">âœ•</button>
+                <button onClick={() => setEditSubstage(null)} className="text-gray-500">×</button>
               </div>
               <form onSubmit={submitEditSubstage} className="space-y-3">
                 <div>
@@ -1339,7 +1303,7 @@ export default function StagePage() {
               {error && <div className="text-sm text-red-600 mb-3">{error}</div>}
               <div className="flex justify-end gap-2">
                 <button onClick={cancelSubstageReorder} disabled={!!persistingSubstage} className="px-4 py-2 border rounded">Cancel</button>
-                <button onClick={confirmSubstageReorder} disabled={!!persistingSubstage} className="px-4 py-2 bg-blue-600 text-white rounded">{persistingSubstage ? "Savingâ€¦" : "Confirm"}</button>
+                <button onClick={confirmSubstageReorder} disabled={!!persistingSubstage} className="px-4 py-2 bg-blue-600 text-white rounded">{persistingSubstage ? "Saving…" : "Confirm"}</button>
               </div>
             </div>
           </div>
@@ -1369,7 +1333,7 @@ export default function StagePage() {
 
               <div className="flex justify-end gap-2">
                 <button onClick={() => setDeleteConfirm(null)} disabled={performingDelete} className="px-4 py-2 border rounded">Cancel</button>
-                <button onClick={performDeleteConfirmed} disabled={performingDelete} className="px-4 py-2 bg-red-600 text-white rounded">{performingDelete ? "Deletingâ€¦" : "Delete"}</button>
+                <button onClick={performDeleteConfirmed} disabled={performingDelete} className="px-4 py-2 bg-red-600 text-white rounded">{performingDelete ? "Deleting…" : "Delete"}</button>
               </div>
             </div>
           </div>

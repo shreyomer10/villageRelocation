@@ -7,7 +7,7 @@ import { CheckCircle, Clock, FileText, ChevronDown, RefreshCw, ArrowLeft, Search
 
 function fmtDate(iso) {
   try {
-    if (!iso) return 'â€”';
+    if (!iso) return '—';
     const d = new Date(iso);
     return d.toLocaleString();
   } catch (e) {
@@ -31,7 +31,10 @@ function StatusBadge({ status }) {
 function ProgressBar({ pct }) {
   return (
     <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
-      <div className="h-full rounded-full bg-gradient-to-r from-sky-500 to-indigo-600" style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} />
+      <div
+        className="h-full rounded-full bg-gradient-to-r from-sky-500 to-indigo-600"
+        style={{ width: `${Math.max(0, Math.min(100, pct))}%` }}
+      />
     </div>
   );
 }
@@ -221,7 +224,7 @@ export default function PlotStagesPage() {
   if (loading) return (
     <div className="min-h-screen bg-[#fffaf0] font-sans">
       <MainNavbar />
-      <div className="max-w-4xl mx-auto px-4 py-20 text-center">Loading stagesâ€¦</div>
+      <div className="max-w-4xl mx-auto px-4 py-20 text-center">Loading stages…</div>
     </div>
   );
 
@@ -256,7 +259,7 @@ export default function PlotStagesPage() {
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-2xl font-semibold text-slate-800">{plot.name ?? plot.plotId}</h1>
-            <div className="text-sm text-slate-600">{typeName ? `Type: ${typeName}` : ''} <span className="mx-2">â€¢</span> Village: <span className="font-medium">{villageId}</span></div>
+            <div className="text-sm text-slate-600">{typeName ? `Type: ${typeName}` : ''} <span className="mx-2">•</span> Village: <span className="font-medium">{villageId}</span></div>
           </div>
 
           <div className="flex items-center gap-2">
@@ -295,7 +298,13 @@ export default function PlotStagesPage() {
                 const key = s.currentStage ?? s.stageId ?? `stage-${idx}`;
                 const expanded = expandedStage === key;
                 return (
-                  <motion.div ref={el => (stageRefs.current[key] = el)} tabIndex={-1} layout key={key} className={`bg-white rounded-lg shadow-sm p-4 border ${s.deleted ? 'opacity-60' : ''}`}>
+                  <motion.div
+                    ref={el => (stageRefs.current[key] = el)}
+                    tabIndex={-1}
+                    layout
+                    key={key}
+                    className={`bg-white rounded-lg shadow-sm p-4 border ${s.deleted ? 'opacity-60' : ''}`}
+                  >
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex-1">
                         <div className="flex items-center gap-3">
@@ -303,7 +312,7 @@ export default function PlotStagesPage() {
                           <div className="text-xs text-slate-400">{s.currentStage ?? ''}</div>
                           <div className="ml-2"><StatusBadge status={s.status ?? 0} /></div>
                         </div>
-                        <div className="mt-2 text-sm text-slate-600">Inserted by: {s.insertedBy ?? 'â€”'}</div>
+                        <div className="mt-2 text-sm text-slate-600">Inserted by: {s.insertedBy ?? '—'}</div>
                       </div>
 
                       <div className="flex items-center gap-2">
@@ -317,14 +326,14 @@ export default function PlotStagesPage() {
                       <div className="mt-3 pt-3 border-t text-sm text-slate-700 space-y-3">
                         <div>
                           <div className="font-medium">Notes</div>
-                          <div className="mt-1 whitespace-pre-wrap">{s.notes ?? 'â€”'}</div>
+                          <div className="mt-1 whitespace-pre-wrap">{s.notes ?? '—'}</div>
                         </div>
 
                         <div className="flex flex-col sm:flex-row gap-4">
                           <div className="flex-1">
                             <div className="font-medium">Verification</div>
-                            <div className="mt-1">ID: <span className="font-medium">{s.verificationId ?? 'â€”'}</span></div>
-                            <div>By: <span className="font-medium">{s.verifiedBy ?? 'â€”'}</span></div>
+                            <div className="mt-1">ID: <span className="font-medium">{s.verificationId ?? '—'}</span></div>
+                            <div>By: <span className="font-medium">{s.verifiedBy ?? '—'}</span></div>
                             <div>At: <span className="font-medium">{fmtDate(s.verifiedAt)}</span></div>
                           </div>
 
@@ -347,8 +356,8 @@ export default function PlotStagesPage() {
                             {Array.isArray(s.statusHistory) && s.statusHistory.length > 0 ? s.statusHistory.map((h, i) => (
                               <div key={i} className="flex items-start justify-between bg-slate-50 p-2 rounded">
                                 <div>
-                                  <div className="font-medium text-sm">{h.comments || 'â€”'}</div>
-                                  <div className="text-xs text-slate-500">By {h.verifier ?? 'â€”'} â€¢ {fmtDate(h.time)}</div>
+                                  <div className="font-medium text-sm">{h.comments || '—'}</div>
+                                  <div className="text-xs text-slate-500">By {h.verifier ?? '—'} • {fmtDate(h.time)}</div>
                                 </div>
                                 <div className="ml-2"><StatusBadge status={h.status} /></div>
                               </div>
@@ -387,7 +396,7 @@ export default function PlotStagesPage() {
                 </div>
               )}
 
-              <div className="mt-4 text-xs text-slate-500">Simple timeline â€” shows stage order and completion date. Click a stage card for more details.</div>
+              <div className="mt-4 text-xs text-slate-500">Simple timeline — shows stage order and completion date. Click a stage card for more details.</div>
             </motion.div>
           </aside>
         </div>

@@ -1,27 +1,20 @@
-﻿// src/components/StageProgress.jsx
-import React, { useEffect, useState } from "react";
+﻿import React, { useEffect, useState } from "react";
+import { API_BASE } from "../config/Api.js";
 
 /**
  * StageProgress (updated)
  *
- * - Fetches stages from backend (GET /stages) and uses them instead of local stageDefs.
+ * - Fetches stages from backend (GET ${API_BASE}/stages) and uses them instead of local stageDefs.
+ * - Accepts callbacks:
+ *    onStageClick(stageOrId) - called when a stage circle or sub-stage is clicked
+ *    onStageChange(stageNumber, subNumber) - called when a stage/sub-stage selection changes
  * - Preserves props/behavior:
  *    showSubStage (boolean) - show sub-stage popup on hover
  *    showOnlyCurrentSubStage (boolean) - when true show only the current sub-stage in the popup
  *    currentStage (number|string) - active stage id/sequence
  *    currentSubStage (number|string|null) - active sub-stage index (1-based)
  *
- * The component is resilient to multiple response shapes:
- *  - { result: { items: [...] } }
- *  - { result: [...] }
- *  - { items: [...] }
- *  - [...]
- *
- * Each stage object is normalized to have:
- *  - stage_id (prefer existing id fields or fallback to index+1)
- *  - name
- *  - description
- *  - subStages: array of { id, name, ... }
+ * The component is resilient to multiple response shapes and normalizes stage objects.
  */
 
 export default function StageProgress({
@@ -29,6 +22,8 @@ export default function StageProgress({
   showOnlyCurrentSubStage = false,
   currentStage = 0,
   currentSubStage = null,
+  onStageClick = () => {},
+  onStageChange = () => {},
 }) {
   const [stages, setStages] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -43,15 +38,15 @@ export default function StageProgress({
       setLoading(true);
       setLoadError(null);
       try {
-        const token = localStorage.getItem("token");
+        const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
         const headers = token ? { Authorization: `Bearer ${token}` } : {};
-        const res = await fetch("https://villagerelocation.onrender.com/stages", {
+        const res = await fetch(`${API_BASE}/stages`, {
           method: "GET",
           headers,
           signal: ctrl.signal,
         });
         if (!res.ok) {
-          const txt = await res.text();
+          const txt = await res.text().catch(() => "");
           throw new Error(`Failed to fetch stages: ${res.status} ${txt}`);
         }
         const payload = await res.json();
@@ -69,7 +64,6 @@ export default function StageProgress({
         const normalized = (items || []).map((s, idx) => {
           const rawId = s?.stage_id ?? s?.id ?? s?.stageId ?? s?.sequence_no ?? s?.sequence ?? null;
           const stageId = rawId != null && rawId !== "" ? rawId : idx + 1;
-          // find substage list from common names
           const subCandidates =
             s?.subStages ?? s?.stages ?? s?.sub_stages ?? s?.steps ?? s?.children ?? s?.sub ?? s?.substages ?? [];
           const subStages = Array.isArray(subCandidates) ? subCandidates : [];
@@ -81,7 +75,7 @@ export default function StageProgress({
             description: s?.description ?? s?.desc ?? s?.notes ?? "",
             subStages: subStages.map((ss, sidx) => ({
               id: ss?.id ?? ss?.sub_id ?? ss?.subStageId ?? sidx + 1,
-              name: ss?.name ?? ss?.title ?? String(ss) ?? `Sub ${sidx + 1}`,
+              name: ss?.name ?? ss?.title ?? (typeof ss === "string" ? ss : `Sub ${sidx + 1}`),
               ...ss,
             })),
             ...s,
@@ -120,8 +114,7 @@ export default function StageProgress({
   // For progress percent we derive a 1-based "position"
   const activePos = activeIndex >= 0 ? activeIndex + 1 : Number(currentStage) || 0;
 
-  const progressPercent =
-    activePos <= 1 ? 0 : ((Math.min(activePos, totalSteps) - 1) / (totalSteps - 1)) * 100;
+  const progressPercent = activePos <= 1 ? 0 : ((Math.min(activePos, totalSteps) - 1) / (totalSteps - 1)) * 100;
 
   // Determine status of a sub-stage (completed/current/upcoming) using stage position & currentSubStage
   const getSubStatus = (stagePosOneBased, subIndexZeroBased) => {
@@ -152,7 +145,7 @@ export default function StageProgress({
   return (
     <div>
       {/* loading / error */}
-      {loading && <div className="mb-2 text-sm text-gray-500">Loading stagesâ€¦</div>}
+      {loading && <div className="mb-2 text-sm text-gray-500">Loading stages…</div>}
       {loadError && <div className="mb-2 text-sm text-red-600">Error: {loadError}</div>}
 
       {/* progress bar */}
@@ -194,6 +187,11 @@ export default function StageProgress({
                       className="flex items-center justify-center w-10 h-10 cursor-default"
                       aria-current={isActive ? "step" : undefined}
                       aria-label={`${stage.name} ${isCompleted ? "completed" : isActive ? "current" : "upcoming"}`}
+                      onClick={() => {
+                        // notify parent of click
+                        try { onStageClick(stage); } catch {}
+                        try { onStageChange(stagePos, null); } catch {}
+                      }}
                     >
                       <div
                         className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-semibold border-2 transition-colors duration-200 shadow-sm
@@ -205,7 +203,7 @@ export default function StageProgress({
                               : "bg-white text-gray-400 border-gray-300"
                           }`}
                       >
-                        {isCompleted ? "âœ“" : String(stage.stage_id ?? stagePos)}
+                        {isCompleted ? "✓" : String(stage.stage_id ?? stagePos)}
                       </div>
                     </div>
 
@@ -233,13 +231,18 @@ export default function StageProgress({
                             return (
                               <li
                                 key={key}
-                                className={`text-xs p-1 rounded transition-colors duration-150 ${
+                                className={`text-xs p-1 rounded transition-colors duration-150 cursor-pointer ${
                                   status === "completed"
                                     ? "bg-blue-100 text-blue-700 font-medium"
                                     : status === "current"
                                     ? "bg-orange-300 text-orange-800 font-semibold"
                                     : "text-gray-600"
                                 }`}
+                                onClick={() => {
+                                  // notify parent about sub-stage click
+                                  try { onStageClick(sub); } catch {}
+                                  try { onStageChange(stagePos, (originalIdx >= 0 ? originalIdx : sidx) + 1); } catch {}
+                                }}
                               >
                                 {sub.name ?? String(sub)}
                               </li>

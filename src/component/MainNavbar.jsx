@@ -4,7 +4,7 @@ import { AuthContext } from "../context/AuthContext"; // adjust path to where yo
 
 export default function MainNavbar({
   logoUrl = "/images/logo.png",
-  brandDevanagari = "à¤®à¤¾à¤Ÿà¥€",
+  brandDevanagari = "माटी",
   brandLatin = "MAATI",
   durationSeconds = 900, // token lifetime (default 15 min)
   onRefreshToken,
@@ -70,6 +70,7 @@ export default function MainNavbar({
       calledRefreshRef.current = true;
       ctxForceRefresh?.().catch(() => {});
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ctxForceRefresh]);
 
   // Timer interval to update remaining time
@@ -79,8 +80,7 @@ export default function MainNavbar({
         const ms = ctxExpiresAtRef.current - Date.now();
         return Math.max(0, Math.ceil(ms / 1000));
       }
-      if (typeof ctxRemainingRef.current === "number")
-        return Math.max(0, Math.ceil(ctxRemainingRef.current));
+      if (typeof ctxRemainingRef.current === "number") return Math.max(0, Math.ceil(ctxRemainingRef.current));
       return null;
     };
 
@@ -94,8 +94,10 @@ export default function MainNavbar({
 
   useEffect(() => {
     if (remaining !== null && !progressFilled) {
-      setTimeout(() => setProgressFilled(true), 100);
+      const t = setTimeout(() => setProgressFilled(true), 100);
+      return () => clearTimeout(t);
     }
+    // nothing to clean up otherwise
   }, [remaining, progressFilled]);
 
   // Minute-based toast notifications
@@ -117,16 +119,30 @@ export default function MainNavbar({
     if (minutes !== lastShownMinuteRef.current) {
       lastShownMinuteRef.current = minutes;
       if (minutes <= 0) showToast("Session expired", true);
-      else if (minutes <= 3) showToast(`${minutes} min left â€” refresh token recommended`, true);
+      else if (minutes <= 3) showToast(`${minutes} min left — refresh token recommended`, true);
       else showToast(`${minutes} min left`, false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [remaining, ctxExpiresAt]);
 
   function showToast(text, important = false) {
-    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = null;
+    }
     setToast({ visible: true, text, important });
     toastTimerRef.current = setTimeout(() => setToast((t) => ({ ...t, visible: false })), 4500);
   }
+
+  // Clear toast timer on unmount
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
+        toastTimerRef.current = null;
+      }
+    };
+  }, []);
 
   // Auto-refresh trigger
   useEffect(() => {
@@ -135,8 +151,10 @@ export default function MainNavbar({
 
     if (cur !== null && cur <= refreshBeforeSeconds && cur > 0 && !autoRefreshTriggeredRef.current) {
       autoRefreshTriggeredRef.current = true;
-      onRefreshToken?.() ?? ctxForceRefresh?.();
+      // prefer the prop callback if provided
+      (onRefreshToken?.() ?? ctxForceRefresh?.())?.catch?.(() => {});
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ctxRemaining, ctxExpiresAt, remaining, refreshBeforeSeconds, onRefreshToken, ctxForceRefresh]);
 
   const formatTime = (sec) => {
@@ -227,18 +245,19 @@ export default function MainNavbar({
                 src={logoUrl}
                 alt="logo"
                 className="w-18 h-14 object-contain cursor-pointer"
+                role="button"
               />
-               <div className="text-left">
+              <div className="text-left">
                 <div className="text-[#4a3529] font-bold text-xl leading-none">{brandDevanagari}</div>
                 <div className="text-xs text-[#4a3529] tracking-wider">{brandLatin}</div>
               </div>
-              
+
             </div>
             {showWelcome && displayName && (
-                <div className="text-lg font-semibold text-right text-black leading-tight">
-                  Welcome {displayName} {displayRole ? `(${displayRole})` : ""}
-                </div>
-              )}
+              <div className="text-lg font-semibold text-right text-black leading-tight">
+                Welcome {displayName} {displayRole ? `(${displayRole})` : ""}
+              </div>
+            )}
             {centerContent && (
               <div
                 className="absolute left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2 z-10 pointer-events-auto"
@@ -248,12 +267,14 @@ export default function MainNavbar({
               </div>
             )}
             <div className="flex items-center justify-end gap-4">
-             
+
               {rightContent && <div className="mr-2">{rightContent}</div>}
               <button
                 onClick={() => setMenuOpen(!menuOpen)}
                 className="focus:outline-none p-1 rounded-full hover:bg-white/30 transition"
                 title="Account Menu"
+                aria-haspopup="dialog"
+                aria-expanded={menuOpen}
               >
                 <div className="w-8 h-8 rounded-full bg-white/90 border border-[#4a3529] flex items-center justify-center">
                   <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-[#4a3529]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -280,7 +301,7 @@ export default function MainNavbar({
                 <div
                   className={`text-scroll whitespace-nowrap font-semibold text-white px-3 ${progressFilled ? "animate-scroll" : "opacity-0"}`}
                 >
-                  Login expires in: {formatTime(displayRemaining)} â€¢ Session Status: Active â€¢
+                  Login expires in: {formatTime(displayRemaining)} • Session Status: Active •
                 </div>
               </div>
             </div>
@@ -303,6 +324,8 @@ export default function MainNavbar({
             className={`max-w-xs shadow-lg rounded-2xl p-3 border ${
               toast.important ? "bg-red-50 border-red-200" : "bg-white border-gray-100"
             }`}
+            role="status"
+            aria-live={toast.important ? "assertive" : "polite"}
           >
             <div className="flex items-start gap-3">
               <div className="text-sm leading-tight break-words">{toast.text}</div>
@@ -349,6 +372,7 @@ export default function MainNavbar({
           <button
             onClick={() => setMenuOpen(false)}
             className="p-2 rounded hover:bg-gray-100 focus:outline-none"
+            aria-label="Close menu"
           >
             <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-gray-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
               <path d="M6 18L18 6M6 6l12 12" />

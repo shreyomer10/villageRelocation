@@ -1,11 +1,12 @@
-﻿// File: src/pages/Dashboard.jsx
-import React, { useEffect, useState, useContext, useRef } from "react";
+﻿import React, { useEffect, useState, useContext, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { Search, Sliders, Calendar, CheckCircle, Map, LayoutGrid } from "lucide-react";
 
 import MainNavbar from "../component/MainNavbar";
 import VillageModal from "../component/VillageModal";
 
+// Use centralized API base instead of in-file hardcoded URLs / removing Api.js / mojibike
+import { API_BASE } from "../config/Api";
 
 import { stageDefs } from "../config/stages";
 import { AuthContext } from "../context/AuthContext";
@@ -42,7 +43,7 @@ function toNumberOrNull(v) {
   return null;
 }
 
-// (Optional) QuickSummaryTable left intact but no longer shown in map view â€” kept for later use.
+// (Optional) QuickSummaryTable left intact but no longer shown in map view — kept for later use.
 function QuickSummaryTable({ villages = [], maxRows = 10, isMapView = false, collapsed = false, onToggleCollapsed }) {
   const TOTAL_SUBSTAGES = 29;
   const TOTAL_STAGES = 6;
@@ -382,7 +383,7 @@ export default function Dashboard() {
       setListError(null);
 
       try {
-        const res = await fetch("https://villagerelocation.onrender.com/villages");
+        const res = await fetch(`${API_BASE}/villages`);
         if (!res.ok) {
           throw new Error(`Error fetching villages: ${res.status}`);
         }
@@ -437,7 +438,7 @@ export default function Dashboard() {
     setVillages((prevList) => prevList.map((v) => (v.villageId === id ? { ...v, ...updatedFields, date: new Date().toLocaleString() } : v)));
 
     try {
-      const res = await fetch(`https://villagerelocation.onrender.com/villages/${encodeURIComponent(id)}`, {
+      const res = await fetch(`${API_BASE}/villages/${encodeURIComponent(id)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updatedFields),
@@ -751,7 +752,7 @@ export default function Dashboard() {
 
   const renderContent = () => {
     if (listLoading) {
-      return <div className="text-center py-12">Loading villagesâ€¦</div>;
+      return <div className="text-center py-12">Loading villages…</div>;
     }
     if (listError) {
       return <div className="text-center py-6 text-red-600">{listError}</div>;

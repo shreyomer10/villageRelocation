@@ -6,8 +6,7 @@ import FamilyPieChart from "../component/FamilyPieChart";
 import MainNavbar from "../component/MainNavbar";
 import { stageDefs } from "../config/stages";
 import { AuthContext } from "../context/AuthContext";
-import MeetingsModal from "../component/MeetingsModal";
-
+import { API_BASE } from "../config/Api.js";
 
 export default function VillageDashboard() {
   const navigate = useNavigate();
@@ -69,8 +68,7 @@ export default function VillageDashboard() {
   const [docViewerName, setDocViewerName] = useState(null);
   const [showDocViewer, setShowDocViewer] = useState(false);
 
-  const storedUserRaw =
-    typeof window !== "undefined" ? localStorage.getItem("user") : null;
+  const storedUserRaw = typeof window !== "undefined" ? localStorage.getItem("user") : null;
 
   useEffect(() => {
     if (storedUserRaw) {
@@ -177,13 +175,11 @@ export default function VillageDashboard() {
           return;
         }
 
-        const token = localStorage.getItem("token");
+        const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
         const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
         const res = await fetch(
-          `https://villagerelocation.onrender.com/villages/${encodeURIComponent(
-            villageId
-          )}/family-count`,
+          `${API_BASE}/villages/${encodeURIComponent(villageId)}/family-count`,
           { method: "GET", headers, signal: controllerCounts.signal }
         );
         if (!res.ok) throw new Error(`Failed to fetch family counts`);
@@ -233,11 +229,11 @@ export default function VillageDashboard() {
           return;
         }
 
-        const token = localStorage.getItem("token");
+        const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
         const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
         const res = await fetch(
-          `https://villagerelocation.onrender.com/villages/${encodeURIComponent(villageId)}`,
+          `${API_BASE}/villages/${encodeURIComponent(villageId)}`,
           { method: "GET", headers, signal: controllerVillage.signal }
         );
         if (!res.ok) throw new Error("Failed to fetch village");
@@ -387,9 +383,9 @@ export default function VillageDashboard() {
           const formattedTime = t ? new Date(t).toLocaleString() : "Unknown time";
           const who = l.updateBy ?? l.update_by ?? l.by ?? "Unknown";
           const comments = l.comments ?? l.comment ?? "No comments";
-          return `${comments} â€” ${who} â€” ${formattedTime}`;
+          return `${comments} — ${who} — ${formattedTime}`;
         })
-        .join("  â€¢  ")
+        .join("  •  ")
     : "No logs available";
   const durationSeconds = Math.max(12, Math.round(logsText.length / 10));
 
@@ -408,7 +404,7 @@ export default function VillageDashboard() {
               <span>{value}</span>
             )
           ) : (
-            <span className="text-gray-400">â€”</span>
+            <span className="text-gray-400">—</span>
           )}
         </div>
       </div>
@@ -439,7 +435,7 @@ export default function VillageDashboard() {
         try {
           const lower = String(d).toLowerCase();
           // if any token appears in the URL or filename, consider it a match
-          if (tokens.some((t) => t && lower.includes(t.replace(/\s+/g, "-")) || lower.includes(t))) {
+          if (tokens.some((t) => (t && (lower.includes(t.replace(/\s+/g, "-") ) || lower.includes(t))))) {
             return d;
           }
         } catch {}
@@ -474,7 +470,7 @@ export default function VillageDashboard() {
       <div className="max-w-7xl mx-auto px-6 mt-6">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h1 className="text-2xl font-bold text-gray-800">{district ?? "â€”"}</h1>
+            <h1 className="text-2xl font-bold text-gray-800">{district ?? "—"}</h1>
           </div>
 
           <div className="flex items-center gap-3">
@@ -482,7 +478,7 @@ export default function VillageDashboard() {
               onClick={() => navigate("/dashboard")}
               className="inline-flex items-center gap-2 bg-gray-100 hover:bg-gray-200 px-3 py-2 rounded-lg shadow-sm text-sm"
             >
-              â† Back
+              ← Back
             </button>
             <button
               onClick={() => navigate("/family")}
@@ -505,51 +501,49 @@ export default function VillageDashboard() {
               Docs
             </button>
             <button
-  onClick={() => navigate(`/plots`)}
-  className="bg-yellow-50 hover:bg-yellow-100 px-4 py-2 rounded-2xl shadow text-sm font-medium"
-  title="Open meetings for this village"
->
-  Plots
-</button>
+              onClick={() => navigate(`/plots`)}
+              className="bg-yellow-50 hover:bg-yellow-100 px-4 py-2 rounded-2xl shadow text-sm font-medium"
+              title="Open plots for this village"
+            >
+              Plots
+            </button>
 
             <button
-  onClick={() => navigate(`/meetings`)}
-  className="bg-yellow-50 hover:bg-yellow-100 px-4 py-2 rounded-2xl shadow text-sm font-medium"
-  title="Open meetings for this village"
->
-  Meetings
-</button>
-<button
-  onClick={() => navigate(`/buildings`)}
-  className="bg-yellow-50 hover:bg-yellow-100 px-4 py-2 rounded-2xl shadow text-sm font-medium"
-  title="Open meetings for this village"
->
-  Buildings
-</button>
+              onClick={() => navigate(`/meetings`)}
+              className="bg-yellow-50 hover:bg-yellow-100 px-4 py-2 rounded-2xl shadow text-sm font-medium"
+              title="Open meetings for this village"
+            >
+              Meetings
+            </button>
+            <button
+              onClick={() => navigate(`/buildings`)}
+              className="bg-yellow-50 hover:bg-yellow-100 px-4 py-2 rounded-2xl shadow text-sm font-medium"
+              title="Open buildings for this village"
+            >
+              Buildings
+            </button>
 
           </div>
         </div>
-        
 
         {/* TOP ROW: Left pie + Right stacked cards */}
         <div className="grid grid-cols-12 gap-6">
           {/* Pie Chart Card */}
           <div className="col-span-12 md:col-span-4">
             <div className="bg-gradient-to-br from-white to-amber-50 rounded-2xl p-6 shadow-lg border border-gray-100 h-full flex flex-col  gap-1">
-              
-                <FamilyPieChart
-                  total={total}
-                  opt1={opt1}
-                  opt2={opt2}
-                  loading={loadingCounts}
-                  error={error}
-                  villageId={villageIdState || effectiveVillageId}
-                />
+              <FamilyPieChart
+                total={total}
+                opt1={opt1}
+                opt2={opt2}
+                loading={loadingCounts}
+                error={error}
+                villageId={villageIdState || effectiveVillageId}
+              />
               <a href={familyMasterList} target="_blank" rel="noreferrer" className="text-blue-600 underline text-center">
-                            Family Master List
-                          </a> 
+                Family Master List
+              </a>
             </div>
-            
+
           </div>
 
           {/* Right Column: two stacked cards */}
@@ -572,29 +566,24 @@ export default function VillageDashboard() {
             <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-100">
               <div className="flex items-center justify-between mb-4">
                 <div className="gap-4">
-                <h4 className="text-sm font-semibold text-gray-700">Location of Relocation   : </h4>
-                <p className="text-sm text-gray-600 mt-2">{locationText || "Location not available"}</p>
+                  <h4 className="text-sm font-semibold text-gray-700">Location of Relocation:</h4>
+                  <p className="text-sm text-gray-600 mt-2">{locationText || "Location not available"}</p>
                 </div>
-                
-                  <div className="">
-                    <h4 className="text-sm font-semibold text-gray-700">Site</h4>
-                    <div className="text-sm text-gray-600 mt-2">{siteOfRelocation ?? "â€”"}</div>
-                  </div>
 
-                  {/* DOC button next to location */}
-                  
-                  
-                
+                <div>
+                  <h4 className="text-sm font-semibold text-gray-700">Site</h4>
+                  <div className="text-sm text-gray-600 mt-2">{siteOfRelocation ?? "—"}</div>
+                </div>
+
+                {/* DOC button next to location */}
+
               </div>
               <div className=" text-center">
-                
                 <a href={kme} className="text-blue-600 underline text-center">KME_link</a>
-                  </div>
+              </div>
             </div>
           </div>
         </div>
-
-        
 
         {/* FULL-WIDTH DETAILS BOX */}
         <div className="mt-6 gap-10">
@@ -658,12 +647,12 @@ export default function VillageDashboard() {
               <div className="lg:w-2/3 w-full">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="text-lg font-semibold text-gray-700">Village details</h3>
-                  <div className="text-xs text-gray-400">Updated: {lastUpdated ? new Date(lastUpdated).toLocaleString() : "â€”"}</div>
+                  <div className="text-xs text-gray-400">Updated: {lastUpdated ? new Date(lastUpdated).toLocaleString() : "—"}</div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm text-gray-700">
                   <DetailRow label="Name" value={villageName} />
-                  <DetailRow label="Village ID" value={villageIdState ?? effectiveVillageId ?? "â€”"} />
+                  <DetailRow label="Village ID" value={villageIdState ?? effectiveVillageId ?? "—"} />
                   <DetailRow label="District" value={district} />
                   <DetailRow label="Tehsil" value={tehsil} />
                   <DetailRow label="Gram Panchayat" value={gramPanchayat} />
@@ -789,7 +778,7 @@ export default function VillageDashboard() {
                           <div className="font-medium">{s?.name ?? s?.title ?? `Stage ${sid}`}</div>
                           {s?.description && <div className="text-xs text-gray-500">{s.description}</div>}
                         </div>
-                        <div className="text-sm text-gray-600">{isExpanded ? "âˆ’" : "+"}</div>
+                        <div className="text-sm text-gray-600">{isExpanded ? "−" : "+"}</div>
                       </button>
 
                       {isExpanded && (

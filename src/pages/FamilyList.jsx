@@ -1,5 +1,5 @@
 ﻿// src/pages/FamilyList.jsx
-import React, { useEffect, useState, useRef, useCallback } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { SlidersHorizontal, UploadCloud, X, Check } from "lucide-react";
 import MainNavbar from "../component/MainNavbar";
@@ -17,9 +17,7 @@ function FamilyCard({ family, onView }) {
         onError={(e) => (e.currentTarget.src = "/images/default-avatar.png")}
         className="w-24 h-24 mx-auto rounded-full object-cover border mb-3"
       />
-      <h3 className="font-semibold text-gray-800">
-        {family.mukhiyaName || "Unknown"}
-      </h3>
+      <h3 className="font-semibold text-gray-800">{family.mukhiyaName || "Unknown"}</h3>
       <button
         onClick={() => onView(family.familyId ?? family.id)}
         className="mt-3 px-4 py-1 text-sm bg-indigo-500 hover:bg-indigo-600 text-white rounded-md shadow"
@@ -216,7 +214,7 @@ function BulkUploadModal({ isOpen, onClose, onUploaded }) {
                   </div>
                 </div>
               ) : (
-                <div className="text-sm text-gray-500">No preview available â€” select a CSV or JSON file.</div>
+                <div className="text-sm text-gray-500">No preview available — select a CSV or JSON file.</div>
               )}
             </div>
           </div>
@@ -246,12 +244,12 @@ function BulkUploadModal({ isOpen, onClose, onUploaded }) {
               disabled={uploading || parsedRows.length === 0}
               className={`px-4 py-2 rounded-lg text-white ${uploading ? "bg-gray-400" : "bg-green-600 hover:bg-green-700"}`}
             >
-              {uploading ? "Uploadingâ€¦" : "Upload to server"}
+              {uploading ? "Uploading…" : "Upload to server"}
             </button>
           </div>
 
           <div className="text-xs text-gray-500">
-            Tip: The backend expects objects matching the Family schema. If your CSV doesn't include nested fields (members, photos), prefer JSON. If you want, I can add a downloadable template file for CSV/JSON format â€” say the word and I'll include it in the modal.
+            Tip: The backend expects objects matching the Family schema. If your CSV doesn't include nested fields (members, photos), prefer JSON. If you want, I can add a downloadable template file for CSV/JSON format — say the word and I'll include it in the modal.
           </div>
         </div>
       </div>
@@ -463,7 +461,7 @@ export default function FamilyList() {
               </h1>
             </div>
             <div className="text-right">
-              <div className="text-[#4a3529] font-bold text-2xl leading-none">à¤®à¤¾à¤Ÿà¥€</div>
+              <div className="text-[#4a3529] font-bold text-2xl leading-none">माटी</div>
               <div className="text-sm text-[#4a3529] tracking-wider">MAATI</div>
             </div>
           </div>
@@ -471,9 +469,7 @@ export default function FamilyList() {
 
         <main className="max-w-7xl mx-auto px-6 py-6">
           <div className="bg-white rounded-xl p-6 shadow text-center">
-            <p className="text-sm text-gray-700">
-              No village selected. Please select a village from the dashboard first.
-            </p>
+            <p className="text-sm text-gray-700">No village selected. Please select a village from the dashboard first.</p>
           </div>
         </main>
       </div>
@@ -504,7 +500,7 @@ export default function FamilyList() {
               onClick={() => navigate("/home")}
               className="inline-flex items-center gap-2 bg-gray-100 hover:bg-gray-200 px-3 py-2 rounded-lg shadow-sm text-sm"
             >
-              â† Back
+              ← Back
             </button>
 
             <div className="relative">
@@ -613,7 +609,7 @@ export default function FamilyList() {
         {/* Errors / Loading */}
         {listError && <div className="text-sm text-red-600 mb-4">{listError}</div>}
         {loadingList ? (
-          <div className="py-8 text-center text-sm text-gray-600">Loading familiesâ€¦</div>
+          <div className="py-8 text-center text-sm text-gray-600">Loading families…</div>
         ) : (
           <>
             {filteredFamilies.length === 0 ? (
