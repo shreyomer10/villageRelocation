@@ -18,7 +18,7 @@ import {
   XCircle
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { API_BASE } from "../config/Api";
+import { API_BASE } from "../config/Api.js";
 
 // FamilyDetailPage (updated updates UI, removed Edit/Export)
 export default function FamilyDetailPage() {

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import MainNavbar from '../component/MainNavbar';
-import { API_BASE } from '../config/Api';
+import { API_BASE } from '../config/Api.js';
 import { motion } from 'framer-motion';
 import { CheckCircle, Clock, FileText, ChevronDown, RefreshCw, ArrowLeft, Search } from 'lucide-react';
 

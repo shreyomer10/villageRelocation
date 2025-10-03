@@ -7,7 +7,7 @@ import {
   Search, UploadCloud, PlusCircle, Trash2, Edit2,
   User, AtSign, Smartphone, X, ChevronDown
 } from "lucide-react";
-import { API_BASE } from "../config/Api";
+import { API_BASE } from "../config/Api.js";
 
 /* ---------- role helpers ---------- */
 const ROLE_DEFS = [

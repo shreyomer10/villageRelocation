@@ -3,7 +3,7 @@ import React, { useEffect, useState, useRef, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { SlidersHorizontal, UploadCloud, X, Check } from "lucide-react";
 import MainNavbar from "../component/MainNavbar";
-import { API_BASE } from "../config/Api";
+import { API_BASE } from "../config/Api.js";
 
 /* -------------------------
    FamilyCard (visual)

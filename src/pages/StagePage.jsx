@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import MainNavbar from "../component/MainNavbar";
-import { API_BASE } from "../config/Api";
+import { API_BASE } from "../config/Api.js";
 
 /**
  * StagePage (updated)
