@@ -12,7 +12,10 @@ import StagePage from "./pages/StagePage.jsx";
 import EmployeesPage from "./pages/EmployeePages.jsx";
 import MeetingsPage from "./pages/MeetingPages.jsx";
 import OptionPage from "./pages/OptionPage.jsx";
+import PlotPage from "./pages/PlotPage.jsx";
 import Building from "./pages/Buildings.jsx";
+import PlotDetails from "./pages/PlotDetails.jsx";
+import FamilyDetails from "./pages/FamilyDetail.jsx";
 
 export default function App() {
   return (
@@ -37,6 +40,20 @@ export default function App() {
           </PrivateRoute>
         }
       />
+      <Route
+        path="/plots"
+        element={
+          <PrivateRoute>
+            <PlotPage />
+          </PrivateRoute>
+        }
+      />
+
+      // in your router
+<Route path="/families/:familyId" element={<PrivateRoute><FamilyDetails /></PrivateRoute>} />
+
+
+      <Route path="/plots/:villageId/:plotId" element={<PrivateRoute><PlotDetails /></PrivateRoute>} />
 
       <Route
         path="/stages"

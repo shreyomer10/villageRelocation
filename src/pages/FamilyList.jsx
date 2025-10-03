@@ -1,14 +1,16 @@
 // src/pages/FamilyList.jsx
 import React, { useEffect, useState, useRef, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { SlidersHorizontal } from "lucide-react";
-import FamilyModal from "../component/FamilyModal";
+import { SlidersHorizontal, UploadCloud, X, Check } from "lucide-react";
 import MainNavbar from "../component/MainNavbar";
+import { API_BASE } from "../config/Api";
 
-// Inline FamilyCard component
+/* -------------------------
+   FamilyCard (visual)
+   ------------------------- */
 function FamilyCard({ family, onView }) {
   return (
-    <div className="bg-[#f0f4ff] rounded-xl p-4 shadow-md text-center hover:shadow-lg transition">
+    <div className="bg-[#f0f4ff] rounded-2xl p-4 shadow-md text-center hover:shadow-lg transition">
       <img
         src={family.mukhiyaPhoto || "/images/default-avatar.png"}
         alt={family.mukhiyaName || "Mukhiya"}
@@ -28,6 +30,238 @@ function FamilyCard({ family, onView }) {
   );
 }
 
+/* -------------------------
+   Helper: CSV parser (handles quotes)
+   - returns array of objects using header row
+   ------------------------- */
+function parseCSV(text) {
+  // split lines, trim blank lines
+  const lines = text.split(/\r\n|\n/).filter((l) => l.trim() !== "");
+  if (lines.length === 0) return { header: [], rows: [] };
+
+  // regex to split on commas not inside quotes
+  const splitter = /,(?=(?:[^"]*"[^"]*")*[^"]*$)/;
+
+  const header = lines[0]
+    .split(splitter)
+    .map((h) => h.trim().replace(/^"|"$/g, ""));
+  const rows = lines.slice(1).map((ln) => {
+    const cols = ln.split(splitter).map((c) => c.trim().replace(/^"|"$/g, ""));
+    const obj = {};
+    header.forEach((h, i) => {
+      obj[h] = cols[i] === undefined ? "" : cols[i];
+    });
+    return obj;
+  });
+  return { header, rows };
+}
+
+/* -------------------------
+   BulkUploadModal
+   - accepts CSV or JSON
+   - shows preview and POSTs to /families/insertbulk
+   ------------------------- */
+function BulkUploadModal({ isOpen, onClose, onUploaded }) {
+  const [rawContent, setRawContent] = useState(null);
+  const [fileName, setFileName] = useState("");
+  const [parsedRows, setParsedRows] = useState([]);
+  const [previewHeader, setPreviewHeader] = useState([]);
+  const [uploading, setUploading] = useState(false);
+  const [responseSummary, setResponseSummary] = useState(null);
+  const fileRef = useRef(null);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setRawContent(null);
+      setFileName("");
+      setParsedRows([]);
+      setPreviewHeader([]);
+      setResponseSummary(null);
+      setUploading(false);
+    }
+  }, [isOpen]);
+
+  function handleFileSelect(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = String(ev.target.result);
+      setRawContent(text);
+
+      // Determine JSON or CSV by extension or beginning char
+      if (/\.json$/i.test(file.name) || text.trim().startsWith("{") || text.trim().startsWith("[")) {
+        try {
+          const parsed = JSON.parse(text);
+          // if JSON is an object with families property, try to extract
+          const arr = Array.isArray(parsed)
+            ? parsed
+            : parsed && Array.isArray(parsed.families)
+            ? parsed.families
+            : [];
+          setParsedRows(arr);
+          setPreviewHeader(arr.length ? Object.keys(arr[0]) : []);
+        } catch (err) {
+          setParsedRows([]);
+          setPreviewHeader([]);
+        }
+      } else {
+        // CSV
+        const { header, rows } = parseCSV(text);
+        setPreviewHeader(header);
+        setParsedRows(rows);
+      }
+    };
+    reader.readAsText(file, "utf-8");
+  }
+
+  async function doUpload() {
+    if (!parsedRows || !parsedRows.length) {
+      alert("No families parsed. Please select a valid CSV or JSON file using the template.");
+      return;
+    }
+    setUploading(true);
+    setResponseSummary(null);
+    try {
+      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+      const headers = token
+        ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }
+        : { "Content-Type": "application/json" };
+
+      const res = await fetch(`${API_BASE}/families/insertbulk`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ families: parsedRows }),
+      });
+
+      let data = {};
+      try {
+        data = await res.json();
+      } catch (e) {
+        data = { message: "No JSON response" };
+      }
+
+      if (!res.ok) {
+        setResponseSummary({ error: true, message: data.message ?? `Status ${res.status}`, data });
+      } else {
+        setResponseSummary({ error: false, message: data.message ?? "Upload completed", data: data.result ?? data });
+        // allow parent to refresh list if needed
+        if (onUploaded) onUploaded();
+      }
+    } catch (err) {
+      setResponseSummary({ error: true, message: err.message });
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  if (!isOpen) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-3xl bg-white rounded-2xl shadow-lg overflow-auto max-h-[90vh]">
+        <div className="flex items-center justify-between px-5 py-3 border-b">
+          <div className="flex items-center gap-3">
+            <UploadCloud size={18} /> <div className="font-semibold">Bulk upload families</div>
+            {fileName && <div className="text-sm text-gray-500 ml-2">({fileName})</div>}
+          </div>
+          <div>
+            <button onClick={onClose} className="p-2 rounded hover:bg-gray-100">
+              <X size={18} />
+            </button>
+          </div>
+        </div>
+
+        <div className="p-5 space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="border rounded-lg p-3">
+              <label className="block text-sm font-medium mb-2">Choose CSV or JSON file</label>
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".csv,application/json,text/csv"
+                onChange={handleFileSelect}
+                className="w-full"
+              />
+              <div className="text-xs text-gray-500 mt-2">
+                The CSV must have a header row. Columns will map to object keys. For complex fields (members) prefer JSON input.
+              </div>
+            </div>
+
+            <div className="border rounded-lg p-3">
+              <label className="block text-sm font-medium mb-2">Preview</label>
+              {parsedRows.length ? (
+                <div className="text-sm text-gray-700">
+                  <div className="mb-2">Parsed rows: <span className="font-medium">{parsedRows.length}</span></div>
+                  <div className="text-xs text-gray-500 mb-2">Showing first 5 rows</div>
+                  <div className="overflow-auto max-h-40 border rounded">
+                    <table className="min-w-full text-sm">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          {previewHeader.map((h) => (
+                            <th key={h} className="px-2 py-1 text-left font-medium">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {parsedRows.slice(0, 5).map((r, i) => (
+                          <tr key={i} className="even:bg-white odd:bg-gray-50">
+                            {previewHeader.map((h) => (
+                              <td key={h} className="px-2 py-1 align-top">{String(r[h] ?? "")}</td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-sm text-gray-500">No preview available — select a CSV or JSON file.</div>
+              )}
+            </div>
+          </div>
+
+          {responseSummary && (
+            <div className={`p-3 rounded ${responseSummary.error ? "bg-red-50 border border-red-200" : "bg-green-50 border border-green-200"}`}>
+              <div className="font-medium">{responseSummary.message}</div>
+              <pre className="mt-2 max-h-40 overflow-auto text-xs">{JSON.stringify(responseSummary.data ?? responseSummary, null, 2)}</pre>
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-3">
+            <button
+              onClick={() => {
+                setRawContent(null);
+                setParsedRows([]);
+                setPreviewHeader([]);
+                setFileName("");
+                if (fileRef.current) fileRef.current.value = "";
+              }}
+              className="px-3 py-2 rounded-lg border hover:bg-gray-50"
+            >
+              Clear
+            </button>
+            <button
+              onClick={doUpload}
+              disabled={uploading || parsedRows.length === 0}
+              className={`px-4 py-2 rounded-lg text-white ${uploading ? "bg-gray-400" : "bg-green-600 hover:bg-green-700"}`}
+            >
+              {uploading ? "Uploading…" : "Upload to server"}
+            </button>
+          </div>
+
+          <div className="text-xs text-gray-500">
+            Tip: The backend expects objects matching the Family schema. If your CSV doesn't include nested fields (members, photos), prefer JSON. If you want, I can add a downloadable template file for CSV/JSON format — say the word and I'll include it in the modal.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* -------------------------
+   Main FamilyList page
+   ------------------------- */
 export default function FamilyList() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -39,7 +273,6 @@ export default function FamilyList() {
   );
   const effectiveVillageId = queryVillageId ?? storedVillageId;
 
-  // Re-fetch key for refresh button
   const [reloadKey, setReloadKey] = useState(0);
 
   // filter option state: "All" | "Option 1" | "Option 2"
@@ -62,16 +295,16 @@ export default function FamilyList() {
   // search
   const [search, setSearch] = useState("");
 
-  // selected family id for modal (accept 0 as valid)
-  const [selectedFamilyId, setSelectedFamilyId] = useState(null);
-
-  // filter dropdown state and refs for accessibility
+  // filter dropdown refs
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
   const filterBtnRef = useRef(null);
   const optionAllRef = useRef(null);
   const option1Ref = useRef(null);
   const option2Ref = useRef(null);
   const menuRef = useRef(null);
+
+  // bulk modal
+  const [bulkModalOpen, setBulkModalOpen] = useState(false);
 
   // listen for localStorage villageId changes (other tabs)
   useEffect(() => {
@@ -90,7 +323,6 @@ export default function FamilyList() {
     const open = (searchParams.get("open") ?? "").toLowerCase();
     if (open === "option1" || open === "1" || open === "option-1") {
       setFilterOption("Option 1");
-      // close the menu and focus the corresponding control
       setFilterMenuOpen(false);
       setTimeout(() => option1Ref.current?.focus(), 0);
     } else if (open === "option2" || open === "2" || open === "option-2") {
@@ -102,12 +334,9 @@ export default function FamilyList() {
       setFilterMenuOpen(false);
       setTimeout(() => optionAllRef.current?.focus(), 0);
     } else if (open === "filter") {
-      // open the filter menu (user navigation asked to open the filter pane)
       setFilterMenuOpen(true);
-      // focus first item in the menu on next tick
       setTimeout(() => optionAllRef.current?.focus(), 0);
     } else {
-      // default to All
       setFilterOption("All");
       setFilterMenuOpen(false);
     }
@@ -133,22 +362,18 @@ export default function FamilyList() {
 
       try {
         if (!effectiveVillageId) {
-          throw new Error(
-            "No village selected. Please select a village from the dashboard."
-          );
+          throw new Error("No village selected. Please select a village from the dashboard.");
         }
 
-        const token =
-          typeof window !== "undefined" ? localStorage.getItem("token") : null;
+        const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
         const headers = token
           ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }
           : { "Content-Type": "application/json" };
 
         const optParam = optionQueryParam(filterOption);
         const url =
-          `https://villagerelocation.onrender.com/villages/${encodeURIComponent(
-            effectiveVillageId
-          )}/beneficiaries` + (optParam ? `?option=${optParam}` : "");
+          `${API_BASE}/villages/${encodeURIComponent(effectiveVillageId)}/beneficiaries` +
+          (optParam ? `?optionId=${encodeURIComponent(optParam)}` : "");
 
         const res = await fetch(url, {
           method: "GET",
@@ -175,8 +400,7 @@ export default function FamilyList() {
         setBeneficiaries(list);
       } catch (err) {
         if (!mounted) return;
-        if (err.name !== "AbortError")
-          setListError(err.message || "Unable to load beneficiaries.");
+        if (err.name !== "AbortError") setListError(err.message || "Unable to load beneficiaries.");
       } finally {
         if (mounted) setLoadingList(false);
       }
@@ -209,43 +433,20 @@ export default function FamilyList() {
     return name.toLowerCase().includes(search.toLowerCase());
   });
 
-  // view family (open modal)
+  // navigate to family details page when card pressed
   const handleViewFamily = (familyId) => {
     if (familyId === undefined || familyId === null) {
-      console.error("No familyId provided to modal");
+      console.error("No familyId provided to navigation");
       return;
     }
-    setSelectedFamilyId(familyId);
+    navigate(`/families/${encodeURIComponent(familyId)}`);
   };
 
-  const closeModal = () => {
-    setSelectedFamilyId(null);
+  const onBulkUploaded = () => {
+    // refresh list after bulk upload
+    setReloadKey((k) => k + 1);
+    setBulkModalOpen(false);
   };
-
-  // update URL (open query param) when user clicks a filter option
-  const onSelectFilterOption = useCallback(
-    (opt) => {
-      setFilterOption(opt);
-      setFilterMenuOpen(false);
-      // keep villageId in URL if present
-      const qp = new URLSearchParams(Object.fromEntries(searchParams.entries()));
-      qp.set("open", opt === "All" ? "all" : opt === "Option 1" ? "option1" : "option2");
-      if (effectiveVillageId) qp.set("villageId", effectiveVillageId);
-      setSearchParams(qp, { replace: true });
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [effectiveVillageId, searchParams]
-  );
-
-  // special handler to open-only the filter panel (ie. open=filter)
-  const openFilterPanel = useCallback(() => {
-    const qp = new URLSearchParams(Object.fromEntries(searchParams.entries()));
-    qp.set("open", "filter");
-    if (effectiveVillageId) qp.set("villageId", effectiveVillageId);
-    setSearchParams(qp, { replace: true });
-    setFilterMenuOpen(true);
-    setTimeout(() => optionAllRef.current?.focus(), 0);
-  }, [effectiveVillageId, searchParams, setSearchParams]);
 
   const refresh = () => setReloadKey((k) => k + 1);
 
@@ -288,7 +489,7 @@ export default function FamilyList() {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-6 py-6">
-        {/* Search + Filters */}
+        {/* Search + Filters + Bulk Upload */}
         <div className="flex flex-wrap justify-between items-center mb-6 gap-4">
           <input
             type="text"
@@ -298,23 +499,27 @@ export default function FamilyList() {
             className="px-4 py-2 border rounded-md shadow-sm w-64 focus:outline-none focus:ring-2 focus:ring-green-400"
           />
 
-          <div className="relative flex items-center gap-3">
+          <div className="flex items-center gap-3">
             <button
               onClick={() => navigate("/home")}
               className="inline-flex items-center gap-2 bg-gray-100 hover:bg-gray-200 px-3 py-2 rounded-lg shadow-sm text-sm"
             >
               ← Back
             </button>
-            {/* Filter button that toggles a dropdown */}
+
             <div className="relative">
               <button
                 ref={filterBtnRef}
                 onClick={() => {
-                  // if menu already open, close it; otherwise open and set URL to open=filter
                   if (filterMenuOpen) {
                     setFilterMenuOpen(false);
                   } else {
-                    openFilterPanel();
+                    const qp = new URLSearchParams(Object.fromEntries(searchParams.entries()));
+                    qp.set("open", "filter");
+                    if (effectiveVillageId) qp.set("villageId", effectiveVillageId);
+                    setSearchParams(qp, { replace: true });
+                    setFilterMenuOpen(true);
+                    setTimeout(() => optionAllRef.current?.focus(), 0);
                   }
                 }}
                 aria-haspopup="true"
@@ -331,12 +536,19 @@ export default function FamilyList() {
                   ref={menuRef}
                   role="menu"
                   aria-label="Filter options"
-                  className="absolute right-0 mt-2 w-40 bg-white border rounded-lg shadow-lg z-50 py-2"
+                  className="absolute right-0 mt-2 w-44 bg-white border rounded-lg shadow-lg z-50 py-2"
                 >
                   <button
                     ref={optionAllRef}
                     role="menuitem"
-                    onClick={() => onSelectFilterOption("All")}
+                    onClick={() => {
+                      setFilterOption("All");
+                      setFilterMenuOpen(false);
+                      const qp = new URLSearchParams(Object.fromEntries(searchParams.entries()));
+                      qp.set("open", "all");
+                      if (effectiveVillageId) qp.set("villageId", effectiveVillageId);
+                      setSearchParams(qp, { replace: true });
+                    }}
                     className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-100 focus:outline-none ${
                       filterOption === "All" ? "font-semibold" : ""
                     }`}
@@ -346,7 +558,14 @@ export default function FamilyList() {
                   <button
                     ref={option1Ref}
                     role="menuitem"
-                    onClick={() => onSelectFilterOption("Option 1")}
+                    onClick={() => {
+                      setFilterOption("Option 1");
+                      setFilterMenuOpen(false);
+                      const qp = new URLSearchParams(Object.fromEntries(searchParams.entries()));
+                      qp.set("open", "option1");
+                      if (effectiveVillageId) qp.set("villageId", effectiveVillageId);
+                      setSearchParams(qp, { replace: true });
+                    }}
                     className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-100 focus:outline-none ${
                       filterOption === "Option 1" ? "font-semibold" : ""
                     }`}
@@ -356,7 +575,14 @@ export default function FamilyList() {
                   <button
                     ref={option2Ref}
                     role="menuitem"
-                    onClick={() => onSelectFilterOption("Option 2")}
+                    onClick={() => {
+                      setFilterOption("Option 2");
+                      setFilterMenuOpen(false);
+                      const qp = new URLSearchParams(Object.fromEntries(searchParams.entries()));
+                      qp.set("open", "option2");
+                      if (effectiveVillageId) qp.set("villageId", effectiveVillageId);
+                      setSearchParams(qp, { replace: true });
+                    }}
                     className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-100 focus:outline-none ${
                       filterOption === "Option 2" ? "font-semibold" : ""
                     }`}
@@ -367,7 +593,20 @@ export default function FamilyList() {
               )}
             </div>
 
-            
+            <button
+              onClick={() => setBulkModalOpen(true)}
+              className="inline-flex items-center gap-2 px-3 py-2 bg-white border rounded-lg shadow hover:bg-gray-50 text-sm"
+            >
+              <UploadCloud size={16} /> Bulk Upload
+            </button>
+
+            <button
+              onClick={refresh}
+              title="Refresh list"
+              className="inline-flex items-center gap-2 px-3 py-2 bg-white border rounded-lg shadow hover:bg-gray-50 text-sm"
+            >
+              <Check size={16} /> Refresh
+            </button>
           </div>
         </div>
 
@@ -394,15 +633,8 @@ export default function FamilyList() {
         )}
       </main>
 
-      {/* Modal: render if selectedFamilyId is NOT null/undefined (accept 0 as valid id). Pass open prop and a key to force remount when id changes */}
-      {selectedFamilyId !== null && (
-        <FamilyModal
-          key={String(selectedFamilyId)}
-          isopen={true}
-          familyId={selectedFamilyId}
-          onClose={closeModal}
-        />
-      )}
+      {/* Bulk Upload Modal */}
+      <BulkUploadModal isOpen={bulkModalOpen} onClose={() => setBulkModalOpen(false)} onUploaded={onBulkUploaded} />
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import MainNavbar from "../component/MainNavbar";
+import { API_BASE } from "../config/Api"
 
 /**
  * StagePage.jsx — updated/fixed
@@ -225,7 +226,7 @@ async function toggleShowDeletedInline(stageId) {
 
   // Use existing backend route for deleted sub-stages
   try {
-    const res = await fetch(`https://villagerelocation.onrender.com/deleted_ostages/${encodeURIComponent(stageId)}`);
+    const res = await fetch(`${API_BASE}/deleted_ostages/${encodeURIComponent(stageId)}`);
     if (res.status === 404) {
       // backend says there are no deleted sub-stages -> cache empty but do NOT open the panel
       setDeletedSubstageCache(prev => ({ ...prev, [stageId]: [] }));
@@ -379,7 +380,7 @@ async function toggleShowDeletedInline(stageId) {
     }
 
     try {
-      const res = await fetch(`https://villagerelocation.onrender.com/ostages/insert/${encodeURIComponent(optionId)}`, {
+      const res = await fetch(`${API_BASE}/ostages/insert/${encodeURIComponent(optionId)}`, {
         method: "POST",
         headers: authHeaders(),
         body: JSON.stringify(payload),
@@ -452,7 +453,7 @@ async function toggleShowDeletedInline(stageId) {
     const { stageId, subStageId, name, desc } = editSubstage;
     if (!name || !subStageId) return;
     try {
-      const res = await fetch(`https://villagerelocation.onrender.com/ostages/${encodeURIComponent(stageId)}/${encodeURIComponent(subStageId)}`, {
+      const res = await fetch(`${API_BASE}/ostages/${encodeURIComponent(stageId)}/${encodeURIComponent(subStageId)}`, {
         method: "PUT",
         headers: authHeaders(),
         body: JSON.stringify({ name: name.trim(), desc: desc ?? undefined }),
@@ -485,7 +486,7 @@ async function toggleShowDeletedInline(stageId) {
 
   async function performDeleteSubstage(stageId, subStageId) {
     try {
-      const res = await fetch(`https://villagerelocation.onrender.com/ostages/${encodeURIComponent(stageId)}/${encodeURIComponent(subStageId)}`, {
+      const res = await fetch(`${API_BASE}/ostages/${encodeURIComponent(stageId)}/${encodeURIComponent(subStageId)}`, {
         method: "DELETE",
         headers: authHeaders(),
       });
@@ -775,7 +776,7 @@ async function toggleShowDeletedInline(stageId) {
         throw new Error("Reorder failed: sub-stage must have a name locally. Please edit the sub-stage name before reordering.");
       })();
 
-      const res = await fetch(`https://villagerelocation.onrender.com/ostages/${encodeURIComponent(stageId)}/${encodeURIComponent(movedId)}`, {
+      const res = await fetch(`${API_BASE}/ostages/${encodeURIComponent(stageId)}/${encodeURIComponent(movedId)}`, {
         method: 'PUT', headers: authHeaders(), body: JSON.stringify(payload)
       });
       if (!res.ok) {
@@ -820,7 +821,7 @@ async function toggleShowDeletedInline(stageId) {
         const failures = [];
         for (const id of (deleteConfirm.ids || [])) {
           try {
-            const res = await fetch(`https://villagerelocation.onrender.com/options/${encodeURIComponent(id)}`, { method: 'DELETE', headers: authHeaders() });
+            const res = await fetch(`${API_BASE}/options/${encodeURIComponent(id)}`, { method: 'DELETE', headers: authHeaders() });
             if (!res.ok) {
               const txt = await res.text().catch(() => '');
               failures.push(`${id}: ${res.status} ${txt}`);
@@ -837,7 +838,7 @@ async function toggleShowDeletedInline(stageId) {
         const failures = [];
         for (const sid of (deleteConfirm.ids || [])) {
           try {
-            const res = await fetch(`https://villagerelocation.onrender.com/ostages/${encodeURIComponent(deleteConfirm.stageId)}/${encodeURIComponent(sid)}`, { method: 'DELETE', headers: authHeaders() });
+            const res = await fetch(`${API_BASE}/ostages/${encodeURIComponent(deleteConfirm.stageId)}/${encodeURIComponent(sid)}`, { method: 'DELETE', headers: authHeaders() });
             if (!res.ok) {
               const txt = await res.text().catch(() => '');
               failures.push(`${sid}: ${res.status} ${txt}`);
@@ -872,7 +873,7 @@ async function toggleShowDeletedInline(stageId) {
   // helper used in performDeleteConfirmed
   async function performDeleteStage(stageId) {
     try {
-      const res = await fetch(`https://villagerelocation.onrender.com/options/${encodeURIComponent(stageId)}`, { method: 'DELETE', headers: authHeaders() });
+      const res = await fetch(`${API_BASE}/options/${encodeURIComponent(stageId)}`, { method: 'DELETE', headers: authHeaders() });
       if (!res.ok) {
         const txt = await res.text().catch(() => '');
         throw new Error(`${res.status} ${txt}`);

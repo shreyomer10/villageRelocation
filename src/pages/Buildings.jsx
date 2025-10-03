@@ -1,20 +1,31 @@
-import React, { useEffect, useState } from "react";
+// Buildings.jsx — updated to call /buildings and /bstages backend routes
+import React, { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import MainNavbar from "../component/MainNavbar";
+import { API_BASE } from "../config/Api";
 
 /**
- * OptionPage.jsx — updated
- * - Fixed adding sub-stages: submitAddSubstage implemented and integrated.
- * - Top-level option reorder still disabled per requirements.
- * - Uses existing backend endpoints: /ostages/insert/<optionId>, etc.
+ * Adapted from original StagePage.jsx (see uploaded version for original).
+ * Main change: wire requests to the Flask backend endpoints:
+ *  - /buildings/<villageId>
+ *  - /buildings/insert
+ *  - /buildings/<buildingId>/<villageId> (PUT, DELETE)
+ *  - /bstages/... for nested stages
+ *
+ * NOTE: this component expects a `villageId` stored in localStorage as "villageId".
+ * If you prefer a different source (route param, context, etc.) change the `villageId` retrieval accordingly.
  */
 
 export default function StagePage() {
   const navigate = useNavigate();
 
-  const [stages, setStages] = useState([]);
+  const [stages, setStages] = useState([]); // top-level "buildings" containing nested stages
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  // refs for automatic scrolling
+  const stageRefs = useRef({}); // keyed by String(stageId)
+  const subRefs = useRef({}); // keyed by `${stageId}:${subId}`
 
   // drag state for stages (kept but top-level dragging disabled in UI)
   const [dragIndex, setDragIndex] = useState(null);
@@ -47,7 +58,7 @@ export default function StagePage() {
 
   const [showAddFormFor, setShowAddFormFor] = useState(null);
 
-  // global deleted-stages list (unchanged)
+  // global deleted-stages list (unchanged variable names)
   const [deletedStagesCache, setDeletedStagesCache] = useState([]);
   const [deletedStagesLoading, setDeletedStagesLoading] = useState(false);
   const [deletedStagesError, setDeletedStagesError] = useState(null);
@@ -59,22 +70,34 @@ export default function StagePage() {
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [performingDelete, setPerformingDelete] = useState(false);
 
+  // villageId source:
+  const villageId = localStorage.getItem("villageId") || "";
+
+  // ---------- initial load ----------
   useEffect(() => {
     let mounted = true;
     (async function load() {
       setLoading(true);
       setError(null);
+
+      if (!villageId) {
+        setError("Missing villageId (store it as localStorage 'villageId')");
+        setStages([]);
+        setLoading(false);
+        return;
+      }
+
       try {
-        const res = await fetch("https://villagerelocation.onrender.com/options");
+        const res = await fetch(`${API_BASE}/buildings/${encodeURIComponent(villageId)}`);
         if (res.status === 404) {
           if (!mounted) return;
           setStages([]);
-          setError("No stages found");
+          setError(null);
           return;
         }
         if (!res.ok) {
           const txt = await res.text().catch(() => "");
-          throw new Error(`Failed to load stages: ${res.status} ${txt}`);
+          throw new Error(`Failed to load buildings: ${res.status} ${txt}`);
         }
         const payload = await res.json();
         let items = [];
@@ -83,24 +106,31 @@ export default function StagePage() {
         else if (Array.isArray(payload)) items = payload;
         else if (Array.isArray(payload.items)) items = payload.items;
         if (!mounted) return;
-        // ensure sorting by position if present
+        // ensure sorting by position if present (top-level may not have position; keep as-is)
         items = (items || []).slice().sort((a, b) => (Number(a.position ?? 0) - Number(b.position ?? 0)));
         setStages(items);
       } catch (err) {
         console.error(err);
         if (!mounted) return;
-        setError(err.message || "Failed to fetch stages");
+        setError(err.message || "Failed to fetch buildings");
+        setStages([]);
       } finally {
         if (mounted) setLoading(false);
       }
     })();
     return () => { mounted = false; };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [villageId]);
 
+  // reloadStages now returns the canonical list for callers to use
   async function reloadStages() {
+    if (!villageId) return null;
     try {
-      const res = await fetch("https://villagerelocation.onrender.com/options");
-      if (!res.ok) return;
+      const res = await fetch(`${API_BASE}/buildings/${encodeURIComponent(villageId)}`);
+      if (!res.ok) {
+        console.warn("reloadStages: failed to reload", res.status);
+        return null;
+      }
       const payload = await res.json();
       let items = [];
       if (payload?.result?.items) items = payload.result.items;
@@ -109,8 +139,10 @@ export default function StagePage() {
       else if (Array.isArray(payload.items)) items = payload.items;
       items = (items || []).slice().sort((a, b) => (Number(a.position ?? 0) - Number(b.position ?? 0)));
       setStages(items);
+      return items;
     } catch (e) {
-      console.error(e);
+      console.error("reloadStages error", e);
+      return null;
     }
   }
 
@@ -120,8 +152,8 @@ export default function StagePage() {
   }
 
   // ---------- Helpers for ID detection ----------
-  // options use `optionId` in backend; substages use `stageId`
-  const getStageId = (s) => s.optionId ?? s.option_id ?? s.stageId ?? s.stage_id ?? s.id;
+  // top-level "buildings" can have typeId, optionId, id etc; substages have stageId etc.
+  const getStageId = (s) => s.typeId ?? s.optionId ?? s.option_id ?? s.stageId ?? s.stage_id ?? s.id;
   const getSubId = (ss) => ss.stageId ?? ss.subStageId ?? ss.sub_stage_id ?? ss.id ?? ss.sub_id ?? ss.subId ?? ss.name;
 
   // ---------- Global select ----------
@@ -184,30 +216,35 @@ export default function StagePage() {
 
     const s = stages.find(x => String(getStageId(x)) === String(stageId));
     const localDeleted = Array.isArray(s?.stages) ? s.stages.filter(ss => ss.deleted === true) : [];
+    // If there are local deleted items already present, show them immediately
     if (localDeleted.length > 0) {
       setShowDeletedInExpanded(prev => ({ ...prev, [stageId]: true }));
       return;
     }
 
-    if (deletedSubstageCache[stageId] && deletedSubstageCache[stageId].length > 0) {
-      setStages(prev => prev.map(st => {
-        if (String(getStageId(st)) !== String(stageId)) return st;
-        const existing = Array.isArray(st.stages) ? st.stages.slice() : [];
-        const existingIds = new Set(existing.map(x => String(getSubId(x))));
-        const toAdd = deletedSubstageCache[stageId].filter(x => !existingIds.has(String(getSubId(x))));
-        return { ...st, stages: [...existing, ...toAdd] };
-      }));
-      setShowDeletedInExpanded(prev => ({ ...prev, [stageId]: true }));
+    // If we've previously fetched deleted-substage cache for this stage
+    if (Object.prototype.hasOwnProperty.call(deletedSubstageCache, stageId)) {
+      const cached = deletedSubstageCache[stageId] || [];
+      if (cached.length > 0) {
+        // merge into stage list and show
+        setStages(prev => prev.map(st => {
+          if (String(getStageId(st)) !== String(stageId)) return st;
+          const existing = Array.isArray(st.stages) ? st.stages.slice() : [];
+          const existingIds = new Set(existing.map(x => String(getSubId(x))));
+          const toAdd = cached.filter(x => !existingIds.has(String(getSubId(x))));
+          return { ...st, stages: [...existing, ...toAdd] };
+        }));
+        setShowDeletedInExpanded(prev => ({ ...prev, [stageId]: true }));
+      }
       return;
     }
 
-    // Use existing backend route for deleted sub-stages
+    // Use backend route for deleted sub-stages: /deleted_bstages/<buildingId>/<villageId>
     try {
-      const res = await fetch(`https://villagerelocation.onrender.com/deleted_ostages/${encodeURIComponent(stageId)}`);
+      const res = await fetch(`${API_BASE}/deleted_bstages/${encodeURIComponent(stageId)}/${encodeURIComponent(villageId)}`);
       if (res.status === 404) {
-        // backend says there are no deleted sub-stages -> show empty
+        // no deleted sub-stages
         setDeletedSubstageCache(prev => ({ ...prev, [stageId]: [] }));
-        setShowDeletedInExpanded(prev => ({ ...prev, [stageId]: true }));
         return;
       }
       if (!res.ok) {
@@ -217,17 +254,22 @@ export default function StagePage() {
       const data = await res.json();
       const items = data?.result?.items ?? [];
       const marked = items.map(it => ({ ...it, deleted: true }));
+
+      // cache the fetched deleted items
       setDeletedSubstageCache(prev => ({ ...prev, [stageId]: marked }));
 
-      setStages(prev => prev.map(st => {
-        if (String(getStageId(st)) !== String(stageId)) return st;
-        const existing = Array.isArray(st.stages) ? st.stages.slice() : [];
-        const existingIds = new Set(existing.map(x => String(getSubId(x))));
-        const toAdd = marked.filter(x => !existingIds.has(String(getSubId(x))));
-        return { ...st, stages: [...existing, ...toAdd] };
-      }));
+      if (marked.length > 0) {
+        // merge and show
+        setStages(prev => prev.map(st => {
+          if (String(getStageId(st)) !== String(stageId)) return st;
+          const existing = Array.isArray(st.stages) ? st.stages.slice() : [];
+          const existingIds = new Set(existing.map(x => String(getSubId(x))));
+          const toAdd = marked.filter(x => !existingIds.has(String(getSubId(x))));
+          return { ...st, stages: [...existing, ...toAdd] };
+        }));
 
-      setShowDeletedInExpanded(prev => ({ ...prev, [stageId]: true }));
+        setShowDeletedInExpanded(prev => ({ ...prev, [stageId]: true }));
+      }
     } catch (err) {
       console.error(err);
       setError(err.message || "Failed to fetch deleted sub-stages");
@@ -274,19 +316,29 @@ export default function StagePage() {
     setDeleteConfirm({ type: 'multipleSubstages', stageId, ids: Array.from(set) });
   }
 
-  // ---------- create / update / delete (unchanged except including position) ----------
+  // ---------- create / update / delete (adjusted endpoints) ----------
   async function handleCreateStage(e) {
     e && e.preventDefault();
     if (!createName || createName.trim() === "") return;
     setCreating(true);
+
+    if (!villageId) {
+      setError("Missing villageId; cannot create building.");
+      setCreating(false);
+      return;
+    }
+
     try {
+      // prepare payload expected by backend BuildingInsert model
       const payload = {
         name: createName.trim(),
         desc: createDesc?.trim() || undefined,
+        villageId: villageId,
         deleted: false,
         stages: createSubstages.map(s => ({ name: (s.name || "").trim(), desc: (s.desc || "").trim() || undefined })).filter(x => x.name),
       };
-      const res = await fetch("https://villagerelocation.onrender.com/options/insert", {
+
+      const res = await fetch(`${API_BASE}/buildings/insert`, {
         method: "POST",
         headers: authHeaders(),
         body: JSON.stringify(payload),
@@ -297,26 +349,55 @@ export default function StagePage() {
       }
       const data = await res.json();
       const inserted = data?.result ?? null;
+
+      // reload canonical list and expand newly created building if possible
+      const items = await reloadStages();
       if (inserted) {
-        await reloadStages();
-      } else {
-        await reloadStages();
+        const insertedId = inserted.typeId ?? inserted.type_id ?? inserted.optionId ?? inserted.option_id ?? inserted.id;
+        if (insertedId != null) {
+          setExpandedStageIds(prev => {
+            const copy = new Set(prev);
+            copy.add(String(insertedId));
+            return copy;
+          });
+          setTimeout(() => {
+            try {
+              const el = stageRefs.current[String(insertedId)];
+              if (el && typeof el.scrollIntoView === 'function') {
+                el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              }
+            } catch (e) { console.warn('scroll fail', e); }
+          }, 150);
+        } else if (items && inserted && inserted.name) {
+          const found = items.find(it => String(it.name) === String(inserted.name));
+          if (found) {
+            const fid = String(getStageId(found));
+            setExpandedStageIds(prev => { const copy = new Set(prev); copy.add(fid); return copy; });
+            setTimeout(() => {
+              try { const el = stageRefs.current[fid]; if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
+            }, 150);
+          }
+        }
       }
 
       setCreateName(""); setCreateDesc(""); setCreatePosition(""); setCreateSubstages([{ name: "", desc: "" }]); setShowCreatePanel(false);
     } catch (err) {
       console.error(err);
-      setError(err.message || "Failed to create stage");
+      setError(err.message || "Failed to create building");
     } finally {
       setCreating(false);
     }
   }
 
-  // ---------- NEW: submitAddSubstage (fixed) ----------
-  async function submitAddSubstage(e, optionId, payload) {
-    // payload expected: { name, desc?, deleted?, position? }
+  // ---------- Add substage (bstages) ----------
+  async function submitAddSubstage(e, buildingIdParam, payload) {
     e && e.preventDefault && e.preventDefault();
     setError(null);
+
+    if (!villageId) {
+      setError("Missing villageId; cannot add sub-stage.");
+      return;
+    }
 
     if (!payload || !payload.name || String(payload.name).trim() === "") {
       setError("Sub-stage name is required");
@@ -324,16 +405,15 @@ export default function StagePage() {
     }
 
     try {
-      const res = await fetch(`https://villagerelocation.onrender.com/ostages/insert/${encodeURIComponent(optionId)}`, {
+      const res = await fetch(`${API_BASE}/bstages/insert/${encodeURIComponent(buildingIdParam)}/${encodeURIComponent(villageId)}`, {
         method: "POST",
         headers: authHeaders(),
         body: JSON.stringify(payload),
       });
 
-      // If backend returns 404 for option not found, surface that nicely
       if (res.status === 404) {
         const txt = await res.text().catch(() => "");
-        throw new Error(`Option not found: ${txt}`);
+        throw new Error(`Building not found: ${txt}`);
       }
 
       if (!res.ok) {
@@ -344,22 +424,42 @@ export default function StagePage() {
       const data = await res.json();
       const inserted = data?.result ?? null;
 
-      if (inserted) {
-        // Insert into local state in the correct option (avoid duplicate IDs)
-        setStages(prev => prev.map(opt => {
-          if (String(getStageId(opt)) !== String(optionId)) return opt;
-          const arr = Array.isArray(opt.stages) ? opt.stages.slice() : [];
-          // Avoid duplicate
-          const exists = arr.some(s => String(getSubId(s)) === String(getSubId(inserted)));
-          if (!exists) arr.splice((typeof payload.position === "number" ? payload.position : arr.length), 0, inserted);
-          return { ...opt, stages: arr };
-        }));
-      } else {
-        // fallback: reload list
-        await reloadStages();
+      // Always reload canonical list
+      const fresh = await reloadStages();
+
+      if (fresh) {
+        const parent = fresh.find(x => String(getStageId(x)) === String(buildingIdParam));
+        if (parent) {
+          setExpandedStageIds(prev => { const copy = new Set(prev); copy.add(String(buildingIdParam)); return copy; });
+
+          // try to discover inserted sub-id
+          let subId = null;
+          if (inserted) {
+            subId = inserted.stageId ?? inserted.subStageId ?? inserted.sub_stage_id ?? inserted.id ?? inserted.sub_id ?? inserted.subId;
+          }
+
+          if (!subId && payload && payload.name) {
+            const candidates = (parent.stages ?? []).filter(ss => String((ss.name ?? "")).trim() === String((payload.name ?? "").trim()));
+            if (candidates.length === 1) subId = getSubId(candidates[0]);
+            else if (candidates.length > 1) subId = getSubId(candidates[candidates.length - 1]);
+          }
+
+          setTimeout(() => {
+            try {
+              if (subId) {
+                const el = subRefs.current[`${buildingIdParam}:${subId}`];
+                if (el && typeof el.scrollIntoView === 'function') {
+                  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  return;
+                }
+              }
+              const pel = stageRefs.current[String(buildingIdParam)];
+              if (pel && typeof pel.scrollIntoView === 'function') pel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            } catch (e) { console.warn('scroll fail', e); }
+          }, 150);
+        }
       }
 
-      // close add form
       setShowAddFormFor(null);
     } catch (err) {
       console.error(err);
@@ -367,13 +467,18 @@ export default function StagePage() {
     }
   }
 
+  // ---------- Edit substage (PUT to /bstages/<buildingId>/<villageId>/<stageId>) ----------
   async function submitEditSubstage(e) {
     e && e.preventDefault();
     if (!editSubstage) return;
-    const { stageId, subStageId, name, desc } = editSubstage;
+    const { stageId: buildingIdParam, subStageId, name, desc } = editSubstage;
     if (!name || !subStageId) return;
+    if (!villageId) {
+      setError("Missing villageId; cannot update sub-stage.");
+      return;
+    }
     try {
-      const res = await fetch(`https://villagerelocation.onrender.com/ostages/${encodeURIComponent(stageId)}/${encodeURIComponent(subStageId)}`, {
+      const res = await fetch(`${API_BASE}/bstages/${encodeURIComponent(buildingIdParam)}/${encodeURIComponent(villageId)}/${encodeURIComponent(subStageId)}`, {
         method: "PUT",
         headers: authHeaders(),
         body: JSON.stringify({ name: name.trim(), desc: desc ?? undefined }),
@@ -385,7 +490,7 @@ export default function StagePage() {
       const payload = await res.json();
       const updated = payload?.result ?? { subStageId, name, desc };
       setStages(prev => prev.map(s => {
-        if (String(getStageId(s)) !== String(stageId)) return s;
+        if (String(getStageId(s)) !== String(buildingIdParam)) return s;
         const list = (s.stages ?? []).map(ss => {
           if (String(getSubId(ss)) === String(subStageId)) return { ...ss, ...updated };
           return ss;
@@ -405,8 +510,12 @@ export default function StagePage() {
   }
 
   async function performDeleteSubstage(stageId, subStageId) {
+    if (!villageId) {
+      setError("Missing villageId; cannot delete sub-stage.");
+      return;
+    }
     try {
-      const res = await fetch(`https://villagerelocation.onrender.com/ostages/${encodeURIComponent(stageId)}/${encodeURIComponent(subStageId)}`, {
+      const res = await fetch(`${API_BASE}/bstages/${encodeURIComponent(stageId)}/${encodeURIComponent(villageId)}/${encodeURIComponent(subStageId)}`, {
         method: "DELETE",
         headers: authHeaders(),
       });
@@ -433,8 +542,12 @@ export default function StagePage() {
     }
   }
 
-  // ---------- deleted stages global toggle (updated to handle 404 as 'no deleted') ----------
+  // ---------- deleted buildings global toggle (calls /deleted_buildings/<villageId>) ----------
   async function toggleDeletedStagesGlobal() {
+    if (!villageId) {
+      setError("Missing villageId; cannot fetch deleted buildings.");
+      return;
+    }
     if (showDeletedStages) {
       setShowDeletedStages(false);
       return;
@@ -446,9 +559,8 @@ export default function StagePage() {
     setDeletedStagesLoading(true);
     setDeletedStagesError(null);
     try {
-      const res = await fetch("https://villagerelocation.onrender.com/deleted_options");
+      const res = await fetch(`${API_BASE}/deleted_buildings/${encodeURIComponent(villageId)}`);
       if (res.status === 404) {
-        // backend indicates no deleted options -> show empty message
         setDeletedStagesCache([]);
         setShowDeletedStages(true);
         return;
@@ -463,7 +575,7 @@ export default function StagePage() {
       setShowDeletedStages(true);
     } catch (err) {
       console.error(err);
-      setDeletedStagesError(err.message || "Failed to fetch deleted stages");
+      setDeletedStagesError(err.message || "Failed to fetch deleted buildings");
     } finally {
       setDeletedStagesLoading(false);
     }
@@ -488,6 +600,10 @@ export default function StagePage() {
     return (
       <div
         key={String(subId)}
+        ref={(el) => {
+          if (el) subRefs.current[`${stageId}:${subId}`] = el;
+          else delete subRefs.current[`${stageId}:${subId}`];
+        }}
         draggable={!globalSelectMode && !perStageSelecting}
         onDragStart={(e) => handleSubDragStart(e, stageId, indexInStage)}
         onDragOver={(e) => handleSubDragOver(e, stageId, indexInStage)}
@@ -522,175 +638,196 @@ export default function StagePage() {
     );
   }
 
-  // ---------- Stage drag & drop handlers (top-level reordering disabled) ----------
-  function handleDragStart(e, index) { return; }
-  function handleDragOver(e, index) { return; }
-  async function handleDrop(e, targetIndex) { return; }
-  function handleDragEnd() { return; }
+  // // ---------- Stage drag & drop handlers (top-level reordering disabled) ----------
+  // function handleDragStart(e, index) { return; }
+  // function handleDragOver(e, index) { return; }
+  // async function handleDrop(e, targetIndex) { return; }
+  // function handleDragEnd() { return; }
 
-  // ---------- Substage reorder (up/down) - now creates pendingSubstageReorder ----------
-  function reorderSubstage(stageId, subId, dir) {
-    // dir: -1 for up, +1 for down
-    setError(null);
-    const sIndex = stages.findIndex(st => String(getStageId(st)) === String(stageId));
-    if (sIndex === -1) return;
-    const stage = stages[sIndex];
-    const list = Array.isArray(stage.stages) ? stage.stages.slice() : [];
-    const idx = list.findIndex(x => String(getSubId(x)) === String(subId));
-    if (idx === -1) return;
-    const newIdx = Math.max(0, Math.min(list.length - 1, idx + dir));
-    if (newIdx === idx) return;
+  // // ---------- Substage reorder (up/down) - creates pendingSubstageReorder ----------
+  // function reorderSubstage(stageId, subId, dir) {
+  //   // dir: -1 for up, +1 for down
+  //   setError(null);
+  //   const sIndex = stages.findIndex(st => String(getStageId(st)) === String(stageId));
+  //   if (sIndex === -1) return;
+  //   const stage = stages[sIndex];
+  //   const list = Array.isArray(stage.stages) ? stage.stages.slice() : [];
+  //   const idx = list.findIndex(x => String(getSubId(x)) === String(subId));
+  //   if (idx === -1) return;
+  //   const newIdx = Math.max(0, Math.min(list.length - 1, idx + dir));
+  //   if (newIdx === idx) return;
 
-    // optimistic local reorder
-    const newList = list.slice();
-    const [moved] = newList.splice(idx, 1);
-    newList.splice(newIdx, 0, moved);
-    // normalize positions locally
-    const withPos = newList.map((ss, i) => ({ ...ss, position: i }));
+  //   // optimistic local reorder
+  //   const newList = list.slice();
+  //   const [moved] = newList.splice(idx, 1);
+  //   newList.splice(newIdx, 0, moved);
+  //   // normalize positions locally
+  //   const withPos = newList.map((ss, i) => ({ ...ss, position: i }));
 
-    setStages(prev => prev.map((st, ii) => {
-      if (ii !== sIndex) return st;
-      return { ...st, stages: withPos };
-    }));
+  //   setStages(prev => prev.map((st, ii) => {
+  //     if (ii !== sIndex) return st;
+  //     return { ...st, stages: withPos };
+  //   }));
 
-    // save pending substage reorder for confirmation
-    setPendingSubstageReorder({
-      stageId: String(stageId),
-      stageIndex: sIndex,
-      moved,
-      movedId: String(subId),
-      prevList: list,
-      newList: withPos,
-      insertAt: newIdx,
-      sourceIndex: idx,
-      targetIndex: newIdx,
-    });
-  }
+  //   // save pending substage reorder for confirmation
+  //   setPendingSubstageReorder({
+  //     stageId: String(stageId),
+  //     stageIndex: sIndex,
+  //     moved,
+  //     movedId: String(getSubId(moved)),
+  //     prevList: list,
+  //     newList: withPos,
+  //     insertAt: newIdx,
+  //     sourceIndex: idx,
+  //     targetIndex: newIdx,
+  //   });
+  // }
 
-  // ---------- Substage drag handlers (per-stage drag-and-drop) ----------
-  const [subDragInfo, setSubDragInfo] = useState(null);
-  const [subDragOver, setSubDragOver] = useState({ stageId: null, index: null });
+  // // ---------- Substage drag handlers (per-stage drag-and-drop) ----------
+  // const [subDragInfo, setSubDragInfo] = useState(null);
+  // const [subDragOver, setSubDragOver] = useState({ stageId: null, index: null });
 
-  function handleSubDragStart(e, stageId, sourceIndex) {
-    if (globalSelectMode) return;
-    setSubDragInfo({ stageId: String(stageId), sourceIndex });
-    e.dataTransfer.effectAllowed = 'move';
-    try { e.dataTransfer.setData('text/plain', String(sourceIndex)); e.dataTransfer.setData('application/json', JSON.stringify({ stageId })); } catch (err) {}
-  }
+  // function handleSubDragStart(e, stageId, sourceIndex) {
+  //   if (globalSelectMode) return;
+  //   setSubDragInfo({ stageId: String(stageId), sourceIndex });
+  //   e.dataTransfer.effectAllowed = 'move';
+  //   try { e.dataTransfer.setData('text/plain', String(sourceIndex)); e.dataTransfer.setData('application/json', JSON.stringify({ stageId })); } catch (err) {}
+  // }
 
-  function handleSubDragOver(e, stageId, overIndex) {
-    e.preventDefault();
-    if (globalSelectMode) return;
-    // only show/drop if same stage
-    if (!subDragInfo) return;
-    if (String(subDragInfo.stageId) !== String(stageId)) return;
-    setSubDragOver({ stageId: String(stageId), index: overIndex });
-  }
+  // function handleSubDragOver(e, stageId, overIndex) {
+  //   e.preventDefault();
+  //   if (globalSelectMode) return;
+  //   if (!subDragInfo) return;
+  //   if (String(subDragInfo.stageId) !== String(stageId)) return;
+  //   setSubDragOver({ stageId: String(stageId), index: overIndex });
+  // }
 
-  async function handleSubDrop(e, stageId, targetIndex) {
-    e.preventDefault();
-    if (globalSelectMode) return;
-    // determine source index (prefer state fallback to dataTransfer)
-    let sourceIndex = subDragInfo?.sourceIndex;
-    if (sourceIndex === null || sourceIndex === undefined) {
-      try { const dt = e.dataTransfer.getData('text/plain'); sourceIndex = dt !== '' ? Number(dt) : null; } catch (err) { sourceIndex = null; }
-    }
-    // must be valid and same stage
-    if (sourceIndex === null || sourceIndex === undefined || isNaN(sourceIndex)) { setSubDragInfo(null); setSubDragOver({ stageId: null, index: null }); return; }
-    if (!subDragInfo || String(subDragInfo.stageId) !== String(stageId)) { setSubDragInfo(null); setSubDragOver({ stageId: null, index: null }); return; }
+  // async function handleSubDrop(e, stageId, targetIndex) {
+  //   e.preventDefault();
+  //   if (globalSelectMode) return;
+  //   // determine source index (prefer state fallback to dataTransfer)
+  //   let sourceIndex = subDragInfo?.sourceIndex;
+  //   if (sourceIndex === null || sourceIndex === undefined) {
+  //     try { const dt = e.dataTransfer.getData('text/plain'); sourceIndex = dt !== '' ? Number(dt) : null; } catch (err) { sourceIndex = null; }
+  //   }
+  //   if (sourceIndex === null || sourceIndex === undefined || isNaN(sourceIndex)) { setSubDragInfo(null); setSubDragOver({ stageId: null, index: null }); return; }
+  //   if (!subDragInfo || String(subDragInfo.stageId) !== String(stageId)) { setSubDragInfo(null); setSubDragOver({ stageId: null, index: null }); return; }
 
-    // no-op
-    if (sourceIndex === targetIndex) { setSubDragInfo(null); setSubDragOver({ stageId: null, index: null }); return; }
+  //   if (sourceIndex === targetIndex) { setSubDragInfo(null); setSubDragOver({ stageId: null, index: null }); return; }
 
-    // find stage
-    const sIndex = stages.findIndex(st => String(getStageId(st)) === String(stageId));
-    if (sIndex === -1) { setSubDragInfo(null); setSubDragOver({ stageId: null, index: null }); return; }
+  //   const sIndex = stages.findIndex(st => String(getStageId(st)) === String(stageId));
+  //   if (sIndex === -1) { setSubDragInfo(null); setSubDragOver({ stageId: null, index: null }); return; }
 
-    const stage = stages[sIndex];
-    const list = Array.isArray(stage.stages) ? stage.stages.slice() : [];
-    if (sourceIndex < 0 || sourceIndex >= list.length) { setSubDragInfo(null); setSubDragOver({ stageId: null, index: null }); return; }
-    const newIdx = Math.max(0, Math.min(list.length - 1, targetIndex));
+  //   const stage = stages[sIndex];
+  //   const list = Array.isArray(stage.stages) ? stage.stages.slice() : [];
+  //   if (sourceIndex < 0 || sourceIndex >= list.length) { setSubDragInfo(null); setSubDragOver({ stageId: null, index: null }); return; }
+  //   const newIdx = Math.max(0, Math.min(list.length - 1, targetIndex));
 
-    // optimistic local reorder
-    const newList = list.slice();
-    const [moved] = newList.splice(sourceIndex, 1);
-    const insertAt = (sourceIndex < newIdx) ? newIdx : newIdx;
-    newList.splice(insertAt, 0, moved);
-    const withPos = newList.map((ss, i) => ({ ...ss, position: i }));
+  //   // optimistic local reorder
+  //   const newList = list.slice();
+  //   const [moved] = newList.splice(sourceIndex, 1);
+  //   const insertAt = (sourceIndex < newIdx) ? newIdx : newIdx;
+  //   newList.splice(insertAt, 0, moved);
+  //   const withPos = newList.map((ss, i) => ({ ...ss, position: i }));
 
-    setStages(prev => prev.map((st, ii) => ii === sIndex ? { ...st, stages: withPos } : st));
+  //   setStages(prev => prev.map((st, ii) => ii === sIndex ? { ...st, stages: withPos } : st));
 
-    // save pending substage reorder for confirmation
-    setPendingSubstageReorder({
-      stageId: String(stageId),
-      stageIndex: sIndex,
-      moved,
-      movedId: String(getSubId(moved)),
-      prevList: list,
-      newList: withPos,
-      insertAt,
-      sourceIndex,
-      targetIndex: insertAt,
-    });
+  //   // save pending substage reorder for confirmation
+  //   setPendingSubstageReorder({
+  //     stageId: String(stageId),
+  //     stageIndex: sIndex,
+  //     moved,
+  //     movedId: String(getSubId(moved)),
+  //     prevList: list,
+  //     newList: withPos,
+  //     insertAt,
+  //     sourceIndex,
+  //     targetIndex: insertAt,
+  //   });
 
-    setSubDragInfo(null);
-    setSubDragOver({ stageId: null, index: null });
-  }
+  //   setSubDragInfo(null);
+  //   setSubDragOver({ stageId: null, index: null });
+  // }
 
-  // ---------- Confirm / Cancel for substage reorder ----------
-  async function confirmSubstageReorder() {
-    if (!pendingSubstageReorder) return;
-    setPersistingSubstage(String(pendingSubstageReorder.movedId));
-    setError(null);
+  // helper: find a subId by matching name/desc within a particular stage (best-effort)
+  // function findSubIdByNameDesc(stageObj, name, desc) {
+  //   if (!stageObj || !Array.isArray(stageObj.stages)) return null;
+  //   const trimmedName = String(name ?? "").trim();
+  //   const trimmedDesc = desc == null ? null : String(desc ?? "").trim();
+  //   let found = stageObj.stages.find(ss => String((ss.name ?? "")).trim() === trimmedName && (trimmedDesc == null || String((ss.desc ?? "")).trim() === trimmedDesc));
+  //   if (!found) {
+  //     found = stageObj.stages.find(ss => String((ss.name ?? "")).trim() === trimmedName);
+  //   }
+  //   if (!found) return null;
+  //   return String(getSubId(found));
+  // }
 
-    const { stageId, moved, movedId, insertAt } = pendingSubstageReorder;
+  // // ---------- Confirm / Cancel for substage reorder ----------
+  // async function confirmSubstageReorder() {
+  //   if (!pendingSubstageReorder) return;
+  //   setPersistingSubstage(String(pendingSubstageReorder.movedId));
+  //   setError(null);
 
-    // Don't attempt to GET canonical substage from backend (backend lacks GET /ostages/<optionId>/<stageId>)
-    // Instead require that moved.name exists locally (otherwise user must edit the substage first)
-    async function buildSubPayload(movedObj, position) {
-      const name = (movedObj.name ?? "").toString();
-      const desc = movedObj.desc ?? undefined;
-      const deleted = !!movedObj.deleted;
-      if (name && name.trim() !== "") {
-        return { name: name.trim(), desc, deleted, position };
-      }
-      // If name is missing locally, abort and instruct user to edit the substage first.
-      throw new Error("Reorder failed: sub-stage must have a name locally. Please edit the sub-stage name before reordering.");
-    }
+  //   let { stageId, moved, movedId, insertAt } = pendingSubstageReorder;
 
-    try {
-      const payload = await buildSubPayload(moved, insertAt);
+  //   try {
+  //     if (!movedId || movedId === "undefined" || movedId === "null") {
+  //       const fresh = await reloadStages();
+  //       if (fresh) {
+  //         const parent = fresh.find(x => String(getStageId(x)) === String(stageId));
+  //         if (parent) {
+  //           const foundId = findSubIdByNameDesc(parent, moved?.name, moved?.desc);
+  //           if (foundId) {
+  //             movedId = foundId;
+  //           }
+  //         }
+  //       }
+  //     }
 
-      const res = await fetch(`https://villagerelocation.onrender.com/ostages/${encodeURIComponent(stageId)}/${encodeURIComponent(movedId)}`, {
-        method: 'PUT', headers: authHeaders(), body: JSON.stringify(payload)
-      });
-      if (!res.ok) {
-        let txt = '';
-        try { txt = await res.text(); } catch {}
-        throw new Error(`Substage reorder failed: ${res.status} ${txt}`);
-      }
+  //     if (!movedId) {
+  //       throw new Error("Reorder failed: could not determine sub-stage id for the moved item. Please refresh or edit the sub-stage to ensure it has an id.");
+  //     }
 
-      await reloadStages();
-      setPendingSubstageReorder(null);
-    } catch (err) {
-      console.error(err);
-      setError(err.message || 'Failed to reorder substage');
-      await reloadStages();
-      setPendingSubstageReorder(null);
-    } finally {
-      setPersistingSubstage(null);
-    }
-  }
+  //     const payload = (() => {
+  //       const name = (moved.name ?? "").toString();
+  //       const desc = moved.desc ?? undefined;
+  //       const deleted = !!moved.deleted;
+  //       if (name && name.trim() !== "") {
+  //         return { name: name.trim(), desc, deleted, position: insertAt };
+  //       }
+  //       throw new Error("Reorder failed: sub-stage must have a name locally. Please edit the sub-stage name before reordering.");
+  //     })();
 
-  function cancelSubstageReorder() {
-    if (!pendingSubstageReorder) return;
-    const { stageId, prevList, stageIndex } = pendingSubstageReorder;
-    setStages(prev => prev.map((st, ii) => {
-      if (ii !== stageIndex) return st;
-      return { ...st, stages: prevList };
-    }));
-    setPendingSubstageReorder(null);
-  }
+  //     const res = await fetch(`${API_BASE}/bstages/${encodeURIComponent(stageId)}/${encodeURIComponent(villageId)}/${encodeURIComponent(movedId)}`, {
+  //       method: 'PUT', headers: authHeaders(), body: JSON.stringify(payload)
+  //     });
+  //     if (!res.ok) {
+  //       let txt = '';
+  //       try { txt = await res.text(); } catch {}
+  //       throw new Error(`Substage reorder failed: ${res.status} ${txt}`);
+  //     }
+
+  //     await reloadStages();
+  //     setPendingSubstageReorder(null);
+  //   } catch (err) {
+  //     console.error(err);
+  //     setError(err.message || 'Failed to reorder substage');
+  //     await reloadStages();
+  //     setPendingSubstageReorder(null);
+  //   } finally {
+  //     setPersistingSubstage(null);
+  //   }
+  // }
+
+  // function cancelSubstageReorder() {
+  //   if (!pendingSubstageReorder) return;
+  //   const { stageId, prevList, stageIndex } = pendingSubstageReorder;
+  //   setStages(prev => prev.map((st, ii) => {
+  //     if (ii !== stageIndex) return st;
+  //     return { ...st, stages: prevList };
+  //   }));
+  //   setPendingSubstageReorder(null);
+  // }
 
   // ---------- Perform delete operations after confirmation ----------
   async function performDeleteConfirmed() {
@@ -706,7 +843,7 @@ export default function StagePage() {
         const failures = [];
         for (const id of (deleteConfirm.ids || [])) {
           try {
-            const res = await fetch(`https://villagerelocation.onrender.com/options/${encodeURIComponent(id)}`, { method: 'DELETE', headers: authHeaders() });
+            const res = await fetch(`${API_BASE}/buildings/${encodeURIComponent(id)}/${encodeURIComponent(villageId)}`, { method: 'DELETE', headers: authHeaders() });
             if (!res.ok) {
               const txt = await res.text().catch(() => '');
               failures.push(`${id}: ${res.status} ${txt}`);
@@ -723,7 +860,7 @@ export default function StagePage() {
         const failures = [];
         for (const sid of (deleteConfirm.ids || [])) {
           try {
-            const res = await fetch(`https://villagerelocation.onrender.com/ostages/${encodeURIComponent(deleteConfirm.stageId)}/${encodeURIComponent(sid)}`, { method: 'DELETE', headers: authHeaders() });
+            const res = await fetch(`${API_BASE}/bstages/${encodeURIComponent(deleteConfirm.stageId)}/${encodeURIComponent(villageId)}/${encodeURIComponent(sid)}`, { method: 'DELETE', headers: authHeaders() });
             if (!res.ok) {
               const txt = await res.text().catch(() => '');
               failures.push(`${sid}: ${res.status} ${txt}`);
@@ -755,6 +892,23 @@ export default function StagePage() {
     }
   }
 
+  // helper used in performDeleteConfirmed
+  async function performDeleteStage(stageId) {
+    if (!villageId) {
+      throw new Error("Missing villageId; cannot delete building.");
+    }
+    try {
+      const res = await fetch(`${API_BASE}/buildings/${encodeURIComponent(stageId)}/${encodeURIComponent(villageId)}`, { method: 'DELETE', headers: authHeaders() });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(`${res.status} ${txt}`);
+      }
+      await reloadStages();
+    } catch (err) {
+      throw err;
+    }
+  }
+
   // ---------- UI ----------
   return (
     <div className="min-h-screen bg-[#f8f0dc] font-sans">
@@ -763,7 +917,7 @@ export default function StagePage() {
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-3">
           <div>
             <button
-              onClick={() => navigate("/dashboard")}
+              onClick={() => navigate("/home")}
               className="px-3 py-2 border rounded-md bg-white text-sm"
             >
               ← Back
@@ -799,7 +953,6 @@ export default function StagePage() {
                   Delete ({selectedStageIds.size})
                 </button>
 
-                {/* show deselect all only when there are selected items */}
                 {selectedStageIds.size > 0 && (
                   <button
                     onClick={deselectAllStages}
@@ -816,23 +969,18 @@ export default function StagePage() {
 
         {showCreatePanel && (
           <form onSubmit={handleCreateStage} className="bg-white rounded-lg shadow p-4 mb-6">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="sm:col-span-2">
-                <label className="block text-sm font-medium text-gray-700">Stage name</label>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
+              <div className="sm:col-span-1">
+                <label className="block text-sm font-medium text-gray-700">Building name</label>
                 <input value={createName} onChange={(e) => setCreateName(e.target.value)} className="w-full p-2 border rounded" />
-                <label className="block text-sm font-medium text-gray-700 mt-3">Description</label>
-                <input value={createDesc} onChange={(e) => setCreateDesc(e.target.value)} className="w-full p-2 border rounded" />
               </div>
 
-              <div className="flex flex-col justify-between">
-                <div>
-                  <label className="block text-sm text-gray-700">Position (optional)</label>
-                  <input type="number" value={createPosition} onChange={(e) => setCreatePosition(e.target.value)} placeholder="0..n" className="w-full p-2 border rounded" />
-                  <div className="text-xs text-gray-500 mt-2">If empty it will be appended</div>
-                </div>
-                <div className="text-sm text-gray-600 mt-2">Sub-stages (optional)</div>
-                <button type="button" onClick={() => setCreateSubstages(prev => [...prev, { name: "", desc: "" }])} className="px-3 py-2 mt-2 bg-green-600 text-white rounded">+ add field</button>
+              <div className="sm:col-span-2">
+                <label className="block text-sm font-medium text-gray-700">Description</label>
+                <input value={createDesc} onChange={(e) => setCreateDesc(e.target.value)} className="w-full p-2 border rounded" />
               </div>
+            </div>
+            <div className="center"><button type="button" onClick={() => setCreateSubstages(prev => [...prev, { name: "", desc: "" }])} className="px-6 py-2 mt-3 bg-green-600 text-white rounded justi-center">+ add stages (optional)</button>
             </div>
 
             <div className="mt-3 space-y-2">
@@ -847,278 +995,283 @@ export default function StagePage() {
               ))}
             </div>
 
-            <div className="mt-4 flex gap-2 flex-col sm:flex-row">
-              <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded w-full sm:w-auto">{creating ? "Creating…" : "Create"}</button>
-              <button type="button" onClick={() => setShowCreatePanel(false)} className="px-4 py-2 border rounded w-full sm:w-auto">Cancel</button>
+            <div className="mt-4 flex gap-2 flex-col sm:flex-row justify-center">
+              <button type="submit" className="px-10 py-2 bg-blue-600 text-white rounded w-full sm:w-auto">{creating ? "Creating…" : "Create"}</button>
+              <button type="button" onClick={() => setShowCreatePanel(false)} className="px-10 py-2 border rounded w-full sm:w-auto">Cancel</button>
             </div>
           </form>
         )}
 
         {loading ? (
-          <div className="text-center py-8">Loading stages…</div>
+          <div className="text-center py-8">Loading buildings…</div>
         ) : error ? (
           <div className="text-red-600 py-6 whitespace-pre-wrap">{error}</div>
         ) : (
           <div className="space-y-4">
-            {stages.map((s, index) => {
-              const stageId = getStageId(s);
-              const subStages = s.stages ?? s.subStages ?? s.sub_stages ?? s.options ?? [];
-              const expanded = expandedStageIds.has(stageId);
-              const stageSelected = selectedStageIds.has(stageId);
+            {stages.length === 0 ? (
+              <div className="text-sm text-gray-500">No buildings</div>
+            ) : (
+              stages.map((s, index) => {
+                const stageId = getStageId(s);
+                const subStages = s.stages ?? s.subStages ?? s.sub_stages ?? s.options ?? [];
+                const expanded = expandedStageIds.has(stageId);
+                const stageSelected = selectedStageIds.has(stageId);
 
-              const localDeleted = Array.isArray(subStages) ? subStages.filter(ss => ss.deleted === true) : [];
-              const cachedDeleted = deletedSubstageCache[stageId] ?? [];
-              const mergedDeletedMap = new Map();
-              [...localDeleted, ...cachedDeleted].forEach(d => mergedDeletedMap.set(String(getSubId(d)), d));
-              const mergedDeleted = Array.from(mergedDeletedMap.values());
+                const localDeleted = Array.isArray(subStages) ? subStages.filter(ss => ss.deleted === true) : [];
+                const cachedDeleted = deletedSubstageCache[stageId] ?? [];
+                const mergedDeletedMap = new Map();
+                [...localDeleted, ...cachedDeleted].forEach(d => mergedDeletedMap.set(String(getSubId(d)), d));
+                const mergedDeleted = Array.from(mergedDeletedMap.values());
 
-              const activeSubs = Array.isArray(subStages) ? subStages.filter(ss => !ss.deleted) : [];
+                const activeSubs = Array.isArray(subStages) ? subStages.filter(ss => !ss.deleted) : [];
 
-              const showDeletedLink = mergedDeleted.length > 0;
+                const showDeletedLink = mergedDeleted.length > 0;
 
-              const isDragOver = dragOverIndex === index;
+                const isDragOver = dragOverIndex === index;
 
-              return (
-                <div
-                  key={String(stageId)}
-                  /* Top-level reordering disabled: draggable set to false and drag handlers removed */
-                  className={`bg-white rounded-lg shadow p-4 border relative ${isDragOver ? "border-dashed border-2" : ""}`}
-                  draggable={false}
-                  style={{ cursor: "default" }}
-                >
-                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                    <div className="flex items-center gap-3 min-w-0">
-                      {/* Global select mode: render a checkbox for stage selection */}
-                      {globalSelectMode && (
-                        <input
-                          type="checkbox"
-                          checked={stageSelected}
-                          onChange={() => toggleStageCheckbox(stageId)}
-                          className="w-4 h-4"
-                          aria-label={stageSelected ? "Deselect stage" : "Select stage"}
-                        />
-                      )}
+                return (
+                  <div
+                    key={String(stageId)}
+                    ref={(el) => {
+                      if (el) stageRefs.current[String(stageId)] = el;
+                      else delete stageRefs.current[String(stageId)];
+                    }}
+                    className={`bg-white rounded-lg shadow p-4 border relative ${isDragOver ? "border-dashed border-2" : ""}`}
+                    draggable={false}
+                    style={{ cursor: "default" }}
+                  >
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                      <div className="flex items-center gap-3 min-w-0">
+                        {globalSelectMode && (
+                          <input
+                            type="checkbox"
+                            checked={stageSelected}
+                            onChange={() => toggleStageCheckbox(stageId)}
+                            className="w-4 h-4"
+                            aria-label={stageSelected ? "Deselect building" : "Select building"}
+                          />
+                        )}
 
-                      <div>
-                        <div className="text-base sm:text-lg font-semibold text-gray-800 truncate">{s.name}</div>
-                        {s.desc && <div className="text-sm text-gray-500 mt-1 truncate">{s.desc}</div>}
-                        <div className="text-xs text-gray-400 mt-1">ID: {stageId} • Pos: {s.position ?? index}</div>
+                        <div>
+                          <div className="text-base sm:text-lg font-semibold text-gray-800 truncate">{s.name}</div>
+                          {s.desc && <div className="text-sm text-gray-500 mt-1 truncate">{s.desc}</div>}
+                          <div className="text-xs text-gray-400 mt-1">ID: {stageId} </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 mt-3 sm:mt-0">
+                        {!globalSelectMode && !expanded && (
+                          <>
+                            <button onClick={() => setEditStage({ stageId, name: s.name ?? "", desc: s.desc ?? "", deleted: !!s.deleted })} className="px-3 py-1 rounded bg-indigo-50 text-sm">Edit</button>
+                            <button onClick={() => toggleExpandStage(stageId)} className="px-3 py-1 rounded bg-gray-50 text-sm">▼</button>
+                          </>
+                        )}
+
+                        {!globalSelectMode && expanded && (
+                          <>
+                            <button onClick={() => toggleExpandStage(stageId)} className="px-3 py-1 rounded bg-gray-50 text-sm">▲</button>
+                          </>
+                        )}
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2 mt-3 sm:mt-0">
-                      {!globalSelectMode && !expanded && (
-                        <>
-                          <button onClick={() => setEditStage({ stageId, name: s.name ?? "", desc: s.desc ?? "", deleted: !!s.deleted })} className="px-3 py-1 rounded bg-indigo-50 text-sm">Edit</button>
-                          <button onClick={() => toggleExpandStage(stageId)} className="px-3 py-1 rounded bg-gray-50 text-sm">▼</button>
-                        </>
-                      )}
+                    {expanded && (
+                      <div className="mt-4 border-t pt-4 space-y-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center items-start justify-between gap-3">
+                          <div className="text-sm text-gray-600">Sub-stages ({activeSubs.length})</div>
 
-                      {!globalSelectMode && expanded && (
-                        <>
-                          <button onClick={() => toggleExpandStage(stageId)} className="px-3 py-1 rounded bg-gray-50 text-sm">▲</button>
-                        </>
-                      )}
-                    </div>
-                  </div>
+                          <div className="flex items-center gap-2">
+                            {activeSubs.length > 0 && (
+                              <>
+                                <button
+                                  onClick={() => toggleStageSubSelectMode(stageId)}
+                                  className={`px-2 py-1 rounded text-sm ${stageSubSelectMode[stageId] ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-700'}`}
+                                  aria-pressed={!!stageSubSelectMode[stageId]}
+                                  title={stageSubSelectMode[stageId] ? 'Exit sub-stage select' : 'Select sub-stages'}
+                                >
+                                  {stageSubSelectMode[stageId] ? 'Done' : 'Select'}
+                                </button>
 
-                  {expanded && (
-                    <div className="mt-4 border-t pt-4 space-y-4">
-                      <div className="flex flex-col sm:flex-row sm:items-center items-start justify-between gap-3">
-                        <div className="text-sm text-gray-600">Sub-stages ({activeSubs.length})</div>
+                                {stageSubSelectMode[stageId] && selectedSubstages[stageId] && selectedSubstages[stageId].size > 0 && (
+                                  <>
+                                    <button
+                                      onClick={() => requestDeleteSelectedSubstages(stageId)}
+                                      disabled={!(selectedSubstages[stageId] && selectedSubstages[stageId].size > 0)}
+                                      className={`px-3 py-1 rounded ${!(selectedSubstages[stageId] && selectedSubstages[stageId].size > 0) ? "bg-red-100 text-red-300 cursor-not-allowed" : "bg-red-600 text-white"} text-sm`}
+                                      title={!(selectedSubstages[stageId] && selectedSubstages[stageId].size > 0) ? "No sub-stages selected" : `Delete selected (${selectedSubstages[stageId].size})`}
+                                    >
+                                      Delete selected ({selectedSubstages[stageId]?.size ?? 0})
+                                    </button>
 
-                        {/* Per-stage select toggle (button). Only show it if there are substages (activeSubs.length > 0). */}
-                        <div className="flex items-center gap-2">
-                          {activeSubs.length > 0 && (
-                            <>
-                              <button
-                                onClick={() => toggleStageSubSelectMode(stageId)}
-                                className={`px-2 py-1 rounded text-sm ${stageSubSelectMode[stageId] ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-700'}`}
-                                aria-pressed={!!stageSubSelectMode[stageId]}
-                                title={stageSubSelectMode[stageId] ? 'Exit sub-stage select' : 'Select sub-stages'}
-                              >
-                                {stageSubSelectMode[stageId] ? 'Done' : 'Select'}
-                              </button>
+                                    <button
+                                      onClick={() => deselectAllSubstagesFor(stageId)}
+                                      className="px-3 py-1 rounded bg-gray-200 text-gray-700 text-sm"
+                                      title="Deselect all selected sub-stages in this building"
+                                    >
+                                      Deselect all
+                                    </button>
+                                  </>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        </div>
 
-                              {/* Render delete selected and deselect all only when there are selected substages */}
-                              {stageSubSelectMode[stageId] && selectedSubstages[stageId] && selectedSubstages[stageId].size > 0 && (
-                                <>
-                                  <button
-                                    onClick={() => requestDeleteSelectedSubstages(stageId)}
-                                    disabled={!(selectedSubstages[stageId] && selectedSubstages[stageId].size > 0)}
-                                    className={`px-3 py-1 rounded ${!(selectedSubstages[stageId] && selectedSubstages[stageId].size > 0) ? "bg-red-100 text-red-300 cursor-not-allowed" : "bg-red-600 text-white"} text-sm`}
-                                    title={!(selectedSubstages[stageId] && selectedSubstages[stageId].size > 0) ? "No sub-stages selected" : `Delete selected (${selectedSubstages[stageId].size})`}
-                                  >
-                                    Delete selected ({selectedSubstages[stageId]?.size ?? 0})
-                                  </button>
-
-                                  <button
-                                    onClick={() => deselectAllSubstagesFor(stageId)}
-                                    className="px-3 py-1 rounded bg-gray-200 text-gray-700 text-sm"
-                                    title="Deselect all selected sub-stages in this stage"
-                                  >
-                                    Deselect all
-                                  </button>
-                                </>
-                              )}
-                            </>
+                        <div className="space-y-2 max-h-[50vh] sm:max-h-[40vh] overflow-auto">
+                          {activeSubs.length === 0 ? (
+                            <div className="text-xs text-gray-500">No sub-stages</div>
+                          ) : (
+                            activeSubs.map((ss, i) => renderSubstageRow(stageId, ss, i))
                           )}
                         </div>
-                      </div>
 
-                      <div className="space-y-2 max-h-[50vh] sm:max-h-[40vh] overflow-auto">
-                        {activeSubs.length === 0 ? (
-                          <div className="text-xs text-gray-500">No sub-stages</div>
-                        ) : (
-                          activeSubs.map((ss, i) => renderSubstageRow(stageId, ss, i))
-                        )}
-                      </div>
-
-                      <div className="mt-2">
-                        {!showAddFormFor || showAddFormFor !== stageId ? (
-                          <button onClick={() => setShowAddFormFor(stageId)} className="px-3 py-1 rounded bg-green-50 text-sm w-full sm:w-auto">+ Add Sub-stage</button>
-                        ) : (
-                          <form onSubmit={(e) => {
-                            e.preventDefault();
-                            const fd = new FormData(e.target);
-                            const payload = {
-                              name: (fd.get("sname") || "").toString().trim(),
-                              desc: (fd.get("sdesc") || "").toString().trim() || undefined,
-                              deleted: false,
-                              position: fd.get("position") ? Number(fd.get("position")) : undefined
-                            };
-                            submitAddSubstage(e, stageId, payload);
-                          }} className="bg-gray-50 p-3 rounded w-full">
-                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2">
-                              <input name="sname" placeholder="Name" className="md:col-span-2 p-2 border rounded w-full" />
-                              <input name="sdesc" placeholder="Description" className="p-2 border rounded w-full" />
-                              <input name="position" placeholder="Position (optional)" className="p-2 border rounded w-full" />
-                            </div>
-                            <div className="mt-2 flex flex-col sm:flex-row gap-2">
-                              <button type="submit" className="px-3 py-1 bg-blue-600 text-white rounded w-full sm:w-auto">Add</button>
-                              <button type="button" onClick={() => setShowAddFormFor(null)} className="px-3 py-1 border rounded w-full sm:w-auto">Cancel</button>
-                            </div>
-                          </form>
-                        )}
-                      </div>
-
-                      {showDeletedLink && (
-                        <div className="mt-2 flex flex-col sm:flex-row sm:justify-end items-center gap-3">
-                          <button onClick={() => toggleShowDeletedInline(stageId)} className="text-sm text-indigo-600 underline">
-                            {showDeletedInExpanded[stageId] ? "Hide deleted sub-stages" : `Deleted sub-stages (${mergedDeleted.length})`}
-                          </button>
-                          {!showDeletedInExpanded[stageId] && <div className="text-xs text-gray-400"></div>}
-                        </div>
-                      )}
-
-                      {showDeletedInExpanded[stageId] && (
-                        <div className="mt-3 bg-gray-50 p-3 rounded border">
-                          {mergedDeleted.length === 0 ? (
-                            <div className="text-xs text-gray-500">No deleted sub-stages</div>
+                        <div className="mt-2">
+                          {!showAddFormFor || showAddFormFor !== stageId ? (
+                            <button onClick={() => setShowAddFormFor(stageId)} className="px-3 py-1 rounded bg-green-50 text-sm w-full sm:w-auto">+ Add Sub-stage</button>
                           ) : (
-                            <div className="space-y-2">
-                              {mergedDeleted.map(sub => {
-                                const subId = getSubId(sub);
+                            <form onSubmit={(e) => {
+                              e.preventDefault();
+                              const fd = new FormData(e.target);
+                              const payload = {
+                                name: (fd.get("sname") || "").toString().trim(),
+                                desc: (fd.get("sdesc") || "").toString().trim() || undefined,
+                                deleted: false,
+                                position: fd.get("position") ? Number(fd.get("position")) : undefined
+                              };
+                              submitAddSubstage(e, stageId, payload);
+                            }} className="bg-gray-50 p-3 rounded w-full">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2">
+                                <input name="sname" placeholder="Name" className="md:col-span-2 p-2 border rounded w-full" />
+                                <input name="sdesc" placeholder="Description" className="p-2 border rounded w-full" />
+                                <input name="position" placeholder="Position (optional)" className="p-2 border rounded w-full" />
+                              </div>
+                              <div className="mt-2 flex flex-col sm:flex-row gap-2">
+                                <button type="submit" className="px-3 py-1 bg-blue-600 text-white rounded w-full sm:w-auto">Add</button>
+                                <button type="button" onClick={() => setShowAddFormFor(null)} className="px-3 py-1 border rounded w-full sm:w-auto">Cancel</button>
+                              </div>
+                            </form>
+                          )}
+                        </div>
+
+                        {showDeletedLink && (
+                          <div className="mt-2 flex flex-col sm:flex-row sm:justify-end items-center gap-3">
+                            <button onClick={() => toggleShowDeletedInline(stageId)} className="text-sm text-indigo-600 underline">
+                              {showDeletedInExpanded[stageId] ? "Hide deleted sub-stages" : `Deleted sub-stages (${mergedDeleted.length})`}
+                            </button>
+                            {!showDeletedInExpanded[stageId] && <div className="text-xs text-gray-400"></div>}
+                          </div>
+                        )}
+
+                        {showDeletedInExpanded[stageId] && (
+                          <div className="mt-3 bg-gray-50 p-3 rounded border">
+                            {mergedDeleted.length === 0 ? (
+                              <div className="text-xs text-gray-500">No deleted sub-stages</div>
+                            ) : (
+                              <div className="space-y-2">
+                                {mergedDeleted.map(sub => {
+                                  const subId = getSubId(sub);
+                                  return (
+                                    <div key={String(subId)} className="p-2 bg-white border rounded">
+                                      <div className={`${sub.deleted ? "line-through text-gray-400" : "text-gray-800"} font-medium`}>{sub.name}</div>
+                                      {sub.desc && <div className="text-xs text-gray-500 mt-1">{sub.desc}</div>}
+                                      <div className="text-xs text-gray-400 mt-1">ID: {subId}{sub.deleted ? " (deleted)" : ""}</div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        )}
+
+        {/* Center: toggle deleted buildings (global) */}
+        <div className="mt-4">
+          <div className="flex justify-center">
+            <button onClick={toggleDeletedStagesGlobal} className="text-sm text-indigo-600 underline px-2 py-1">
+              {showDeletedStages ? "Hide deleted buildings" : "Show deleted buildings"}
+            </button>
+          </div>
+
+          {showDeletedStages && (
+            <div className="mt-7 ">
+              {deletedStagesLoading ? (
+                <div className="text-sm text-gray-600">Loading deleted buildings…</div>
+              ) : deletedStagesError ? (
+                <div className="text-sm text-red-600">{deletedStagesError}</div>
+              ) : deletedStagesCache.length === 0 ? (
+                <div className="text-sm text-gray-500">No deleted buildings</div>
+              ) : (
+                <div className="space-y-4">
+                  {deletedStagesCache.map(ds => {
+                    const id = ds.typeId ?? ds.type_id ?? ds.stageId ?? ds.stage_id ?? ds.id ?? ds.optionId;
+                    const dsSub = ds.stages ?? ds.subStages ?? ds.sub_stages ?? [];
+                    const isExpanded = expandedDeletedStageIds.has(id);
+                    return (
+                      <div key={String(id)} className="p-4 border rounded-xl bg-gray-100 ">
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="min-w-0">
+                            <div className="font-medium truncate">{ds.name}</div>
+                            {ds.desc && <div className="text-xs text-gray-500 mt-1">{ds.desc}</div>}
+                            <div className="text-xs text-gray-400 mt-1">ID: {id}</div>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => toggleExpandDeletedStage(id)}
+                              className="px-2 py-1 rounded bg-gray-100 text-sm"
+                              title={isExpanded ? "Collapse" : "Expand"}
+                            >
+                              {isExpanded ? "▲" : "▼"}
+                            </button>
+                          </div>
+                        </div>
+
+                        {isExpanded && (
+                          <div className="mt-3 space-y-2">
+                            {Array.isArray(dsSub) && dsSub.length > 0 ? (
+                              dsSub.map(sub => {
+                                const subId = sub.subStageId ?? sub.sub_stage_id ?? sub.id ?? sub.sub_id ?? sub.subId ?? sub.stageId ?? sub.name;
                                 return (
-                                  <div key={String(subId)} className="p-2 bg-white border rounded">
+                                  <div key={String(subId)} className="p-2 bg-gray-50 border rounded">
                                     <div className={`${sub.deleted ? "line-through text-gray-400" : "text-gray-800"} font-medium`}>{sub.name}</div>
                                     {sub.desc && <div className="text-xs text-gray-500 mt-1">{sub.desc}</div>}
                                     <div className="text-xs text-gray-400 mt-1">ID: {subId}{sub.deleted ? " (deleted)" : ""}</div>
                                   </div>
                                 );
-                              })}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-
-            {/* Single global deleted-stages link (placed after all stage cards) */}
-            <div className="mt-4">
-              <div className="flex justify-center">
-                <button onClick={toggleDeletedStagesGlobal} className="text-sm text-indigo-600 underline px-2 py-1">
-                  {showDeletedStages ? "Hide deleted stages" : "Show deleted stages"}
-                </button>
-              </div>
-
-              {showDeletedStages && (
-                <div className="mt-7 ">
-                  {deletedStagesLoading ? (
-                    <div className="text-sm text-gray-600">Loading deleted stages…</div>
-                  ) : deletedStagesError ? (
-                    <div className="text-sm text-red-600">{deletedStagesError}</div>
-                  ) : deletedStagesCache.length === 0 ? (
-                    <div className="text-sm text-gray-500">No deleted stages</div>
-                  ) : (
-                    <div className="space-y-4">
-                      {deletedStagesCache.map(ds => {
-                        const id = ds.stageId ?? ds.stage_id ?? ds.id ?? ds.optionId;
-                        const dsSub = ds.stages ?? ds.subStages ?? ds.sub_stages ?? [];
-                        const isExpanded = expandedDeletedStageIds.has(id);
-                        return (
-                          <div key={String(id)} className="p-4 border rounded-xl bg-gray-100 ">
-                            <div className="flex items-start justify-between gap-4">
-                              <div className="min-w-0">
-                                <div className="font-medium truncate">{ds.name}</div>
-                                {ds.desc && <div className="text-xs text-gray-500 mt-1">{ds.desc}</div>}
-                                <div className="text-xs text-gray-400 mt-1">ID: {id}</div>
-                              </div>
-
-                              <div className="flex items-center gap-2">
-                                <button
-                                  onClick={() => toggleExpandDeletedStage(id)}
-                                  className="px-2 py-1 rounded bg-gray-100 text-sm"
-                                  title={isExpanded ? "Collapse" : "Expand"}
-                                >
-                                  {isExpanded ? "▲" : "▼"}
-                                </button>
-                              </div>
-                            </div>
-
-                            {isExpanded && (
-                              <div className="mt-3 space-y-2">
-                                {Array.isArray(dsSub) && dsSub.length > 0 ? (
-                                  dsSub.map(sub => {
-                                    const subId = sub.subStageId ?? sub.sub_stage_id ?? sub.id ?? sub.sub_id ?? sub.subId ?? sub.stageId ?? sub.name;
-                                    return (
-                                      <div key={String(subId)} className="p-2 bg-gray-50 border rounded">
-                                        <div className={`${sub.deleted ? "line-through text-gray-400" : "text-gray-800"} font-medium`}>{sub.name}</div>
-                                        {sub.desc && <div className="text-xs text-gray-500 mt-1">{sub.desc}</div>}
-                                        <div className="text-xs text-gray-400 mt-1">ID: {subId}{sub.deleted ? " (deleted)" : ""}</div>
-                                      </div>
-                                    );
-                                  })
-                                ) : (
-                                  <div className="text-xs text-gray-500">No sub-stages</div>
-                                )}
-                              </div>
+                              })
+                            ) : (
+                              <div className="text-xs text-gray-500">No sub-stages</div>
                             )}
                           </div>
-                        );
-                      })}
-                    </div>
-                  )}
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
-        {/* Edit stage modal */}
+        {/* Edit building modal (PUT /buildings/<buildingId>/<villageId>) */}
         {editStage && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40 p-4">
             <div className="bg-white rounded-lg shadow-lg p-4 w-full max-w-md sm:max-w-lg md:max-w-xl mx-3 sm:mx-0">
               <div className="flex items-center justify-between mb-3">
-                <h4 className="font-semibold">Edit Stage</h4>
+                <h4 className="font-semibold">Edit Building</h4>
                 <button onClick={() => setEditStage(null)} className="text-gray-500">✕</button>
               </div>
               <form onSubmit={async (e) => { e.preventDefault(); try {
+                    if (!villageId) throw new Error("Missing villageId; cannot update building.");
                     const payload = { name: editStage.name, desc: editStage.desc, deleted: !!editStage.deleted };
-                    const res = await fetch(`https://villagerelocation.onrender.com/options/${encodeURIComponent(editStage.stageId)}`, {
+                    const res = await fetch(`${API_BASE}/buildings/${encodeURIComponent(editStage.stageId)}/${encodeURIComponent(villageId)}`, {
                       method: 'PUT', headers: authHeaders(), body: JSON.stringify(payload)
                     });
                     if (!res.ok) { const t = await res.text().catch(()=> ''); throw new Error(`${res.status} ${t}`); }
@@ -1175,13 +1328,13 @@ export default function StagePage() {
           </div>
         )}
 
-        {/* Centered confirmation modal for pending substage reorder */}
+        {/* Confirm pending substage reorder */}
         {pendingSubstageReorder && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40 p-4">
             <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-md mx-3 sm:mx-0">
               <h3 className="text-lg font-semibold mb-2">Confirm sub-stage reorder</h3>
               <div className="text-sm text-gray-700 mb-4">
-                Move "<span className="font-medium">{pendingSubstageReorder.moved?.name ?? pendingSubstageReorder.movedId}</span>" to position <span className="font-medium">{pendingSubstageReorder.insertAt}</span> in stage <span className="font-medium">{(stages[pendingSubstageReorder.stageIndex]?.name) ?? pendingSubstageReorder.stageId}</span>?
+                Move "<span className="font-medium">{pendingSubstageReorder.moved?.name ?? pendingSubstageReorder.movedId}</span>" to position <span className="font-medium">{pendingSubstageReorder.insertAt}</span> in building <span className="font-medium">{(stages[pendingSubstageReorder.stageIndex]?.name) ?? pendingSubstageReorder.stageId}</span>?
               </div>
               {error && <div className="text-sm text-red-600 mb-3">{error}</div>}
               <div className="flex justify-end gap-2">
@@ -1192,20 +1345,20 @@ export default function StagePage() {
           </div>
         )}
 
-        {/* Centered confirmation modal for delete operations */}
+        {/* Delete confirmation modal */}
         {deleteConfirm && (
           <div className="fixed inset-0 z-60 flex items-center justify-center bg-black bg-opacity-40 p-4">
             <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-md mx-3 sm:mx-0">
               <h3 className="text-lg font-semibold mb-2">Confirm delete</h3>
               <div className="text-sm text-gray-700 mb-4">
                 {deleteConfirm.type === 'stage' && (
-                  <>Are you sure you want to delete stage "<span className="font-medium">{deleteConfirm.name ?? deleteConfirm.stageId}</span>"?</>
+                  <>Are you sure you want to delete building "<span className="font-medium">{deleteConfirm.name ?? deleteConfirm.stageId}</span>"?</>
                 )}
                 {deleteConfirm.type === 'substage' && (
                   <>Are you sure you want to delete sub-stage "<span className="font-medium">{deleteConfirm.name ?? deleteConfirm.subStageId}</span>"?</>
                 )}
                 {deleteConfirm.type === 'multipleStages' && (
-                  <>Are you sure you want to delete <span className="font-medium">{(deleteConfirm.ids || []).length}</span> selected stages?</>
+                  <>Are you sure you want to delete <span className="font-medium">{(deleteConfirm.ids || []).length}</span> selected buildings?</>
                 )}
                 {deleteConfirm.type === 'multipleSubstages' && (
                   <>Are you sure you want to delete <span className="font-medium">{(deleteConfirm.ids || []).length}</span> selected sub-stages?</>

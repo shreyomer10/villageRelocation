@@ -452,7 +452,7 @@ export default function MeetingsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-yellow-50 to-white font-sans">
+    <div className="min-h-screen bg-[#f8f0dc] font-sans">
       <MainNavbar village={villageIdState} showVillageInNavbar={true} />
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-6">

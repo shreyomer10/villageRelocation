@@ -504,13 +504,27 @@ export default function VillageDashboard() {
             >
               Docs
             </button>
+            <button
+  onClick={() => navigate(`/plots`)}
+  className="bg-yellow-50 hover:bg-yellow-100 px-4 py-2 rounded-2xl shadow text-sm font-medium"
+  title="Open meetings for this village"
+>
+  Plots
+</button>
 
             <button
-  onClick={() => navigate(`/meetings/${villageIdState ?? effectiveVillageId}`)}
+  onClick={() => navigate(`/meetings`)}
   className="bg-yellow-50 hover:bg-yellow-100 px-4 py-2 rounded-2xl shadow text-sm font-medium"
   title="Open meetings for this village"
 >
   Meetings
+</button>
+<button
+  onClick={() => navigate(`/buildings`)}
+  className="bg-yellow-50 hover:bg-yellow-100 px-4 py-2 rounded-2xl shadow text-sm font-medium"
+  title="Open meetings for this village"
+>
+  Buildings
 </button>
 
           </div>
