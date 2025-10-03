@@ -1,3 +1,8 @@
-// export the API base so frontend endpoints are centralised and easy to change
-export const API_BASE = "https://villagerelocation.onrender.com";
-// (change above to your dev/prod backend URL as required)
+// src/config/Api.js
+// Expose API_BASE to the frontend. Use Vite env var VITE_API_BASE if present,
+// otherwise fall back to a sensible default.
+
+export const API_BASE =
+  (import.meta.env && import.meta.env.VITE_API_BASE) ||
+  process.env.REACT_APP_API_BASE || // just in case someone used CRA-style
+  "https://villagerelocation.onrender.com";
