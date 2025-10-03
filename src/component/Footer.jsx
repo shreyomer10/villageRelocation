@@ -1,4 +1,4 @@
-// src/components/Footer.jsx
+﻿// src/components/Footer.jsx
 import React from "react";
 
 export default function Footer() {
@@ -88,7 +88,7 @@ export default function Footer() {
 
         <div className="flex flex-col md:flex-row items-center justify-between gap-3">
           <div className="text-sm text-white/80">
-            © {new Date().getFullYear()} Forest Department, Government of Chhattisgarh. All rights reserved.
+            Â© {new Date().getFullYear()} Forest Department, Government of Chhattisgarh. All rights reserved.
           </div>
 
           <div className="flex items-center gap-4 text-sm text-white/80">

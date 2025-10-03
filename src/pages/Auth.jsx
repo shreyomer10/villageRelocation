@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useContext } from "react";
+﻿import React, { useState, useRef, useEffect, useContext } from "react";
 import { useNavigate } from "react-router-dom";
 import { AuthContext } from "../context/AuthContext";
 
@@ -228,7 +228,7 @@ export default function Auth() {
       });
       if (!mountedRef.current) return;
       if (!ok) {
-        setInfo("Registered — please sign in.");
+        setInfo("Registered â€” please sign in.");
         setMode("login");
         return;
       }
@@ -236,7 +236,7 @@ export default function Auth() {
       navigate("/dashboard");
     } catch (err) {
       setMode("login");
-      setInfo("Registered — please sign in.");
+      setInfo("Registered â€” please sign in.");
     }
   }
 
@@ -250,7 +250,7 @@ export default function Auth() {
     const ok = await verifyOtp("forgot");
     if (ok) {
       setForgotStep("verified");
-      setInfo("OTP verified — set your new password below.");
+      setInfo("OTP verified â€” set your new password below.");
     }
   }
 
@@ -473,7 +473,7 @@ export default function Auth() {
         <button onClick={fillTest} className="mt-3 text-sm text-gray-600 underline">Fill test credentials</button>
 
         <div className="mt-8">
-          <h1 className="text-3xl font-bold text-gray-800">माटी</h1>
+          <h1 className="text-3xl font-bold text-gray-800">à¤®à¤¾à¤Ÿà¥€</h1>
           <p className="text-m font-bold text-gray-600 tracking-wide">MAATI</p>
         </div>
       </div>

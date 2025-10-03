@@ -1,4 +1,4 @@
-import React from "react";
+﻿import React from "react";
 
 export default function MainNavbar({ name = "$Name", logoUrl = "/images/logo.png" }) {
   return (
@@ -11,7 +11,7 @@ export default function MainNavbar({ name = "$Name", logoUrl = "/images/logo.png
             <img
               src={logoUrl}
               alt="logo"
-              className="w-20 h-20 object-contain" // ✅ bigger (80x80px) and full image
+              className="w-20 h-20 object-contain" // âœ… bigger (80x80px) and full image
             />
 
             {/* Welcome text */}
@@ -21,7 +21,7 @@ export default function MainNavbar({ name = "$Name", logoUrl = "/images/logo.png
           {/* Right side: MAATI text */}
           <div className="text-right">
             <div className="text-[#4a3529] font-bold text-2xl leading-none">
-              माटी
+              à¤®à¤¾à¤Ÿà¥€
             </div>
             <div className="text-sm text-[#4a3529] tracking-wider">MAATI</div>
           </div>

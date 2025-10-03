@@ -1,4 +1,4 @@
-// src/components/FamilyCard.jsx
+﻿// src/components/FamilyCard.jsx
 import React from "react";
 
 export default function FamilyCard({ family, onView }) {

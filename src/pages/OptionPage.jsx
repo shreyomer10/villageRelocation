@@ -1,10 +1,10 @@
-import React, { useEffect, useRef, useState } from "react";
+﻿import React, { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import MainNavbar from "../component/MainNavbar";
 import { API_BASE } from "../config/Api.js"
 
 /**
- * StagePage.jsx — updated/fixed
+ * StagePage.jsx â€” updated/fixed
  * - Error state now shows before empty-list UI.
  * - Deleted-stages link is shown always (regardless of whether stages exist).
  * - Deleted-stages panel rendering moved outside main stages conditional so it's always reachable.
@@ -895,7 +895,7 @@ async function toggleShowDeletedInline(stageId) {
               onClick={() => navigate("/dashboard")}
               className="px-3 py-2 border rounded-md bg-white text-sm"
             >
-              ← Back
+              â† Back
             </button>
           </div>
 
@@ -974,7 +974,7 @@ async function toggleShowDeletedInline(stageId) {
             </div>
 
             <div className="mt-4 flex gap-2 flex-col sm:flex-row justify-center">
-              <button type="submit" className="px-10 py-2 bg-blue-600 text-white rounded w-full sm:w-auto">{creating ? "Creating…" : "Create"}</button>
+              <button type="submit" className="px-10 py-2 bg-blue-600 text-white rounded w-full sm:w-auto">{creating ? "Creatingâ€¦" : "Create"}</button>
               <button type="button" onClick={() => setShowCreatePanel(false)} className="px-10 py-2 border rounded w-full sm:w-auto">Cancel</button>
             </div>
           </form>
@@ -982,7 +982,7 @@ async function toggleShowDeletedInline(stageId) {
 
         {/* show loading/error/main content with correct precedence */}
         {loading ? (
-          <div className="text-center py-8">Loading stages…</div>
+          <div className="text-center py-8">Loading stagesâ€¦</div>
         ) : error ? (
           <div className="text-red-600 py-6 whitespace-pre-wrap">{error}</div>
         ) : (
@@ -1044,13 +1044,13 @@ async function toggleShowDeletedInline(stageId) {
                         {!globalSelectMode && !expanded && (
                           <>
                             <button onClick={() => setEditStage({ stageId, name: s.name ?? "", desc: s.desc ?? "", deleted: !!s.deleted })} className="px-3 py-1 rounded bg-indigo-50 text-sm">Edit</button>
-                            <button onClick={() => toggleExpandStage(stageId)} className="px-3 py-1 rounded bg-gray-50 text-sm">▼</button>
+                            <button onClick={() => toggleExpandStage(stageId)} className="px-3 py-1 rounded bg-gray-50 text-sm">â–¼</button>
                           </>
                         )}
 
                         {!globalSelectMode && expanded && (
                           <>
-                            <button onClick={() => toggleExpandStage(stageId)} className="px-3 py-1 rounded bg-gray-50 text-sm">▲</button>
+                            <button onClick={() => toggleExpandStage(stageId)} className="px-3 py-1 rounded bg-gray-50 text-sm">â–²</button>
                           </>
                         )}
                       </div>
@@ -1185,7 +1185,7 @@ async function toggleShowDeletedInline(stageId) {
           {showDeletedStages && (
             <div className="mt-7 ">
               {deletedStagesLoading ? (
-                <div className="text-sm text-gray-600">Loading deleted stages…</div>
+                <div className="text-sm text-gray-600">Loading deleted stagesâ€¦</div>
               ) : deletedStagesError ? (
                 <div className="text-sm text-red-600">{deletedStagesError}</div>
               ) : deletedStagesCache.length === 0 ? (
@@ -1211,7 +1211,7 @@ async function toggleShowDeletedInline(stageId) {
                               className="px-2 py-1 rounded bg-gray-100 text-sm"
                               title={isExpanded ? "Collapse" : "Expand"}
                             >
-                              {isExpanded ? "▲" : "▼"}
+                              {isExpanded ? "â–²" : "â–¼"}
                             </button>
                           </div>
                         </div>
@@ -1249,7 +1249,7 @@ async function toggleShowDeletedInline(stageId) {
             <div className="bg-white rounded-lg shadow-lg p-4 w-full max-w-md sm:max-w-lg md:max-w-xl mx-3 sm:mx-0">
               <div className="flex items-center justify-between mb-3">
                 <h4 className="font-semibold">Edit Stage</h4>
-                <button onClick={() => setEditStage(null)} className="text-gray-500">✕</button>
+                <button onClick={() => setEditStage(null)} className="text-gray-500">âœ•</button>
               </div>
               <form onSubmit={async (e) => { e.preventDefault(); try {
                     const payload = { name: editStage.name, desc: editStage.desc, deleted: !!editStage.deleted };
@@ -1290,7 +1290,7 @@ async function toggleShowDeletedInline(stageId) {
             <div className="bg-white rounded-lg shadow-lg p-4 w-full max-w-md sm:max-w-lg md:max-w-xl mx-3 sm:mx-0">
               <div className="flex items-center justify-between mb-3">
                 <h4 className="font-semibold">Edit Sub-stage</h4>
-                <button onClick={() => setEditSubstage(null)} className="text-gray-500">✕</button>
+                <button onClick={() => setEditSubstage(null)} className="text-gray-500">âœ•</button>
               </div>
               <form onSubmit={submitEditSubstage} className="space-y-3">
                 <div>
@@ -1321,7 +1321,7 @@ async function toggleShowDeletedInline(stageId) {
               {error && <div className="text-sm text-red-600 mb-3">{error}</div>}
               <div className="flex justify-end gap-2">
                 <button onClick={cancelSubstageReorder} disabled={!!persistingSubstage} className="px-4 py-2 border rounded">Cancel</button>
-                <button onClick={confirmSubstageReorder} disabled={!!persistingSubstage} className="px-4 py-2 bg-blue-600 text-white rounded">{persistingSubstage ? "Saving…" : "Confirm"}</button>
+                <button onClick={confirmSubstageReorder} disabled={!!persistingSubstage} className="px-4 py-2 bg-blue-600 text-white rounded">{persistingSubstage ? "Savingâ€¦" : "Confirm"}</button>
               </div>
             </div>
           </div>
@@ -1351,7 +1351,7 @@ async function toggleShowDeletedInline(stageId) {
 
               <div className="flex justify-end gap-2">
                 <button onClick={() => setDeleteConfirm(null)} disabled={performingDelete} className="px-4 py-2 border rounded">Cancel</button>
-                <button onClick={performDeleteConfirmed} disabled={performingDelete} className="px-4 py-2 bg-red-600 text-white rounded">{performingDelete ? "Deleting…" : "Delete"}</button>
+                <button onClick={performDeleteConfirmed} disabled={performingDelete} className="px-4 py-2 bg-red-600 text-white rounded">{performingDelete ? "Deletingâ€¦" : "Delete"}</button>
               </div>
             </div>
           </div>

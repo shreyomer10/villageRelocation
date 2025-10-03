@@ -1,4 +1,4 @@
-// src/components/FamilyModal.jsx
+﻿// src/components/FamilyModal.jsx
 import React, { useEffect, useState } from "react";
 import { X } from "lucide-react";
 
@@ -75,9 +75,9 @@ const headers = token
   const members = Array.isArray(data?.members) ? data.members : [];
   const mukhiyaName = data?.mukhiyaName ?? data?.mukhiyaName ?? "Unknown";
   const mukhiyaPhoto = data?.mukhiyaPhoto ?? "/images/default-avatar.png";
-  const mukhiyaAge = data?.mukhiyaAge ?? data?.mukhiyaAge ?? "—";
-  const mukhiyaHealth = data?.mukhiyaHealth ?? "—";
-  const familyIdentifier = data?.familyId ?? data?.familyId ?? "—";
+  const mukhiyaAge = data?.mukhiyaAge ?? data?.mukhiyaAge ?? "â€”";
+  const mukhiyaHealth = data?.mukhiyaHealth ?? "â€”";
+  const familyIdentifier = data?.familyId ?? data?.familyId ?? "â€”";
   const photos = Array.isArray(data?.photos) ? data.photos : [];
   const landPhoto = photos[0] ?? "/images/default-land.png";
   const docs = Array.isArray(data?.docs) ? data.docs : [];
@@ -103,7 +103,7 @@ const headers = token
           <div className="rounded-2xl border-2 border-gray-100 p-6 bg-white">
             {loading ? (
               <div className="py-20 text-center text-gray-600">
-                Loading family details…
+                Loading family detailsâ€¦
               </div>
             ) : error ? (
               <div className="py-8 text-center text-red-600">
@@ -130,10 +130,10 @@ const headers = token
                           {mukhiyaName}
                         </div>
                         <div className="text-sm text-gray-600 mt-1">
-                          Age: {mukhiyaAge ?? "—"}
+                          Age: {mukhiyaAge ?? "â€”"}
                         </div>
                         <div className="text-sm text-gray-600">
-                          Health Status: {mukhiyaHealth ?? "—"}
+                          Health Status: {mukhiyaHealth ?? "â€”"}
                         </div>
                         <div className="text-xs text-gray-500 mt-1">
                           Family ID: {familyIdentifier}
@@ -164,7 +164,7 @@ const headers = token
                               </div>
                               <div className="text-xs text-gray-500">
                                 {m.age ? `${m.age} yrs` : ""}
-                                {m.relation ? ` • ${m.relation}` : ""}
+                                {m.relation ? ` â€¢ ${m.relation}` : ""}
                               </div>
                             </div>
                           </div>
@@ -235,8 +235,8 @@ const headers = token
                       other details
                     </div>
                     <div className="mt-3 text-sm text-gray-500">
-                      Mukhiya ID: {data?.mukhiyaId ?? "—"} • Updated:{" "}
-                      {updatedAt ? updatedAt.toLocaleDateString() : "—"}
+                      Mukhiya ID: {data?.mukhiyaId ?? "â€”"} â€¢ Updated:{" "}
+                      {updatedAt ? updatedAt.toLocaleDateString() : "â€”"}
                     </div>
                   </div>
                 </div>

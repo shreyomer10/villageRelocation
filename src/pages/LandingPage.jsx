@@ -1,4 +1,4 @@
-// src/pages/LandingPage.jsx
+﻿// src/pages/LandingPage.jsx
 import React, { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -402,7 +402,7 @@ function FaqSection({ faq }) {
             <h2 className="text-xl md:text-2xl font-semibold text-emerald-50">Frequently Asked Questions</h2>
           </div>
 
-          {faq?.title && <div className="text-sm text-emerald-100 mt-3">{faq.title} {faq?.totalQuestions ? `· ${faq.totalQuestions} Qs` : ''}</div>}
+          {faq?.title && <div className="text-sm text-emerald-100 mt-3">{faq.title} {faq?.totalQuestions ? `Â· ${faq.totalQuestions} Qs` : ''}</div>}
         </div>
 
         <div className="mt-4">
@@ -504,7 +504,7 @@ function Footer({ contact }) {
         <hr className="my-6 border-white/10" />
 
         <div className="flex flex-col md:flex-row items-center justify-between gap-3">
-          <div className="text-sm text-white/80">© {new Date().getFullYear()} Forest Department, Government of Chhattisgarh. All rights reserved.</div>
+          <div className="text-sm text-white/80">Â© {new Date().getFullYear()} Forest Department, Government of Chhattisgarh. All rights reserved.</div>
 
           <div className="flex items-center gap-4 text-sm text-white/80">
             {website ? <a href={website} target="_blank" rel="noreferrer" className="hover:underline">Official website</a> : null}
@@ -689,7 +689,7 @@ export default function LandingPage() {
       <main className="max-w-6xl mx-auto p-6 space-y-10">
         {loading && (
           <div className="rounded border border-gray-200 bg-white p-4 shadow-sm">
-            <p className="text-sm text-gray-600">Loading content from server…</p>
+            <p className="text-sm text-gray-600">Loading content from serverâ€¦</p>
           </div>
         )}
 
@@ -705,7 +705,7 @@ export default function LandingPage() {
             <h2 className="mb-4 text-xl font-bold text-[#1b5e20]">Relocation Guidelines</h2>
             {guidelines ? (
               <>
-                <div className="text-sm text-gray-500 mb-2">Version: {guidelines.version ?? "-"} · Last updated: {fmtDate(guidelines.lastUpdated)}</div>
+                <div className="text-sm text-gray-500 mb-2">Version: {guidelines.version ?? "-"} Â· Last updated: {fmtDate(guidelines.lastUpdated)}</div>
                 {guidelines.title && <h3 className="text-lg font-semibold">{guidelines.title}</h3>}
                 {guidelines.content && <p className="text-gray-700 whitespace-pre-line">{guidelines.content}</p>}
 

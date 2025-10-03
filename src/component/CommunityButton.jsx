@@ -1,4 +1,4 @@
-// File: src/component/CommunityModal.jsx
+﻿// File: src/component/CommunityModal.jsx
 import React, { useEffect, useRef, useState } from "react";
 
 /**
@@ -226,7 +226,7 @@ export default function CommunityModal({ villageId, onClose }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40 p-4">
       <div className="w-full max-w-4xl bg-white rounded-lg shadow-lg overflow-auto max-h-[90vh]">
         <div className="flex items-center justify-between p-4 border-b">
-          <h3 className="text-lg font-semibold">Community Buildings — {villageId}</h3>
+          <h3 className="text-lg font-semibold">Community Buildings â€” {villageId}</h3>
           <div className="flex items-center gap-2">
             <button
               onClick={() => {
@@ -255,7 +255,7 @@ export default function CommunityModal({ villageId, onClose }) {
                 />
                 <input
                   className="p-2 border rounded"
-                  placeholder="Stages (comma separated names) — optional"
+                  placeholder="Stages (comma separated names) â€” optional"
                   value={form.stagesText}
                   onChange={(e) => setForm((f) => ({ ...f, stagesText: e.target.value }))}
                 />
@@ -274,7 +274,7 @@ export default function CommunityModal({ villageId, onClose }) {
 
           <div>
             {loading ? (
-              <div className="text-sm text-gray-500">Loading buildings…</div>
+              <div className="text-sm text-gray-500">Loading buildingsâ€¦</div>
             ) : error ? (
               <div className="text-sm text-red-600">{error}</div>
             ) : buildings.length === 0 ? (
@@ -293,7 +293,7 @@ export default function CommunityModal({ villageId, onClose }) {
                           </div>
 
                           <div className="text-right text-sm text-gray-600">
-                            <div>Stages: {Array.isArray(b.stages) ? b.stages.length : "—"}</div>
+                            <div>Stages: {Array.isArray(b.stages) ? b.stages.length : "â€”"}</div>
                           </div>
                         </div>
 

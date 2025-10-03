@@ -1,4 +1,4 @@
-// src/component/StageModal.jsx
+﻿// src/component/StageModal.jsx
 import React, { useEffect, useState, useRef } from "react";
 
 /**
@@ -384,7 +384,7 @@ export default function StageModal({ onClose }) {
           {/* Stage list */}
           <div>
             {loading ? (
-              <div className="text-sm text-gray-500">Loading stages…</div>
+              <div className="text-sm text-gray-500">Loading stagesâ€¦</div>
             ) : error ? (
               <div className="text-sm text-red-600">{error}</div>
             ) : stages.length === 0 ? (
@@ -504,7 +504,7 @@ export default function StageModal({ onClose }) {
               <div className="bg-white rounded-lg shadow-lg p-4 w-full max-w-md">
                 <div className="flex items-center justify-between mb-2">
                   <h4 className="font-medium">Edit Stage</h4>
-                  <button onClick={() => setEditStage(null)} className="text-gray-500">✕</button>
+                  <button onClick={() => setEditStage(null)} className="text-gray-500">âœ•</button>
                 </div>
                 <form onSubmit={submitStageUpdate} className="space-y-2">
                   <input className="w-full p-2 border rounded" value={editStage.name} onChange={(e) => setEditStage(prev => ({ ...prev, name: e.target.value }))} />
@@ -524,7 +524,7 @@ export default function StageModal({ onClose }) {
               <div className="bg-white rounded-lg shadow-lg p-4 w-full max-w-md">
                 <div className="flex items-center justify-between mb-2">
                   <h4 className="font-medium">Edit Sub-stage</h4>
-                  <button onClick={() => setEditSubstage(null)} className="text-gray-500">✕</button>
+                  <button onClick={() => setEditSubstage(null)} className="text-gray-500">âœ•</button>
                 </div>
                 <form onSubmit={submitEditSubstage} className="space-y-2">
                   <input className="w-full p-2 border rounded" value={editSubstage.name} onChange={(e) => setEditSubstage(prev => ({ ...prev, name: e.target.value }))} />

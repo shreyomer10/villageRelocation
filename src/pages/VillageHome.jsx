@@ -1,4 +1,4 @@
-// src/pages/VillageDashboard.jsx
+﻿// src/pages/VillageDashboard.jsx
 import React, { useEffect, useState, useContext } from "react";
 import { useNavigate } from "react-router-dom";
 import StageProgress from "../component/StageProgress";
@@ -387,9 +387,9 @@ export default function VillageDashboard() {
           const formattedTime = t ? new Date(t).toLocaleString() : "Unknown time";
           const who = l.updateBy ?? l.update_by ?? l.by ?? "Unknown";
           const comments = l.comments ?? l.comment ?? "No comments";
-          return `${comments} — ${who} — ${formattedTime}`;
+          return `${comments} â€” ${who} â€” ${formattedTime}`;
         })
-        .join("  •  ")
+        .join("  â€¢  ")
     : "No logs available";
   const durationSeconds = Math.max(12, Math.round(logsText.length / 10));
 
@@ -408,7 +408,7 @@ export default function VillageDashboard() {
               <span>{value}</span>
             )
           ) : (
-            <span className="text-gray-400">—</span>
+            <span className="text-gray-400">â€”</span>
           )}
         </div>
       </div>
@@ -474,7 +474,7 @@ export default function VillageDashboard() {
       <div className="max-w-7xl mx-auto px-6 mt-6">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h1 className="text-2xl font-bold text-gray-800">{district ?? "—"}</h1>
+            <h1 className="text-2xl font-bold text-gray-800">{district ?? "â€”"}</h1>
           </div>
 
           <div className="flex items-center gap-3">
@@ -482,7 +482,7 @@ export default function VillageDashboard() {
               onClick={() => navigate("/dashboard")}
               className="inline-flex items-center gap-2 bg-gray-100 hover:bg-gray-200 px-3 py-2 rounded-lg shadow-sm text-sm"
             >
-              ← Back
+              â† Back
             </button>
             <button
               onClick={() => navigate("/family")}
@@ -578,7 +578,7 @@ export default function VillageDashboard() {
                 
                   <div className="">
                     <h4 className="text-sm font-semibold text-gray-700">Site</h4>
-                    <div className="text-sm text-gray-600 mt-2">{siteOfRelocation ?? "—"}</div>
+                    <div className="text-sm text-gray-600 mt-2">{siteOfRelocation ?? "â€”"}</div>
                   </div>
 
                   {/* DOC button next to location */}
@@ -658,12 +658,12 @@ export default function VillageDashboard() {
               <div className="lg:w-2/3 w-full">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="text-lg font-semibold text-gray-700">Village details</h3>
-                  <div className="text-xs text-gray-400">Updated: {lastUpdated ? new Date(lastUpdated).toLocaleString() : "—"}</div>
+                  <div className="text-xs text-gray-400">Updated: {lastUpdated ? new Date(lastUpdated).toLocaleString() : "â€”"}</div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm text-gray-700">
                   <DetailRow label="Name" value={villageName} />
-                  <DetailRow label="Village ID" value={villageIdState ?? effectiveVillageId ?? "—"} />
+                  <DetailRow label="Village ID" value={villageIdState ?? effectiveVillageId ?? "â€”"} />
                   <DetailRow label="District" value={district} />
                   <DetailRow label="Tehsil" value={tehsil} />
                   <DetailRow label="Gram Panchayat" value={gramPanchayat} />
@@ -789,7 +789,7 @@ export default function VillageDashboard() {
                           <div className="font-medium">{s?.name ?? s?.title ?? `Stage ${sid}`}</div>
                           {s?.description && <div className="text-xs text-gray-500">{s.description}</div>}
                         </div>
-                        <div className="text-sm text-gray-600">{isExpanded ? "−" : "+"}</div>
+                        <div className="text-sm text-gray-600">{isExpanded ? "âˆ’" : "+"}</div>
                       </button>
 
                       {isExpanded && (

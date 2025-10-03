@@ -1,4 +1,4 @@
-// Buildings.jsx — updated to call /buildings and /bstages backend routes
+﻿// Buildings.jsx â€” updated to call /buildings and /bstages backend routes
 import React, { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import MainNavbar from "../component/MainNavbar";
@@ -920,7 +920,7 @@ export default function StagePage() {
               onClick={() => navigate("/home")}
               className="px-3 py-2 border rounded-md bg-white text-sm"
             >
-              ← Back
+              â† Back
             </button>
           </div>
 
@@ -996,14 +996,14 @@ export default function StagePage() {
             </div>
 
             <div className="mt-4 flex gap-2 flex-col sm:flex-row justify-center">
-              <button type="submit" className="px-10 py-2 bg-blue-600 text-white rounded w-full sm:w-auto">{creating ? "Creating…" : "Create"}</button>
+              <button type="submit" className="px-10 py-2 bg-blue-600 text-white rounded w-full sm:w-auto">{creating ? "Creatingâ€¦" : "Create"}</button>
               <button type="button" onClick={() => setShowCreatePanel(false)} className="px-10 py-2 border rounded w-full sm:w-auto">Cancel</button>
             </div>
           </form>
         )}
 
         {loading ? (
-          <div className="text-center py-8">Loading buildings…</div>
+          <div className="text-center py-8">Loading buildingsâ€¦</div>
         ) : error ? (
           <div className="text-red-600 py-6 whitespace-pre-wrap">{error}</div>
         ) : (
@@ -1063,13 +1063,13 @@ export default function StagePage() {
                         {!globalSelectMode && !expanded && (
                           <>
                             <button onClick={() => setEditStage({ stageId, name: s.name ?? "", desc: s.desc ?? "", deleted: !!s.deleted })} className="px-3 py-1 rounded bg-indigo-50 text-sm">Edit</button>
-                            <button onClick={() => toggleExpandStage(stageId)} className="px-3 py-1 rounded bg-gray-50 text-sm">▼</button>
+                            <button onClick={() => toggleExpandStage(stageId)} className="px-3 py-1 rounded bg-gray-50 text-sm">â–¼</button>
                           </>
                         )}
 
                         {!globalSelectMode && expanded && (
                           <>
-                            <button onClick={() => toggleExpandStage(stageId)} className="px-3 py-1 rounded bg-gray-50 text-sm">▲</button>
+                            <button onClick={() => toggleExpandStage(stageId)} className="px-3 py-1 rounded bg-gray-50 text-sm">â–²</button>
                           </>
                         )}
                       </div>
@@ -1202,7 +1202,7 @@ export default function StagePage() {
           {showDeletedStages && (
             <div className="mt-7 ">
               {deletedStagesLoading ? (
-                <div className="text-sm text-gray-600">Loading deleted buildings…</div>
+                <div className="text-sm text-gray-600">Loading deleted buildingsâ€¦</div>
               ) : deletedStagesError ? (
                 <div className="text-sm text-red-600">{deletedStagesError}</div>
               ) : deletedStagesCache.length === 0 ? (
@@ -1228,7 +1228,7 @@ export default function StagePage() {
                               className="px-2 py-1 rounded bg-gray-100 text-sm"
                               title={isExpanded ? "Collapse" : "Expand"}
                             >
-                              {isExpanded ? "▲" : "▼"}
+                              {isExpanded ? "â–²" : "â–¼"}
                             </button>
                           </div>
                         </div>
@@ -1266,7 +1266,7 @@ export default function StagePage() {
             <div className="bg-white rounded-lg shadow-lg p-4 w-full max-w-md sm:max-w-lg md:max-w-xl mx-3 sm:mx-0">
               <div className="flex items-center justify-between mb-3">
                 <h4 className="font-semibold">Edit Building</h4>
-                <button onClick={() => setEditStage(null)} className="text-gray-500">✕</button>
+                <button onClick={() => setEditStage(null)} className="text-gray-500">âœ•</button>
               </div>
               <form onSubmit={async (e) => { e.preventDefault(); try {
                     if (!villageId) throw new Error("Missing villageId; cannot update building.");
@@ -1308,7 +1308,7 @@ export default function StagePage() {
             <div className="bg-white rounded-lg shadow-lg p-4 w-full max-w-md sm:max-w-lg md:max-w-xl mx-3 sm:mx-0">
               <div className="flex items-center justify-between mb-3">
                 <h4 className="font-semibold">Edit Sub-stage</h4>
-                <button onClick={() => setEditSubstage(null)} className="text-gray-500">✕</button>
+                <button onClick={() => setEditSubstage(null)} className="text-gray-500">âœ•</button>
               </div>
               <form onSubmit={submitEditSubstage} className="space-y-3">
                 <div>
@@ -1339,7 +1339,7 @@ export default function StagePage() {
               {error && <div className="text-sm text-red-600 mb-3">{error}</div>}
               <div className="flex justify-end gap-2">
                 <button onClick={cancelSubstageReorder} disabled={!!persistingSubstage} className="px-4 py-2 border rounded">Cancel</button>
-                <button onClick={confirmSubstageReorder} disabled={!!persistingSubstage} className="px-4 py-2 bg-blue-600 text-white rounded">{persistingSubstage ? "Saving…" : "Confirm"}</button>
+                <button onClick={confirmSubstageReorder} disabled={!!persistingSubstage} className="px-4 py-2 bg-blue-600 text-white rounded">{persistingSubstage ? "Savingâ€¦" : "Confirm"}</button>
               </div>
             </div>
           </div>
@@ -1369,7 +1369,7 @@ export default function StagePage() {
 
               <div className="flex justify-end gap-2">
                 <button onClick={() => setDeleteConfirm(null)} disabled={performingDelete} className="px-4 py-2 border rounded">Cancel</button>
-                <button onClick={performDeleteConfirmed} disabled={performingDelete} className="px-4 py-2 bg-red-600 text-white rounded">{performingDelete ? "Deleting…" : "Delete"}</button>
+                <button onClick={performDeleteConfirmed} disabled={performingDelete} className="px-4 py-2 bg-red-600 text-white rounded">{performingDelete ? "Deletingâ€¦" : "Delete"}</button>
               </div>
             </div>
           </div>

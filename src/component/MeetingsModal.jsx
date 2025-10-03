@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from "react";
+﻿import React, { useEffect, useState, useRef } from "react";
 
 export default function MeetingsModal({ villageId, onClose }) {
   const [meetings, setMeetings] = useState([]);
@@ -272,7 +272,7 @@ export default function MeetingsModal({ villageId, onClose }) {
 
           <div>
             {loading ? (
-              <div className="text-sm text-gray-500">Loading meetings…</div>
+              <div className="text-sm text-gray-500">Loading meetingsâ€¦</div>
             ) : error ? (
               <div className="text-sm text-red-600">{error}</div>
             ) : meetings.length === 0 ? (
@@ -288,17 +288,17 @@ export default function MeetingsModal({ villageId, onClose }) {
                     <div className="flex-1">
                       <div className="flex items-start justify-between gap-2">
                         <div>
-                          <div className="font-medium">{m.venue ?? "—"}</div>
+                          <div className="font-medium">{m.venue ?? "â€”"}</div>
                           <div className="text-xs text-gray-500">{m.meetingId}</div>
                         </div>
 
                         <div className="text-right text-sm text-gray-600">
-                          <div>{m.time ? new Date(m.time).toLocaleString() : "—"}</div>
-                          <div className="text-xs">Held by: {m.heldBy ?? "—"}</div>
+                          <div>{m.time ? new Date(m.time).toLocaleString() : "â€”"}</div>
+                          <div className="text-xs">Held by: {m.heldBy ?? "â€”"}</div>
                         </div>
                       </div>
 
-                      <div className="mt-2 text-sm text-gray-700">{m.notes ?? "—"}</div>
+                      <div className="mt-2 text-sm text-gray-700">{m.notes ?? "â€”"}</div>
 
                       <div className="mt-2 flex items-center gap-2 text-xs text-gray-500">
                         <div>Attendees: {(Array.isArray(m.attendees) ? m.attendees.length : (m.attendees ? String(m.attendees).split(',').length : 0))}</div>

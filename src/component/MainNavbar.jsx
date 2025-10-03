@@ -1,10 +1,10 @@
-import React, { useEffect, useRef, useState, useContext } from "react";
+﻿import React, { useEffect, useRef, useState, useContext } from "react";
 import { useNavigate } from "react-router-dom";
 import { AuthContext } from "../context/AuthContext"; // adjust path to where your provider lives
 
 export default function MainNavbar({
   logoUrl = "/images/logo.png",
-  brandDevanagari = "माटी",
+  brandDevanagari = "à¤®à¤¾à¤Ÿà¥€",
   brandLatin = "MAATI",
   durationSeconds = 900, // token lifetime (default 15 min)
   onRefreshToken,
@@ -117,7 +117,7 @@ export default function MainNavbar({
     if (minutes !== lastShownMinuteRef.current) {
       lastShownMinuteRef.current = minutes;
       if (minutes <= 0) showToast("Session expired", true);
-      else if (minutes <= 3) showToast(`${minutes} min left — refresh token recommended`, true);
+      else if (minutes <= 3) showToast(`${minutes} min left â€” refresh token recommended`, true);
       else showToast(`${minutes} min left`, false);
     }
   }, [remaining, ctxExpiresAt]);
@@ -280,7 +280,7 @@ export default function MainNavbar({
                 <div
                   className={`text-scroll whitespace-nowrap font-semibold text-white px-3 ${progressFilled ? "animate-scroll" : "opacity-0"}`}
                 >
-                  Login expires in: {formatTime(displayRemaining)} • Session Status: Active •
+                  Login expires in: {formatTime(displayRemaining)} â€¢ Session Status: Active â€¢
                 </div>
               </div>
             </div>

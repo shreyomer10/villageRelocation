@@ -1,4 +1,4 @@
-// src/components/StageProgress.jsx
+﻿// src/components/StageProgress.jsx
 import React, { useEffect, useState } from "react";
 
 /**
@@ -152,7 +152,7 @@ export default function StageProgress({
   return (
     <div>
       {/* loading / error */}
-      {loading && <div className="mb-2 text-sm text-gray-500">Loading stages…</div>}
+      {loading && <div className="mb-2 text-sm text-gray-500">Loading stagesâ€¦</div>}
       {loadError && <div className="mb-2 text-sm text-red-600">Error: {loadError}</div>}
 
       {/* progress bar */}
@@ -205,7 +205,7 @@ export default function StageProgress({
                               : "bg-white text-gray-400 border-gray-300"
                           }`}
                       >
-                        {isCompleted ? "✓" : String(stage.stage_id ?? stagePos)}
+                        {isCompleted ? "âœ“" : String(stage.stage_id ?? stagePos)}
                       </div>
                     </div>
 

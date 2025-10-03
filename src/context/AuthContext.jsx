@@ -1,4 +1,4 @@
-// src/context/AuthContext.jsx
+﻿// src/context/AuthContext.jsx
 import React, { createContext, useCallback, useEffect, useRef, useState } from "react";
 
 export const AuthContext = createContext({
@@ -582,7 +582,7 @@ export function AuthProvider({ children }) {
     setTokenExpiresAt(absExpiry);
   }, []);
 
-  // login payload normalization — returns true when processed successfully
+  // login payload normalization â€” returns true when processed successfully
   const login = useCallback(
     async (payload = {}) => {
       try {

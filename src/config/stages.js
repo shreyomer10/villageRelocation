@@ -1,4 +1,4 @@
-// src/config/stageDefs.js
+﻿// src/config/stageDefs.js
 
 export const stageDefs = [
   {
@@ -7,8 +7,8 @@ export const stageDefs = [
     subStages: [
       { id: 1, name: "Option 1 & 2 Survey" },
       { id: 2, name: "Land Identified" },
-      { id: 3, name: "Gram Sabha Consent – Source" },
-      { id: 4, name: "Gram Sabha Consent – Destination" },
+      { id: 3, name: "Gram Sabha Consent â€“ Source" },
+      { id: 4, name: "Gram Sabha Consent â€“ Destination" },
     ],
   },
   {

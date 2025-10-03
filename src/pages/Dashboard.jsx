@@ -1,4 +1,4 @@
-// File: src/pages/Dashboard.jsx
+﻿// File: src/pages/Dashboard.jsx
 import React, { useEffect, useState, useContext, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { Search, Sliders, Calendar, CheckCircle, Map, LayoutGrid } from "lucide-react";
@@ -42,7 +42,7 @@ function toNumberOrNull(v) {
   return null;
 }
 
-// (Optional) QuickSummaryTable left intact but no longer shown in map view — kept for later use.
+// (Optional) QuickSummaryTable left intact but no longer shown in map view â€” kept for later use.
 function QuickSummaryTable({ villages = [], maxRows = 10, isMapView = false, collapsed = false, onToggleCollapsed }) {
   const TOTAL_SUBSTAGES = 29;
   const TOTAL_STAGES = 6;
@@ -751,7 +751,7 @@ export default function Dashboard() {
 
   const renderContent = () => {
     if (listLoading) {
-      return <div className="text-center py-12">Loading villages…</div>;
+      return <div className="text-center py-12">Loading villagesâ€¦</div>;
     }
     if (listError) {
       return <div className="text-center py-6 text-red-600">{listError}</div>;

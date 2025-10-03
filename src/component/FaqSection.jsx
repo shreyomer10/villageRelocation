@@ -1,4 +1,4 @@
-// src/components/FaqSection.jsx
+﻿// src/components/FaqSection.jsx
 import React, { useState } from "react";
 
 function Chevron({ open }) {

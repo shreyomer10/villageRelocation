@@ -1,4 +1,4 @@
-// src/pages/MeetingsPage.jsx
+﻿// src/pages/MeetingsPage.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import MainNavbar from "../component/MainNavbar";
@@ -8,14 +8,14 @@ import {
 } from "recharts";
 
 // small helper icons inline (or replace with lucide-react)
-const IconAdd = () => (<span className="font-bold">＋</span>);
-const IconEdit = () => (<span className="text-sm">✎</span>);
-const IconDelete = () => (<span className="text-sm">🗑</span>);
-const IconBack = () => (<span className="text-lg">←</span>);
-const IconFilter = () => (<span className="text-lg">⚙️</span>);
+const IconAdd = () => (<span className="font-bold">ï¼‹</span>);
+const IconEdit = () => (<span className="text-sm">âœŽ</span>);
+const IconDelete = () => (<span className="text-sm">ðŸ—‘</span>);
+const IconBack = () => (<span className="text-lg">â†</span>);
+const IconFilter = () => (<span className="text-lg">âš™ï¸</span>);
 
 function formatDateTime(iso) {
-  if (!iso) return "—";
+  if (!iso) return "â€”";
   try {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return iso;
@@ -101,7 +101,7 @@ export default function MeetingsPage() {
 
           const id = raw.meetingId ?? raw.id ?? raw._id ?? Math.random().toString(36).slice(2,9);
           const heldBy = raw.heldBy ?? raw.held_by ?? raw.by ?? raw.organizer ?? "Unknown";
-          const venue = raw.venue ?? raw.location ?? raw.site ?? "—";
+          const venue = raw.venue ?? raw.location ?? raw.site ?? "â€”";
           const time = raw.time ?? raw.datetime ?? raw.meetingTime ?? raw.date ?? null;
           const notes = raw.notes ?? raw.note ?? raw.description ?? "";
           const attendees = Array.isArray(raw.attendees) ? raw.attendees : (raw.attendees ? [raw.attendees] : []);
@@ -366,7 +366,7 @@ export default function MeetingsPage() {
           <div className="flex items-start justify-between mb-4">
             <div>
               <div className="text-xs text-gray-500">Village</div>
-              <div className="text-lg font-semibold">{villageIdState ?? "—"}</div>
+              <div className="text-lg font-semibold">{villageIdState ?? "â€”"}</div>
             </div>
             <div className="flex items-center gap-2">
               <button type="button" onClick={onClose} className="px-3 py-1 rounded bg-red-50 hover:bg-red-100 text-sm">Cancel</button>
@@ -407,7 +407,7 @@ export default function MeetingsPage() {
                   {attendees.map((a,i)=>(
                     <div key={i} className="px-2 py-1 bg-gray-50 border rounded text-sm flex items-center gap-2">
                       <span>{a}</span>
-                      <button type="button" onClick={()=>removeAttendee(i)} className="text-xs text-red-500">✕</button>
+                      <button type="button" onClick={()=>removeAttendee(i)} className="text-xs text-red-500">âœ•</button>
                     </div>
                   ))}
                 </div>
@@ -426,7 +426,7 @@ export default function MeetingsPage() {
                 {photoPreviews.map((p, idx) => (
                   <div key={idx} className="relative">
                     <img src={p} alt="preview" className="w-20 h-20 object-cover rounded cursor-pointer" onClick={() => setLightboxImage(p)} />
-                    <button type="button" onClick={()=>removePhotoPreview(idx)} className="absolute -top-2 -right-2 bg-white rounded-full p-0.5 text-xs shadow">✕</button>
+                    <button type="button" onClick={()=>removePhotoPreview(idx)} className="absolute -top-2 -right-2 bg-white rounded-full p-0.5 text-xs shadow">âœ•</button>
                   </div>
                 ))}
               </div>
@@ -460,7 +460,7 @@ export default function MeetingsPage() {
         <div className="flex items-center justify-between mb-4">
           <div>
             <div className="text-xs text-gray-500">Village ID</div>
-            <div className="text-2xl font-bold text-gray-800">{villageIdState ?? "—"}</div>
+            <div className="text-2xl font-bold text-gray-800">{villageIdState ?? "â€”"}</div>
             <div className="text-sm text-gray-600 mt-1">Meetings</div>
           </div>
 
@@ -609,7 +609,7 @@ export default function MeetingsPage() {
                       <div className="text-sm font-semibold truncate max-w-[160px]">{m.heldBy}</div>
                       <div className="text-sm text-gray-600 truncate max-w-[140px]">{m.venue}</div>
                       <div className="text-sm text-gray-600">{formatDateTime(m.time)}</div>
-                      <div className="text-sm text-gray-600 max-w-xs truncate">{m.notes || "—"}</div>
+                      <div className="text-sm text-gray-600 max-w-xs truncate">{m.notes || "â€”"}</div>
                       <div className="text-sm text-gray-600">Attendees: {Array.isArray(m.attendees) ? m.attendees.length : 0}</div>
                     </div>
 
@@ -628,7 +628,7 @@ export default function MeetingsPage() {
                           </button>
                         </>
                       )}
-                      <div className="text-xs text-gray-400">{expandedRow === m.id ? "−" : "+"}</div>
+                      <div className="text-xs text-gray-400">{expandedRow === m.id ? "âˆ’" : "+"}</div>
                     </div>
                   </div>
 

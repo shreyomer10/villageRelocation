@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from "react";
+﻿import React, { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import MainNavbar from "../component/MainNavbar";
 import { API_BASE } from "../config/Api.js";
@@ -178,7 +178,7 @@ export default function PlotsPage() {
         {/* Header / controls */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
           <div className="flex items-center gap-3">
-            <button onClick={() => navigate('/home')} className="px-3 py-2 border rounded-md bg-white text-sm shadow-sm hover:shadow">← Back</button>
+            <button onClick={() => navigate('/home')} className="px-3 py-2 border rounded-md bg-white text-sm shadow-sm hover:shadow">â† Back</button>
             <div className="text-lg font-bold">Plots</div>
             <div className="text-sm text-gray-500 ml-2">{plots.length} total</div>
           </div>
@@ -204,7 +204,7 @@ export default function PlotsPage() {
         </div>
 
         {loading ? (
-          <div className="text-center py-8">Loading plots…</div>
+          <div className="text-center py-8">Loading plotsâ€¦</div>
         ) : error ? (
           <div className="text-red-600 py-6 whitespace-pre-wrap">{error}</div>
         ) : (
@@ -230,7 +230,7 @@ export default function PlotsPage() {
 
                         <div className="mt-2 text-sm text-gray-500 flex flex-wrap gap-3">
                           <div className="px-2 py-1 bg-gray-100 rounded">ID: {p.plotId}</div>
-                          <div className="px-2 py-1 bg-gray-100 rounded">Family: {p.familyId ?? '—'}</div>
+                          <div className="px-2 py-1 bg-gray-100 rounded">Family: {p.familyId ?? 'â€”'}</div>
                         </div>
 
                         <div className="mt-3 flex items-center gap-2">
@@ -262,7 +262,7 @@ export default function PlotsPage() {
           <div className="mt-6">
             <h4 className="text-sm font-semibold mb-3">Deleted plots</h4>
             {deletedLoading ? (
-              <div className="text-sm text-gray-600">Loading deleted plots…</div>
+              <div className="text-sm text-gray-600">Loading deleted plotsâ€¦</div>
             ) : deletedPlots.length === 0 ? (
               <div className="text-xs text-gray-500">No deleted plots</div>
             ) : (

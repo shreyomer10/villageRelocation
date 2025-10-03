@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from "react";
+﻿import React, { useEffect, useState, useRef } from "react";
 import { useNavigate as useRouterNavigate } from "react-router-dom";
 
 export default function FamilyPieChart({ villageId, navigate: navigateProp }) {
@@ -211,11 +211,11 @@ export default function FamilyPieChart({ villageId, navigate: navigateProp }) {
                 onMouseEnter={(e) => {
                   if (!selectedOption) {
                     setHovered("opt2");
-                    showTooltip(e, `Option 2 — ${opt2} (${Math.round(opt2Percent * 100)}%)`);
+                    showTooltip(e, `Option 2 â€” ${opt2} (${Math.round(opt2Percent * 100)}%)`);
                   }
                 }}
                 onMouseMove={(e) => {
-                  if (!selectedOption) showTooltip(e, `Option 2 — ${opt2} (${Math.round(opt2Percent * 100)}%)`);
+                  if (!selectedOption) showTooltip(e, `Option 2 â€” ${opt2} (${Math.round(opt2Percent * 100)}%)`);
                 }}
                 onMouseLeave={hideTooltip}
               />
@@ -247,11 +247,11 @@ export default function FamilyPieChart({ villageId, navigate: navigateProp }) {
                 onMouseEnter={(e) => {
                   if (!selectedOption) {
                     setHovered("opt1");
-                    showTooltip(e, `Option 1 — ${opt1} (${Math.round(opt1Percent * 100)}%)`);
+                    showTooltip(e, `Option 1 â€” ${opt1} (${Math.round(opt1Percent * 100)}%)`);
                   }
                 }}
                 onMouseMove={(e) => {
-                  if (!selectedOption) showTooltip(e, `Option 1 — ${opt1} (${Math.round(opt1Percent * 100)}%)`);
+                  if (!selectedOption) showTooltip(e, `Option 1 â€” ${opt1} (${Math.round(opt1Percent * 100)}%)`);
                 }}
                 onMouseLeave={hideTooltip}
               />
@@ -265,7 +265,7 @@ export default function FamilyPieChart({ villageId, navigate: navigateProp }) {
               ) : (
                 <>
                   <text x="0" y="-6" textAnchor="middle" fontSize="20" fontWeight="700" fill="#0f172a">
-                    {loading ? "…" : total}
+                    {loading ? "â€¦" : total}
                   </text>
                   <text x="0" y="18" textAnchor="middle" fontSize="11" fill="#475569">
                     Total Families

@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import StageProgress from "./StageProgress"; // ✅ Import the component
+﻿import React, { useState } from "react";
+import StageProgress from "./StageProgress"; // âœ… Import the component
 
 export default function RelocationTracker({ stages = [] }) {
   const [currentStage, setCurrentStage] = useState(1);       // Active main stage
@@ -18,7 +18,7 @@ export default function RelocationTracker({ stages = [] }) {
         Stages Of Relocation
       </h3>
 
-      {/* ✅ StageProgress with Sub-Stage Dropdown Enabled */}
+      {/* âœ… StageProgress with Sub-Stage Dropdown Enabled */}
       <StageProgress
         currentStage={currentStage}
         currentSubStage={currentSubStage}
@@ -60,7 +60,7 @@ export default function RelocationTracker({ stages = [] }) {
               onClick={() => setSelectedStage(null)}
               aria-label="Close"
             >
-              ✕
+              âœ•
             </button>
             <h2 className="text-lg font-semibold mb-4">
               {selectedStage.name}
