@@ -324,7 +324,12 @@ def update_verification(decoded_data,plotId, verificationId):
         userId = payload.pop("userId", None)
         if not payload or not userId:
             return make_response(True, "Missing request body or userId", status=400)
-
+        user_id = decoded_data.get("userId")
+        user_role=decoded_data.get("role")
+        if not user_id or not user_role:
+            return make_response(True, "Invalid token: missing userId", status=400)
+        if user_id!=userId:
+            return make_response(True, "Unauthorized access", status=403)
         try:
             verification_obj = FieldLevelVerificationUpdate(**payload)
         except ValidationError as ve:
