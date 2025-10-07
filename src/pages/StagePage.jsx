@@ -1,7 +1,8 @@
-﻿import React, { useEffect, useState } from "react";
+﻿// StagePage.jsx
+import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import MainNavbar from "../component/MainNavbar";
-import { API_BASE } from "../config/Api.js";
+import { API_BASE } from "../config/Api";
 
 /**
  * StagePage (updated)
@@ -74,7 +75,7 @@ export default function StagePage() {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch("https://villagerelocation.onrender.com/stages");
+        const res = await fetch(`${API_BASE}/stages`);
         if (res.status === 404) {
           if (!mounted) return;
           setStages([]);
@@ -108,7 +109,7 @@ export default function StagePage() {
 
   async function reloadStages() {
     try {
-      const res = await fetch("https://villagerelocation.onrender.com/stages");
+      const res = await fetch(`${API_BASE}/stages`);
       if (!res.ok) return;
       const payload = await res.json();
       let items = [];
@@ -183,79 +184,77 @@ export default function StagePage() {
   }
 
   // Toggle showing deleted substages inline within an expanded stage card.
-  // Toggle showing deleted substages inline within an expanded stage card.
-async function toggleShowDeletedInline(stageId) {
-  const currently = !!showDeletedInExpanded[stageId];
-  if (currently) {
-    setShowDeletedInExpanded(prev => ({ ...prev, [stageId]: false }));
-    return;
-  }
-
-  const s = stages.find(x => String(getStageId(x)) === String(stageId));
-  const localDeleted = Array.isArray(s?.stages) ? s.stages.filter(ss => ss.deleted === true) : [];
-  // If there are local deleted items already present, show them immediately
-  if (localDeleted.length > 0) {
-    setShowDeletedInExpanded(prev => ({ ...prev, [stageId]: true }));
-    return;
-  }
-
-  // If we've previously fetched deleted-substage cache for this stage
-  // only show the link/panel if the cached list actually contains items.
-  if (Object.prototype.hasOwnProperty.call(deletedSubstageCache, stageId)) {
-    const cached = deletedSubstageCache[stageId] || [];
-    if (cached.length > 0) {
-      // merge into stage list and show
-      setStages(prev => prev.map(st => {
-        if (String(getStageId(st)) !== String(stageId)) return st;
-        const existing = Array.isArray(st.stages) ? st.stages.slice() : [];
-        const existingIds = new Set(existing.map(x => String(getSubId(x))));
-        const toAdd = cached.filter(x => !existingIds.has(String(getSubId(x))));
-        return { ...st, stages: [...existing, ...toAdd] };
-      }));
-      setShowDeletedInExpanded(prev => ({ ...prev, [stageId]: true }));
-    }
-    // if cached is empty, do nothing (don't show link/panel)
-    return;
-  }
-
-  // Use existing backend route for deleted sub-stages
-  try {
-    const res = await fetch(`${API_BASE}/deleted_ostages/${encodeURIComponent(stageId)}`);
-    if (res.status === 404) {
-      // backend says there are no deleted sub-stages -> cache empty but do NOT open the panel
-      setDeletedSubstageCache(prev => ({ ...prev, [stageId]: [] }));
+  async function toggleShowDeletedInline(stageId) {
+    const currently = !!showDeletedInExpanded[stageId];
+    if (currently) {
+      setShowDeletedInExpanded(prev => ({ ...prev, [stageId]: false }));
       return;
     }
-    if (!res.ok) {
-      const txt = await res.text().catch(() => "");
-      throw new Error(`Failed: ${res.status} ${txt}`);
-    }
-    const data = await res.json();
-    const items = data?.result?.items ?? [];
-    const marked = items.map(it => ({ ...it, deleted: true }));
 
-    // cache the fetched deleted items
-    setDeletedSubstageCache(prev => ({ ...prev, [stageId]: marked }));
-
-    if (marked.length > 0) {
-      // only merge and show if we actually found deleted items
-      setStages(prev => prev.map(st => {
-        if (String(getStageId(st)) !== String(stageId)) return st;
-        const existing = Array.isArray(st.stages) ? st.stages.slice() : [];
-        const existingIds = new Set(existing.map(x => String(getSubId(x))));
-        const toAdd = marked.filter(x => !existingIds.has(String(getSubId(x))));
-        return { ...st, stages: [...existing, ...toAdd] };
-      }));
-
+    const s = stages.find(x => String(getStageId(x)) === String(stageId));
+    const localDeleted = Array.isArray(s?.stages) ? s.stages.filter(ss => ss.deleted === true) : [];
+    // If there are local deleted items already present, show them immediately
+    if (localDeleted.length > 0) {
       setShowDeletedInExpanded(prev => ({ ...prev, [stageId]: true }));
+      return;
     }
-    // if none found, leave the UI without the link/panel
-  } catch (err) {
-    console.error(err);
-    setError(err.message || "Failed to fetch deleted sub-stages");
-  }
-}
 
+    // If we've previously fetched deleted-substage cache for this stage
+    // only show the link/panel if the cached list actually contains items.
+    if (Object.prototype.hasOwnProperty.call(deletedSubstageCache, stageId)) {
+      const cached = deletedSubstageCache[stageId] || [];
+      if (cached.length > 0) {
+        // merge into stage list and show
+        setStages(prev => prev.map(st => {
+          if (String(getStageId(st)) !== String(stageId)) return st;
+          const existing = Array.isArray(st.stages) ? st.stages.slice() : [];
+          const existingIds = new Set(existing.map(x => String(getSubId(x))));
+          const toAdd = cached.filter(x => !existingIds.has(String(getSubId(x))));
+          return { ...st, stages: [...existing, ...toAdd] };
+        }));
+        setShowDeletedInExpanded(prev => ({ ...prev, [stageId]: true }));
+      }
+      // if cached is empty, do nothing (don't show link/panel)
+      return;
+    }
+
+    // Use existing backend route for deleted sub-stages
+    try {
+      const res = await fetch(`${API_BASE}/deleted_ostages/${encodeURIComponent(stageId)}`);
+      if (res.status === 404) {
+        // backend says there are no deleted sub-stages -> cache empty but do NOT open the panel
+        setDeletedSubstageCache(prev => ({ ...prev, [stageId]: [] }));
+        return;
+      }
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(`Failed: ${res.status} ${txt}`);
+      }
+      const data = await res.json();
+      const items = data?.result?.items ?? [];
+      const marked = items.map(it => ({ ...it, deleted: true }));
+
+      // cache the fetched deleted items
+      setDeletedSubstageCache(prev => ({ ...prev, [stageId]: marked }));
+
+      if (marked.length > 0) {
+        // only merge and show if we actually found deleted items
+        setStages(prev => prev.map(st => {
+          if (String(getStageId(st)) !== String(stageId)) return st;
+          const existing = Array.isArray(st.stages) ? st.stages.slice() : [];
+          const existingIds = new Set(existing.map(x => String(getSubId(x))));
+          const toAdd = marked.filter(x => !existingIds.has(String(getSubId(x))));
+          return { ...st, stages: [...existing, ...toAdd] };
+        }));
+
+        setShowDeletedInExpanded(prev => ({ ...prev, [stageId]: true }));
+      }
+      // if none found, leave the UI without the link/panel
+    } catch (err) {
+      console.error(err);
+      setError(err.message || "Failed to fetch deleted sub-stages");
+    }
+  }
 
   function toggleStageSubSelectMode(stageId) {
     setStageSubSelectMode(prev => {
@@ -310,7 +309,7 @@ async function toggleShowDeletedInline(stageId) {
         position: createPosition !== "" ? Number(createPosition) : undefined,
         stages: createSubstages.map(s => ({ name: (s.name || "").trim(), desc: (s.desc || "").trim() || undefined })).filter(x => x.name),
       };
-      const res = await fetch("https://villagerelocation.onrender.com/stages/insert", {
+      const res = await fetch(`${API_BASE}/stages/insert`, {
         method: "POST",
         headers: authHeaders(),
         body: JSON.stringify(payload),
@@ -503,7 +502,7 @@ async function toggleShowDeletedInline(stageId) {
     setDeletedStagesLoading(true);
     setDeletedStagesError(null);
     try {
-      const res = await fetch("https://villagerelocation.onrender.com/deleted_stages");
+      const res = await fetch(`${API_BASE}/deleted_stages`);
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
         throw new Error(`Failed: ${res.status} ${txt}`);
@@ -705,7 +704,7 @@ async function toggleShowDeletedInline(stageId) {
       try {
         const r = await fetch(url);
         if (!r.ok) {
-          // can't get canonical record â€” return minimal payload (will likely fail validation)
+          // can't get canonical record — return minimal payload (will likely fail validation)
           return { name: "", desc, deleted, position: insertAt };
         }
         const data = await r.json();
@@ -748,7 +747,7 @@ async function toggleShowDeletedInline(stageId) {
         throw new Error(`Reorder failed: ${res.status} ${bodyText}`);
       }
 
-      // success â€” reload canonical order from the server to ensure positions are authoritative
+      // success — reload canonical order from the server to ensure positions are authoritative
       await reloadStages();
       setPendingReorder(null);
     } catch (err) {
@@ -1021,7 +1020,7 @@ async function toggleShowDeletedInline(stageId) {
               onClick={() => navigate("/dashboard")}
               className="px-3 py-2 border rounded-md bg-white text-sm"
             >
-              â† Back
+              ← Back
             </button>
           </div>
 
@@ -1103,14 +1102,14 @@ async function toggleShowDeletedInline(stageId) {
             </div>
 
             <div className="mt-4 flex gap-2 flex-col sm:flex-row">
-              <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded w-full sm:w-auto">{creating ? "Creatingâ€¦" : "Create"}</button>
+              <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded w-full sm:w-auto">{creating ? "Creating…" : "Create"}</button>
               <button type="button" onClick={() => setShowCreatePanel(false)} className="px-4 py-2 border rounded w-full sm:w-auto">Cancel</button>
             </div>
           </form>
         )}
 
         {loading ? (
-          <div className="text-center py-8">Loading stagesâ€¦</div>
+          <div className="text-center py-8">Loading stages…</div>
         ) : error ? (
           <div className="text-red-600 py-6 whitespace-pre-wrap">{error}</div>
         ) : (
@@ -1161,7 +1160,7 @@ async function toggleShowDeletedInline(stageId) {
                       <div>
                         <div className="text-base sm:text-lg font-semibold text-gray-800 truncate">{s.name}</div>
                         {s.desc && <div className="text-sm text-gray-500 mt-1 truncate">{s.desc}</div>}
-                        <div className="text-xs text-gray-400 mt-1">ID: {stageId} â€¢ Pos: {s.position ?? index}</div>
+                        <div className="text-xs text-gray-400 mt-1">ID: {stageId} • Pos: {s.position ?? index}</div>
                       </div>
                     </div>
 
@@ -1169,13 +1168,13 @@ async function toggleShowDeletedInline(stageId) {
                       {!globalSelectMode && !expanded && (
                         <>
                           <button onClick={() => setEditStage({ stageId, name: s.name ?? "", desc: s.desc ?? "", deleted: !!s.deleted })} className="px-3 py-1 rounded bg-indigo-50 text-sm">Edit</button>
-                          <button onClick={() => toggleExpandStage(stageId)} className="px-3 py-1 rounded bg-gray-50 text-sm">â–¼</button>
+                          <button onClick={() => toggleExpandStage(stageId)} className="px-3 py-1 rounded bg-gray-50 text-sm">▾</button>
                         </>
                       )}
 
                       {!globalSelectMode && expanded && (
                         <>
-                          <button onClick={() => toggleExpandStage(stageId)} className="px-3 py-1 rounded bg-gray-50 text-sm">â–²</button>
+                          <button onClick={() => toggleExpandStage(stageId)} className="px-3 py-1 rounded bg-gray-50 text-sm">▴</button>
                         </>
                       )}
                     </div>
@@ -1307,7 +1306,7 @@ async function toggleShowDeletedInline(stageId) {
               {showDeletedStages && (
                 <div className="mt-7 ">
                   {deletedStagesLoading ? (
-                    <div className="text-sm text-gray-600">Loading deleted stagesâ€¦</div>
+                    <div className="text-sm text-gray-600">Loading deleted stages…</div>
                   ) : deletedStagesError ? (
                     <div className="text-sm text-red-600">{deletedStagesError}</div>
                   ) : deletedStagesCache.length === 0 ? (
@@ -1333,7 +1332,7 @@ async function toggleShowDeletedInline(stageId) {
                                   className="px-2 py-1 rounded bg-gray-100 text-sm"
                                   title={isExpanded ? "Collapse" : "Expand"}
                                 >
-                                  {isExpanded ? "â–²" : "â–¼"}
+                                  {isExpanded ? "▴" : "▾"}
                                 </button>
                               </div>
                             </div>
@@ -1373,7 +1372,7 @@ async function toggleShowDeletedInline(stageId) {
             <div className="bg-white rounded-lg shadow-lg p-4 w-full max-w-md sm:max-w-lg md:max-w-xl mx-3 sm:mx-0">
               <div className="flex items-center justify-between mb-3">
                 <h4 className="font-semibold">Edit Stage</h4>
-                <button onClick={() => setEditStage(null)} className="text-gray-500">âœ•</button>
+                <button onClick={() => setEditStage(null)} className="text-gray-500">×</button>
               </div>
               <form onSubmit={submitStageUpdate} className="space-y-3">
                 <div>
@@ -1405,7 +1404,7 @@ async function toggleShowDeletedInline(stageId) {
             <div className="bg-white rounded-lg shadow-lg p-4 w-full max-w-md sm:max-w-lg md:max-w-xl mx-3 sm:mx-0">
               <div className="flex items-center justify-between mb-3">
                 <h4 className="font-semibold">Edit Sub-stage</h4>
-                <button onClick={() => setEditSubstage(null)} className="text-gray-500">âœ•</button>
+                <button onClick={() => setEditSubstage(null)} className="text-gray-500">×</button>
               </div>
               <form onSubmit={submitEditSubstage} className="space-y-3">
                 <div>
@@ -1436,7 +1435,7 @@ async function toggleShowDeletedInline(stageId) {
               {error && <div className="text-sm text-red-600 mb-3">{error}</div>}
               <div className="flex justify-end gap-2">
                 <button onClick={cancelReorder} disabled={persisting} className="px-4 py-2 border rounded">Cancel</button>
-                <button onClick={confirmReorder} disabled={persisting} className="px-4 py-2 bg-blue-600 text-white rounded">{persisting ? "Savingâ€¦" : "Confirm"}</button>
+                <button onClick={confirmReorder} disabled={persisting} className="px-4 py-2 bg-blue-600 text-white rounded">{persisting ? "Saving…" : "Confirm"}</button>
               </div>
             </div>
           </div>
@@ -1453,7 +1452,7 @@ async function toggleShowDeletedInline(stageId) {
               {error && <div className="text-sm text-red-600 mb-3">{error}</div>}
               <div className="flex justify-end gap-2">
                 <button onClick={cancelSubstageReorder} disabled={!!persistingSubstage} className="px-4 py-2 border rounded">Cancel</button>
-                <button onClick={confirmSubstageReorder} disabled={!!persistingSubstage} className="px-4 py-2 bg-blue-600 text-white rounded">{persistingSubstage ? "Savingâ€¦" : "Confirm"}</button>
+                <button onClick={confirmSubstageReorder} disabled={!!persistingSubstage} className="px-4 py-2 bg-blue-600 text-white rounded">{persistingSubstage ? "Saving…" : "Confirm"}</button>
               </div>
             </div>
           </div>
@@ -1483,7 +1482,7 @@ async function toggleShowDeletedInline(stageId) {
 
               <div className="flex justify-end gap-2">
                 <button onClick={() => setDeleteConfirm(null)} disabled={performingDelete} className="px-4 py-2 border rounded">Cancel</button>
-                <button onClick={performDeleteConfirmed} disabled={performingDelete} className="px-4 py-2 bg-red-600 text-white rounded">{performingDelete ? "Deletingâ€¦" : "Delete"}</button>
+                <button onClick={performDeleteConfirmed} disabled={performingDelete} className="px-4 py-2 bg-red-600 text-white rounded">{performingDelete ? "Deleting…" : "Delete"}</button>
               </div>
             </div>
           </div>

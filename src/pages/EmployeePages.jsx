@@ -1,4 +1,4 @@
-﻿// src/pages/EmployeePages.jsx
+﻿// src/pages/EmployeesPage.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import MainNavbar from "../component/MainNavbar";
@@ -105,7 +105,6 @@ function RolesPie({ employees = [] }) {
 /* ---------- EmployeeForm: styled, searchable dropdown with chips for villages ---------- */
 function EmployeeForm({ initial = {}, onCancel, onSubmit }) {
   const [form, setForm] = useState({
-    userId: initial.userId || initial._id || initial.id || "",
     name: initial.name || "",
     email: initial.email || "",
     mobile: initial.mobile || "",
@@ -125,7 +124,6 @@ function EmployeeForm({ initial = {}, onCancel, onSubmit }) {
 
   useEffect(() => {
     setForm({
-      userId: initial.userId || initial._id || initial.id || "",
       name: initial.name || "",
       email: initial.email || "",
       mobile: initial.mobile || "",
@@ -249,26 +247,13 @@ function EmployeeForm({ initial = {}, onCancel, onSubmit }) {
           email: form.email.trim(),
           mobile: form.mobile.trim(),
           role: getRoleCode(form.role),
-          villageIds: Array.isArray(form.villageIds) ? form.villageIds : (form.villageIds ? [form.villageIds] : []),
+          villageID: Array.isArray(form.villageIds) ? form.villageIds : (form.villageIds ? [form.villageIds] : []),
         };
         onSubmit(payload);
       }}
       className="bg-white rounded-2xl shadow-2xl p-5 space-y-4"
     >
-      {/* show user id (read-only) so updater can see it, but we don't submit it */}
-      <div>
-        <label className="block">
-          <div className="flex items-center gap-2 text-sm text-gray-600 mb-1">
-            <div className="font-medium">User ID</div>
-          </div>
-          <input
-            value={form.userId}
-            readOnly
-            placeholder="(auto)"
-            className={`w-full p-2 rounded border bg-gray-50 text-sm`}
-          />
-        </label>
-      </div>
+      {/* NOTE: User ID is auto-assigned by backend so we DON'T show a userId input */}
 
       <div className="flex flex-col md:flex-row gap-4">
         <div className="flex-1 grid grid-cols-1 gap-3">
@@ -519,7 +504,7 @@ export default function EmployeesPage() {
         const vIDs = e.villageID ?? e.villageIds ?? (e.villageId ? (Array.isArray(e.villageId) ? e.villageId : [e.villageId]) : []);
         return {
           ...e,
-          role: getRoleCode(e.role || e.roleCode || e.role),
+          role: getRoleCode(e.role ?? e.roleCode ?? e.role),
           villageIDs: Array.isArray(vIDs) ? vIDs : (vIDs ? [vIDs] : []),
           villageId: Array.isArray(vIDs) ? (vIDs[0] || "") : (vIDs || ""),
         };
@@ -546,7 +531,7 @@ export default function EmployeesPage() {
         email: payload.email,
         mobile: payload.mobile,
         role: getRoleCode(payload.role),
-        villageID: Array.isArray(payload.villageIds) ? payload.villageIds : (payload.villageIds ? [payload.villageIds] : []),
+        villageID: Array.isArray(payload.villageID) ? payload.villageID : (payload.villageID ? [payload.villageID] : (Array.isArray(payload.villageIDs) ? payload.villageIDs : (payload.villageIDs ? payload.villageIDs : []))),
       };
       const res = await fetch(`${API_BASE}/employee/add`, {
         method: "POST",
@@ -557,6 +542,7 @@ export default function EmployeesPage() {
         const text = await res.text().catch(() => null);
         throw new Error(`Add failed (${res.status})${text ? ": " + text : ""}`);
       }
+      // reload list so new user appears
       await loadEmployees();
       setShowNewForm(false);
     } catch (e) {
@@ -605,60 +591,98 @@ export default function EmployeesPage() {
     setSelectedLoading(true);
     try {
       const details = await fetchEmployeeDetails(emp);
-      setSelectedEmployee(details);
-      setEditingEmployee(details);
+      // normalize for editing: ensure role is code and villageID is array
+      const normalized = {
+        ...details,
+        role: getRoleCode(details.role ?? details.roleCode ?? details.role),
+        villageID: Array.isArray(details.villageID) ? details.villageID : (details.villageID ? [details.villageID] : (Array.isArray(details.villageIDs) ? details.villageIDs : (details.villageIds ?? []))),
+      };
+      setSelectedEmployee(normalized);
+      setEditingEmployee(normalized);
     } finally {
       setSelectedLoading(false);
     }
   };
 
   /* ---------- update (DO NOT SEND userId in body) ---------- */
+  // Normalize phone for submit
   const normalizeMobileForSubmit = (val) => {
     if (val === null || val === undefined) return "";
-    if (typeof val === "number") return String(Math.trunc(val));
     let s = String(val).trim();
-    s = s.replace(/\s+/g, "");
-    // optional: strip leading + if backend expects digits only:
-    // s = s.replace(/^\+/, "");
+    const keepPlus = s.startsWith("+");
+    s = s.replace(/[^\d]/g, "");
+    if (keepPlus && s.length) s = "+" + s;
     if (/^\d+\.0+$/.test(s)) s = s.replace(/\.0+$/, "");
     return s;
+  };
+
+  // Convert village tokens/names -> village IDs using villagesMap / villagesNameToId (best-effort).
+  // If a token already matches an id it will be used; if it matches name, convert to id; otherwise leave as-is (backend will reject).
+  const normalizeVillageTokensToIds = (raw) => {
+    if (!raw) return [];
+    const tokens = Array.isArray(raw) ? raw.flatMap(r => (typeof r === "string" ? r.split(/[;,]/) : [r])) : String(raw).split(/[;,]/);
+    const out = [];
+    tokens.forEach(t => {
+      const tok = String(t || "").trim();
+      if (!tok) return;
+      // exact id match
+      if (villagesMap[tok]) { out.push(tok); return; }
+      // case-insensitive name/id match using nameToId map
+      const lower = tok.toLowerCase();
+      if (villagesNameToId[lower]) { out.push(villagesNameToId[lower]); return; }
+      // fuzzy: find any key that includes or is included
+      const matchKey = Object.keys(villagesNameToId).find(k => k.includes(lower) || lower.includes(k));
+      if (matchKey) { out.push(villagesNameToId[matchKey]); return; }
+      // fallback: push raw token (let backend validate)
+      out.push(tok);
+    });
+    return out;
   };
 
   const handleSaveUpdate = async (payload) => {
     setUpdateError(null);
 
-    // derive id from payload OR from editingEmployee/selectedEmployee (payload intentionally does not include userId)
-    const idFromPayload = payload.userId || payload._id || payload.id;
-    const idFromEditing = editingEmployee && (editingEmployee.userId || editingEmployee._id || editingEmployee.id);
-    const idFromSelected = selectedEmployee && (selectedEmployee.userId || selectedEmployee._id || selectedEmployee.id);
+    // derive id (payload intentionally does not include userId)
+    const idFromPayload = payload?.userId ?? payload?._id ?? payload?.id;
+    const idFromEditing = editingEmployee && (editingEmployee.userId ?? editingEmployee._id ?? editingEmployee.id);
+    const idFromSelected = selectedEmployee && (selectedEmployee.userId ?? selectedEmployee._id ?? selectedEmployee.id);
     const id = idFromPayload || idFromEditing || idFromSelected;
 
     if (!id) {
-      setUpdateError("Missing employee id — cannot update. The client could not determine the user's id.");
+      setUpdateError("Missing employee id — cannot update.");
       return;
     }
+
+    // Build minimal payload with only allowed, non-empty fields
+    const toSend = {};
+    if (payload.name !== undefined && String(payload.name).trim() !== "") toSend.name = String(payload.name).trim();
+    if (payload.email !== undefined && String(payload.email).trim() !== "") toSend.email = String(payload.email).trim();
+    if (payload.mobile !== undefined && String(payload.mobile).trim() !== "") {
+      toSend.mobile = normalizeMobileForSubmit(payload.mobile);
+    }
+    if (payload.role !== undefined && String(payload.role).trim() !== "") toSend.role = getRoleCode(payload.role);
+
+    // Normalize villages to an array of IDs
+    const villagesRaw = payload.villageID ?? payload.villageIDs ?? payload.villageIds;
+    const normalizedVillageIds = normalizeVillageTokensToIds(villagesRaw);
+    if (normalizedVillageIds && normalizedVillageIds.length) {
+      toSend.villageID = normalizedVillageIds;
+    }
+
+    // don't send empty strings or empty arrays
+    if (Object.keys(toSend).length === 0) {
+      setUpdateError("No fields to update.");
+      return;
+    }
+
+    // debug: log outgoing body (useful when debugging Pydantic errors)
+    console.info("PUT /employee/update payload:", toSend);
+
+    // preserve numeric id when possible (backend stores numeric userId in many deployments)
+    const idForUrl = (!isNaN(Number(id)) && String(Number(id)) === String(id)) ? Number(id) : String(id);
+
     try {
-      // Build request body only with allowed fields (no userId)
-      const toSend = {};
-      if (payload.name !== undefined && String(payload.name).trim() !== "") toSend.name = String(payload.name).trim();
-      if (payload.email !== undefined && String(payload.email).trim() !== "") toSend.email = String(payload.email).trim();
-      if (payload.mobile !== undefined && String(payload.mobile).trim() !== "") {
-        toSend.mobile = normalizeMobileForSubmit(payload.mobile);
-      }
-      if (payload.role !== undefined && String(payload.role).trim() !== "") toSend.role = getRoleCode(payload.role);
-
-      if (Array.isArray(payload.villageIds) && payload.villageIds.length > 0) {
-        toSend.villageID = payload.villageIds;
-      } else if (payload.villageId) {
-        toSend.villageID = [payload.villageId];
-      }
-
-      if (Object.keys(toSend).length === 0) {
-        setUpdateError("No fields to update.");
-        return;
-      }
-
-      const res = await fetch(`${API_BASE}/employee/update/${encodeURIComponent(String(id))}`, {
+      const res = await fetch(`${API_BASE}/employee/update/${encodeURIComponent(String(idForUrl))}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(toSend),
@@ -666,28 +690,42 @@ export default function EmployeesPage() {
 
       const text = await res.text().catch(() => null);
       let json = null;
-      try { json = text ? JSON.parse(text) : null; } catch (e) { json = null; }
+      try { json = text ? JSON.parse(text) : null; } catch { json = null; }
 
       if (!res.ok) {
-        let friendly = `Update failed (${res.status})`;
-        if (json) {
-          if (json.message) friendly = json.message;
-          else if (json.error) friendly = json.error;
-          else if (Array.isArray(json)) {
-            friendly = json.map(e => (e?.loc && e?.msg) ? `${Array.isArray(e.loc) ? e.loc.join(".") : e.loc}: ${e.msg}` : JSON.stringify(e)).join("; ");
-          } else friendly = JSON.stringify(json);
+        console.error("Update failed response", res.status, json || text);
+
+        // Format common Pydantic response shapes into friendly message
+        let messages = [];
+        if (json && Array.isArray(json.detail)) {
+          messages = json.detail.map(d => {
+            const loc = d.loc ? (Array.isArray(d.loc) ? d.loc.join(".") : d.loc) : "body";
+            return `${loc}: ${d.msg || JSON.stringify(d)}`;
+          });
+        } else if (json && (json.message || json.error)) {
+          messages = [json.message || json.error];
+        } else if (json && json.validation_errors && Array.isArray(json.validation_errors)) {
+          messages = json.validation_errors.map(e => typeof e === "string" ? e : (e.error || JSON.stringify(e)));
+        } else if (Array.isArray(json)) {
+          messages = json.map(e => e.msg || e.message || JSON.stringify(e));
         } else if (text) {
-          friendly = text;
+          messages = [text];
+        } else {
+          messages = [`Update failed (${res.status})`];
         }
-        throw new Error(friendly);
+
+        const friendly = messages.join("; ");
+        setUpdateError(friendly || `Update failed (${res.status})`);
+        return;
       }
 
-      // success: reload and close modal
+      // success — reload and close modal
       await loadEmployees();
       setEditingEmployee(null);
       setSelectedEmployee(null);
       setUpdateError(null);
     } catch (err) {
+      console.error("Update exception", err);
       setUpdateError(err?.message || String(err) || "Update failed");
     }
   };
@@ -702,8 +740,8 @@ export default function EmployeesPage() {
     try {
       const rawId = pendingDelete.userId ?? pendingDelete._id ?? pendingDelete.id;
       if (!rawId) throw new Error("Missing user id for delete");
-      const id = String(rawId);
-      const res = await fetch(`${API_BASE}/employee/delete/${encodeURIComponent(id)}`, { method: "DELETE" });
+      const id = rawId;
+      const res = await fetch(`${API_BASE}/employee/delete/${encodeURIComponent(String(id))}`, { method: "DELETE" });
       const text = await res.text().catch(() => null);
       let json = {};
       try { json = text ? JSON.parse(text) : {}; } catch { json = { raw: text }; }
@@ -1179,15 +1217,6 @@ export default function EmployeesPage() {
                         </div>
                       </div>
 
-                      <div className="col-span-2">
-                        <div className="text-sm text-gray-500">Location</div>
-                        <div className="font-medium">{[selectedEmployee.gramPanchayat, selectedEmployee.tehsil, selectedEmployee.district].filter(Boolean).join(" / ") || "—"}</div>
-                      </div>
-
-                      <div className="col-span-2 flex items-center justify-end gap-2 mt-4">
-                        <button onClick={() => handleStartEdit(selectedEmployee)} className="px-4 py-2 bg-white rounded border">Edit</button>
-                        <button onClick={() => openDeleteModal(selectedEmployee)} className="px-4 py-2 bg-red-600 text-white rounded">Delete</button>
-                      </div>
                     </div>
                   )}
                 </div>

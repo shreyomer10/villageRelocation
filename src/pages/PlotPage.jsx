@@ -71,18 +71,19 @@ export default function PlotsPage() {
     };
   }, [villageId]);
 
-  // fetch plots (server side) whenever villageId or filterTypeId changes
+  // fetch plots once when villageId changes (do NOT refetch when filterTypeId changes)
   useEffect(() => {
-    fetchPlots(filterTypeId);
+    fetchPlots();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [villageId, filterTypeId]);
+  }, [villageId]);
 
-  // fetch deleted plots silently so we can show/hide the "View deleted" link
+  // fetch deleted plots once when villageId changes. When user toggles deleted view,
+  // we will fetch if needed (see toggleDeletedView).
   useEffect(() => {
     if (!villageId) return;
-    fetchDeletedPlots(filterTypeId);
+    fetchDeletedPlots();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [villageId, filterTypeId]);
+  }, [villageId]);
 
   // debounced search for client side filtering
   useEffect(() => {
@@ -96,7 +97,7 @@ export default function PlotsPage() {
     };
   }, [searchQuery]);
 
-  async function fetchPlots(typeId = "") {
+  async function fetchPlots() {
     if (!villageId) {
       setError("Missing villageId (store it as localStorage 'villageId')");
       setPlots([]);
@@ -106,10 +107,7 @@ export default function PlotsPage() {
     setLoading(true);
     setError(null);
     try {
-      const q = typeId ? `?typeId=${encodeURIComponent(typeId)}` : "";
-      const res = await fetch(
-        `${API_BASE}/plots/${encodeURIComponent(villageId)}${q}`
-      );
+      const res = await fetch(`${API_BASE}/plots/${encodeURIComponent(villageId)}`);
       if (res.status === 404) {
         setPlots([]);
         setLoading(false);
@@ -137,14 +135,11 @@ export default function PlotsPage() {
     }
   }
 
-  async function fetchDeletedPlots(typeId = "") {
+  async function fetchDeletedPlots() {
     if (!villageId) return;
     setDeletedLoading(true);
     try {
-      const q = typeId ? `?typeId=${encodeURIComponent(typeId)}` : "";
-      const res = await fetch(
-        `${API_BASE}/deleted_plots/${encodeURIComponent(villageId)}${q}`
-      );
+      const res = await fetch(`${API_BASE}/deleted_plots/${encodeURIComponent(villageId)}`);
       if (res.status === 404) {
         setDeletedPlots([]);
         return;
@@ -169,13 +164,21 @@ export default function PlotsPage() {
   async function toggleDeletedView() {
     const next = !showDeleted;
     setShowDeleted(next);
-    if (next) {
-      await fetchDeletedPlots(filterTypeId);
+    // if we're opening deleted view and nothing is loaded, load it
+    if (next && (!deletedPlots || deletedPlots.length === 0)) {
+      await fetchDeletedPlots();
     }
   }
 
-  // derived filtered list (client-side search)
+  // derived filtered list (client-side search + client-side type filter)
   const filteredPlots = (plots || []).filter((p) => {
+    // type filter (client-side only)
+    if (filterTypeId) {
+      const plotType =
+        String(p.typeId ?? p.type_id ?? p.id ?? p.optionId ?? "");
+      if (String(filterTypeId) !== plotType) return false;
+    }
+
     if (!debouncedQuery) return true;
     const q = debouncedQuery;
     const name = (p.name || "").toString().toLowerCase();
@@ -188,6 +191,16 @@ export default function PlotsPage() {
       fam.includes(q) ||
       type.includes(q)
     );
+  });
+
+  // filtered deleted plots to show in deleted panel (client-side only)
+  const filteredDeletedPlots = (deletedPlots || []).filter((dp) => {
+    if (filterTypeId) {
+      const dpType =
+        String(dp.typeId ?? dp.type_id ?? dp.id ?? dp.optionId ?? "");
+      if (String(filterTypeId) !== dpType) return false;
+    }
+    return true;
   });
 
   function typeNameFor(typeId) {
@@ -377,11 +390,11 @@ export default function PlotsPage() {
             <h4 className="text-sm font-semibold mb-3">Deleted plots</h4>
             {deletedLoading ? (
               <div className="text-sm text-gray-600">Loading deleted plots…</div>
-            ) : deletedPlots.length === 0 ? (
+            ) : filteredDeletedPlots.length === 0 ? (
               <div className="text-xs text-gray-500">No deleted plots</div>
             ) : (
               <div className="space-y-3">
-                {deletedPlots.map((dp) => (
+                {filteredDeletedPlots.map((dp) => (
                   <div
                     key={String(dp.plotId)}
                     className="p-3 bg-gray-50 border rounded"

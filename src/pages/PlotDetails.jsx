@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import MainNavbar from '../component/MainNavbar';
 import { API_BASE } from '../config/Api.js';
 import { motion } from 'framer-motion';
-import { CheckCircle, Clock, FileText, ChevronDown, RefreshCw, ArrowLeft, Search } from 'lucide-react';
+import { FileText, ChevronDown, RefreshCw, ArrowLeft, Search } from 'lucide-react';
 
 function fmtDate(iso) {
   try {
@@ -17,12 +17,11 @@ function fmtDate(iso) {
 
 function StatusBadge({ status }) {
   const map = {
-    '-1': { label: 'Removed', color: 'bg-gray-100 text-gray-700' },
-    '0': { label: 'Pending', color: 'bg-yellow-100 text-yellow-800' },
-    '1': { label: 'Submitted', color: 'bg-yellow-100 text-yellow-800' },
-    '2': { label: 'Approved', color: 'bg-blue-100 text-blue-800' },
-    '3': { label: 'In Review', color: 'bg-indigo-100 text-indigo-800' },
-    '4': { label: 'Verified', color: 'bg-green-100 text-green-800' }
+    '-1': { label: 'Deleted', color: 'bg-gray-100 text-gray-700' },
+    '1': { label: 'forest Guard', color: 'bg-yellow-100 text-yellow-800' },
+    '2': { label: 'Range Assitant', color: 'bg-blue-100 text-blue-800' },
+    '3': { label: 'Range Officer', color: 'bg-indigo-100 text-indigo-800' },
+    '4': { label: 'Assitant Director', color: 'bg-green-100 text-green-800' }
   };
   const entry = map[String(status)] || { label: `Status ${status}`, color: 'bg-gray-100 text-gray-800' };
   return <span className={`text-xs px-2 py-1 rounded ${entry.color}`}>{entry.label}</span>;
@@ -30,11 +29,8 @@ function StatusBadge({ status }) {
 
 function ProgressBar({ pct }) {
   return (
-    <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
-      <div
-        className="h-full rounded-full bg-gradient-to-r from-sky-500 to-indigo-600"
-        style={{ width: `${Math.max(0, Math.min(100, pct))}%` }}
-      />
+    <div className="w-48 h-3 bg-gray-200 rounded-full overflow-hidden">
+      <div style={{ width: `${Math.max(0, Math.min(100, pct))}%`, backgroundColor: '#2563eb' }} className="h-full rounded" />
     </div>
   );
 }
@@ -49,6 +45,10 @@ export default function PlotStagesPage() {
   const [buildings, setBuildings] = useState([]);
   const [expandedStage, setExpandedStage] = useState(null);
   const [search, setSearch] = useState('');
+
+  // modal for status history
+  const [historyModalOpen, setHistoryModalOpen] = useState(false);
+  const [historyModalStage, setHistoryModalStage] = useState(null);
 
   // refs for stage cards to support auto-scroll
   const stageRefs = useRef({});
@@ -129,7 +129,6 @@ export default function PlotStagesPage() {
   function getTypeName() {
     const b = findBuildingForPlot();
     if (b) return b.typeName ?? b.type ?? b.buildingType ?? b.type_id ?? b.name ?? '';
-    // try plot
     return plot?.typeName ?? plot?.type ?? plot?.typeId ?? '';
   }
 
@@ -202,27 +201,51 @@ export default function PlotStagesPage() {
     return (plot?.docs || []).filter(d => (d.name || d.currentStage || '').toLowerCase().includes(q) || (d.insertedBy || '').toLowerCase().includes(q));
   }, [search, plot]);
 
-  // auto-scroll to the expanded stage card to make the UI interactive
+  // auto-scroll to the expanded stage card
   useEffect(() => {
     if (!expandedStage) return undefined;
-    // small delay to allow expand animation to start so scroll lands correctly
     const t = setTimeout(() => {
       const el = stageRefs.current[expandedStage];
       if (el && typeof el.scrollIntoView === 'function') {
         try {
           el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          // focus it for keyboard users
           if (typeof el.focus === 'function') el.focus();
-        } catch (e) {
-          // ignore
-        }
+        } catch (e) {}
       }
     }, 180);
     return () => clearTimeout(t);
   }, [expandedStage]);
 
+  function openStageForTimeline(t) {
+    if (!plot || !Array.isArray(plot.docs)) {
+      setExpandedStage(null);
+      return;
+    }
+    const docs = plot.docs;
+    let key = null;
+    for (let i = 0; i < docs.length; i += 1) {
+      const d = docs[i];
+      const possibleKeys = [d.currentStage ?? '', d.stageId ?? '', d.name ?? '', `stage-${i}`].map(x => String(x));
+      if (possibleKeys.includes(String(t.id)) || possibleKeys.includes(String(t.name))) {
+        key = d.currentStage ?? d.stageId ?? `stage-${i}`;
+        break;
+      }
+    }
+    if (key) setExpandedStage(key);
+    else setExpandedStage(null);
+  }
+
+  function openHistoryModal(stageObj) {
+    setHistoryModalStage(stageObj);
+    setHistoryModalOpen(true);
+  }
+  function closeHistoryModal() {
+    setHistoryModalOpen(false);
+    setHistoryModalStage(null);
+  }
+
   if (loading) return (
-    <div className="min-h-screen bg-[#fffaf0] font-sans">
+    <div className="min-h-screen bg-[#f8f0dc] font-sans">
       <MainNavbar />
       <div className="max-w-4xl mx-auto px-4 py-20 text-center">Loading stages…</div>
     </div>
@@ -256,7 +279,7 @@ export default function PlotStagesPage() {
     <div className="min-h-screen bg-[#f8f0dc] font-sans">
       <MainNavbar />
       <div className="max-w-6xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center justify-between mb-4">
           <div>
             <h1 className="text-2xl font-semibold text-slate-800">{plot.name ?? plot.plotId}</h1>
             <div className="text-sm text-slate-600">{typeName ? `Type: ${typeName}` : ''} <span className="mx-2">•</span> Village: <span className="font-medium">{villageId}</span></div>
@@ -268,138 +291,207 @@ export default function PlotStagesPage() {
           </div>
         </div>
 
-        <div className="bg-white rounded-xl shadow p-5 mb-6">
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex-1">
-              <div className="text-sm text-slate-500">Overall progress</div>
-              <div className="mt-2 flex items-center gap-4">
-                <div className="w-72">
-                  <ProgressBar pct={pct} />
-                </div>
-                <div className="text-sm font-medium">{completedCount} of {stagesMap.length} completed</div>
-              </div>
+        {/* TIMELINE (clean, government-friendly look) */}
+        <div className="bg-white rounded-xl shadow p-4 mb-6">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-3">
+              <h3 className="text-sm font-medium text-slate-800">Timeline</h3>
+              <div className="text-xs text-slate-500">Stage order</div>
             </div>
 
-            <div className="relative">
-              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search stages or inserted by..." className="pl-10 pr-3 py-2 border rounded w-64 focus:outline-none focus:ring" />
-              <div className="absolute left-3 top-2.5 text-slate-400"><Search size={16} /></div>
+            <div className="flex items-center gap-4">
+              <ProgressBar pct={pct} />
+              <div className="text-sm font-medium text-slate-700">{pct}%</div>
             </div>
           </div>
+
+          {timeline.length === 0 ? (
+  <div className="text-sm text-slate-500">No stage map available</div>
+) : (
+  <div className="relative px-4 py-4">
+    {/* top row: fixed height equal to button (h-12 = 3rem = 48px) */}
+    {/* the absolute line sits inside this row so it is vertically centered with the buttons */}
+    <div className="relative">
+      {/* base connector line and colored completed portion — both centered vertically inside h-12 */}
+      <div className="absolute left-4 right-4 top-0 h-12 flex items-center pointer-events-none" aria-hidden="true">
+        <div className="w-full h-0.5 bg-slate-200 rounded relative">
+          <div
+            className="absolute left-0 top-1/2 transform -translate-y-1/2 h-0.5 rounded"
+            style={{ width: `${pct}%`, backgroundColor: '#1e40af', maxWidth: '100%' }}
+          />
+        </div>
+      </div>
+
+      {/* buttons row (z-10 so buttons are above the line) */}
+      <div className="flex items-start justify-between relative z-10">
+        {timeline.map((t, i) => {
+          const stageKey = t.id ?? `s-${i}`;
+          const isCompleted = !!t.isCompleted;
+          const isSelected = (() => {
+            if (!expandedStage || !plot?.docs) return false;
+            return plot.docs.some((d, idx) => {
+              const key = d.currentStage ?? d.stageId ?? `stage-${idx}`;
+              return String(key) === String(stageKey) || String(d.name) === String(t.name) || String(d.currentStage) === String(t.name);
+            });
+          })();
+
+          return (
+            <div
+              key={String(stageKey)}
+              className="flex flex-col items-center"
+              style={{ width: `${100 / Math.max(1, timeline.length)}%`, maxWidth: 180 }}
+            >
+              {/* button container fixed to h-12 so button is vertically centered with the line */}
+              <div className="h-12 flex items-center justify-center">
+                <button
+                  onClick={() => openStageForTimeline(t)}
+                  className={`relative z-20 flex items-center justify-center w-12 h-12 rounded-full focus:outline-none transition
+                    ${isCompleted ? 'bg-blue-700 text-white border-blue-700' : isSelected ? 'bg-white text-blue-700 border-2 border-blue-700' : 'bg-white text-gray-400 border border-gray-300'}`}
+                  aria-pressed={isSelected}
+                  aria-label={`${t.name} ${isCompleted ? 'completed' : isSelected ? 'current' : 'upcoming'}`}
+                  title={t.name}
+                >
+                  {isCompleted ? '✓' : String(i + 1)}
+                </button>
+              </div>
+
+              <div className={`mt-2 text-center text-sm truncate ${isCompleted || isSelected ? 'text-slate-800' : 'text-gray-400'}`}>
+                {t.name}
+              </div>
+
+              {t.completionDate && (
+                <div className="text-xs text-slate-500 mt-1">{fmtDate(t.completionDate)}</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  </div>
+)}
+
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2">
-            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }} className="space-y-4">
+        {/* STAGE CARDS (filter moved into header to the right) */}
+        <div className="space-y-4">
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }} className="space-y-4">
+            <div className="flex items-center justify-between">
               <h3 className="text-lg font-medium text-slate-800">Stage cards</h3>
 
-              {filteredStages.length === 0 ? (
-                <div className="text-sm text-slate-500">No stages found.</div>
-              ) : filteredStages.map((s, idx) => {
-                const key = s.currentStage ?? s.stageId ?? `stage-${idx}`;
-                const expanded = expandedStage === key;
-                return (
-                  <motion.div
-                    ref={el => (stageRefs.current[key] = el)}
-                    tabIndex={-1}
-                    layout
-                    key={key}
-                    className={`bg-white rounded-lg shadow-sm p-4 border ${s.deleted ? 'opacity-60' : ''}`}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3">
-                          <div className="text-sm font-semibold text-slate-800">{s.name ?? s.currentStage ?? `Stage ${idx + 1}`}</div>
-                          <div className="text-xs text-slate-400">{s.currentStage ?? ''}</div>
-                          <div className="ml-2"><StatusBadge status={s.status ?? 0} /></div>
-                        </div>
-                        <div className="mt-2 text-sm text-slate-600">Inserted by: {s.insertedBy ?? '—'}</div>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <button onClick={() => setExpandedStage(expanded ? null : key)} aria-expanded={expanded} className="flex items-center gap-2 text-sm px-3 py-1 border rounded bg-white text-slate-700">
-                          Details <ChevronDown className={`transition-transform ${expanded ? 'rotate-180' : ''}`} size={16} />
-                        </button>
-                      </div>
-                    </div>
-
-                    {expanded && (
-                      <div className="mt-3 pt-3 border-t text-sm text-slate-700 space-y-3">
-                        <div>
-                          <div className="font-medium">Notes</div>
-                          <div className="mt-1 whitespace-pre-wrap">{s.notes ?? '—'}</div>
-                        </div>
-
-                        <div className="flex flex-col sm:flex-row gap-4">
-                          <div className="flex-1">
-                            <div className="font-medium">Verification</div>
-                            <div className="mt-1">ID: <span className="font-medium">{s.verificationId ?? '—'}</span></div>
-                            <div>By: <span className="font-medium">{s.verifiedBy ?? '—'}</span></div>
-                            <div>At: <span className="font-medium">{fmtDate(s.verifiedAt)}</span></div>
-                          </div>
-
-                          <div className="flex-1">
-                            <div className="font-medium">Documents</div>
-                            <div className="mt-1 space-y-2">
-                              {Array.isArray(s.docs) && s.docs.length > 0 ? s.docs.map((d, ii) => (
-                                <div key={ii} className="flex items-center justify-between border rounded p-2">
-                                  <div className="flex items-center gap-2 text-slate-700"><FileText size={16} /> <div className="text-sm truncate">{typeof d === 'string' ? d.split('/').pop() : (d.name ?? `Document ${ii + 1}`)}</div></div>
-                                  <a href={typeof d === 'string' ? d : d.url} target="_blank" rel="noreferrer" className="text-sm text-sky-600 underline">Open</a>
-                                </div>
-                              )) : (<div className="text-sm text-slate-500">No documents</div>)}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div>
-                          <div className="font-medium">Status history</div>
-                          <div className="mt-2 space-y-2">
-                            {Array.isArray(s.statusHistory) && s.statusHistory.length > 0 ? s.statusHistory.map((h, i) => (
-                              <div key={i} className="flex items-start justify-between bg-slate-50 p-2 rounded">
-                                <div>
-                                  <div className="font-medium text-sm">{h.comments || '—'}</div>
-                                  <div className="text-xs text-slate-500">By {h.verifier ?? '—'} • {fmtDate(h.time)}</div>
-                                </div>
-                                <div className="ml-2"><StatusBadge status={h.status} /></div>
-                              </div>
-                            )) : <div className="text-sm text-slate-500">No history</div>}
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </motion.div>
-                );
-              })}
-            </motion.div>
-          </div>
-
-          <aside>
-            <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }} className="bg-white rounded-xl shadow p-5 sticky top-6">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-lg font-medium text-slate-800">Timeline</h3>
-                <div className="text-sm text-slate-500">{pct}%</div>
-              </div>
-
-              {timeline.length === 0 ? (
-                <div className="text-sm text-slate-500">No stage map available</div>
-              ) : (
-                <div className="flex flex-col divide-y divide-slate-100">
-                  {timeline.map((t, i) => (
-                    <div key={t.id ?? i} className="flex items-center justify-between py-3">
-                      <div className="flex items-center gap-3">
-                        <div className={`w-3 h-3 rounded-full ${t.isCompleted ? 'bg-sky-600' : 'bg-slate-300'}`} />
-                        <div className="text-sm text-slate-800">{t.name}</div>
-                      </div>
-
-                      <div className="text-sm text-slate-500">{t.isCompleted ? fmtDate(t.completionDate) : 'Pending'}</div>
-                    </div>
-                  ))}
+              <div className="flex items-center gap-3">
+                <div className="text-sm text-slate-500 mr-3">Overall: <span className="font-medium">{completedCount} of {stagesMap.length}</span></div>
+                <div className="relative">
+                  <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filter stages or inserted by..." className="pl-9 pr-3 py-2 border rounded w-64 focus:outline-none focus:ring" />
+                  <div className="absolute left-3 top-2.5 text-slate-400"><Search size={16} /></div>
                 </div>
-              )}
+              </div>
+            </div>
 
-              <div className="mt-4 text-xs text-slate-500">Simple timeline — shows stage order and completion date. Click a stage card for more details.</div>
-            </motion.div>
-          </aside>
+            {filteredStages.length === 0 ? (
+              <div className="text-sm text-slate-500">No stages found.</div>
+            ) : filteredStages.map((s, idx) => {
+              const key = s.currentStage ?? s.stageId ?? `stage-${idx}`;
+              const expanded = expandedStage === key;
+
+              // derive a short summary for header
+              const shortNotes = (s.notes || '').replace(/\s+/g, ' ').slice(0, 120);
+
+              return (
+                <motion.div
+                  ref={el => (stageRefs.current[key] = el)}
+                  tabIndex={-1}
+                  layout
+                  key={key}
+                  className={`bg-white rounded-lg shadow-sm p-4 border ${s.deleted ? 'opacity-60' : ''}`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-3">
+                        <div className="text-sm font-semibold text-slate-800">{s.name ?? s.currentStage ?? `Stage ${idx + 1}`}</div>
+                        {/* <div className="text-xs text-slate-400">{s.currentStage ?? ''}</div> */}
+                        <div className="ml-2"><StatusBadge status={s.status ?? 0} /></div>
+                      </div>
+                      <div className="mt-2 text-sm text-slate-600">Inserted by: {s.insertedBy ?? '—'}</div>
+                      
+                    </div>
+{/* Status history moved below Details button as requested */}
+                    <div className="flex flex-col items-end gap-2">
+                      <button onClick={() => setExpandedStage(expanded ? null : key)} aria-expanded={expanded} className="flex items-center gap-2 text-sm px-3 py-1 border rounded bg-white text-slate-700">
+                        Details <ChevronDown className={`transition-transform ${expanded ? 'rotate-180' : ''}`} size={16} />
+                      </button>
+
+                      <button onClick={() => openHistoryModal(s)} className="text-sm underline text-sky-600 hover:text-sky-700">Status history</button>
+                    </div>
+                  </div>
+
+                            
+                  {expanded && (
+                    <div className="mt-3 pt-3 border-t text-sm text-slate-700 grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[46vh] overflow-y-auto pr-2">
+                      <div>
+                        <div className="font-medium">Notes</div>
+                        <div className="mt-1 whitespace-pre-wrap leading-relaxed text-sm">{s.notes ?? '—'}</div>
+
+                        <div className="mt-4">
+                          <div className="font-medium">Verification</div>
+                          <div className="mt-1 text-sm">ID: <span className="font-medium">{s.verificationId ?? '—'}</span></div>
+                          <div className="text-sm">By: <span className="font-medium">{s.verifiedBy ?? '—'}</span></div>
+                          <div className="text-sm">At: <span className="font-medium">{fmtDate(s.verifiedAt)}</span></div>
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="font-medium">Documents</div>
+                        <div className="mt-2 grid grid-cols-1 gap-2">
+                          {Array.isArray(s.docs) && s.docs.length > 0 ? s.docs.map((d, ii) => (
+                            <div key={ii} className="flex items-center justify-between border rounded p-2">
+                              <div className="flex items-center gap-2 text-slate-700 text-sm"><FileText size={16} /> <div className="truncate max-w-[220px]">{typeof d === 'string' ? d.split('/').pop() : (d.name ?? `Document ${ii + 1}`)}</div></div>
+                              <a href={typeof d === 'string' ? d : d.url} target="_blank" rel="noreferrer" className="text-sm text-sky-600 underline">Open</a>
+                            </div>
+                          )) : (<div className="text-sm text-slate-500">No documents</div>)}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </motion.div>
+              );
+            })}
+          </motion.div>
         </div>
+
+        {/* Status history modal */}
+        {historyModalOpen && historyModalStage && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center">
+            <div className="absolute inset-0 bg-black opacity-40" onClick={closeHistoryModal} />
+            <div role="dialog" aria-modal="true" className="relative z-10 w-full max-w-2xl mx-4">
+              <div className="bg-white rounded-lg shadow-lg overflow-hidden">
+                <div className="flex items-center justify-between p-4 border-b">
+                  <div className="text-lg font-semibold">{historyModalStage.name}</div>
+                  <div className="text-sm text-slate-400">Status history</div>
+                  <button onClick={closeHistoryModal} aria-label="Close" className="px-3 py-1 rounded bg-gray-100">Close</button>
+                </div>
+
+                <div className="p-4 max-h-[60vh] overflow-y-auto space-y-3">
+                  {Array.isArray(historyModalStage.statusHistory) && historyModalStage.statusHistory.length > 0 ? (
+                    historyModalStage.statusHistory.map((h, i) => (
+                      <div key={i} className="border rounded p-3 bg-slate-50">
+                        <div className="flex justify-between items-start gap-4">
+                          <div>
+                            <div className="font-medium">{h.comments || '—'}</div>
+                            <div className="text-xs text-slate-500 mt-1">By {h.verifier ?? '—'} • {fmtDate(h.time)}</div>
+                          </div>
+                          <div className="text-sm"><StatusBadge status={h.status} /></div>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-sm text-gray-600">No status history available.</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
       </div>
     </div>
   );

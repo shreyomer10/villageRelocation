@@ -22,7 +22,6 @@ export default function App() {
     <Routes>
       <Route path="/" element={<LandingPage />} />
       <Route path="/login" element={<Auth />} />
-
       {/* Protected routes */}
       <Route
         path="/dashboard"

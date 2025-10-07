@@ -26,7 +26,7 @@ export default function Auth() {
     sendOtp: `${API_BASE}/sendOtp`,
     verifyOtp: `${API_BASE}/verifyOtp`,
     register: `${API_BASE}/register`,
-    updatePassword: `${API_BASE}/updatePassword`,
+    updatePassword: `${API_BASE}/updatePassword`, // backend you provided
   };
 
   useEffect(() => {
@@ -52,10 +52,21 @@ export default function Auth() {
       } catch (e) {
         json = null;
       }
-      return { ok: res.ok, status: res.status, json, text };
+      return { ok: res.ok, status: res.status, json, text, res };
     } catch (err) {
       return { ok: false, status: 0, json: null, text: String(err) };
     }
+  }
+
+  // helper to interpret your backend's make_response shape
+  function isBackendSuccess({ ok, status, json, text }) {
+    // prefer HTTP 2xx
+    if (ok && status >= 200 && status < 300) return true;
+    // some endpoints return JSON { error: false, message: "..." } on 200
+    if (json && (json.error === false || json.error === "False" || json.error === 0)) return true;
+    // sometimes backend incorrectly sets error:true but uses 200 code and success message
+    if (status === 200 && json && typeof json.message === "string" && /success|sent|verified|login/i.test(json.message)) return true;
+    return false;
   }
 
   // LOGIN
@@ -74,28 +85,25 @@ export default function Auth() {
         mobile_number: mobileNumber.trim(),
         role,
         password,
-        is_app: false, // web uses cookie-based token by default per API docs
+        is_app: false, // web uses cookie-based token by default per your backend
       };
 
       const { ok, status, json, text } = await safeFetch(ENDPOINTS.login, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
+        credentials: "include", // important: allow server to set cookie token
         body: JSON.stringify(body),
       });
 
       if (!mountedRef.current) return;
 
-      if (!ok) {
+      if (!isBackendSuccess({ ok, status, json, text })) {
         const msg = (json && (json.message || json.error)) || text || `Login failed (status ${status})`;
-        throw new Error(msg);
+        throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
       }
 
+      // backend returns either { token, user } (is_app true) or sets cookie & returns user
       const payload = json ?? {};
-      // expected shapes:
-      // is_app=true -> { token, user }
-      // is_app=false -> cookie set, body contains user
-      // pass full payload to auth.login which sanitizes villageID etc.
       const okLogin = await auth.login(payload);
       if (!okLogin) {
         setError("Login succeeded but client could not process server response.");
@@ -126,9 +134,9 @@ export default function Auth() {
         body: JSON.stringify(body),
       });
       if (!mountedRef.current) return null;
-      if (!ok) {
+      if (!isBackendSuccess({ ok, status, json, text })) {
         const msg = (json && (json.message || json.error)) || text || `Failed to send OTP (status ${status})`;
-        throw new Error(msg);
+        throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
       }
       setInfo("OTP sent to the provided mobile number.");
       return json ?? {};
@@ -154,8 +162,8 @@ export default function Auth() {
         mobile_number: mobileNumber.trim(),
         role,
         otp: otp.trim(),
-        purpose: action,
       };
+      // your backend verifyOtp expects emp_id, mobile_number, role, otp (it uses purpose param server-side only in sendOtp)
       const { ok, status, json, text } = await safeFetch(ENDPOINTS.verifyOtp, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -163,9 +171,9 @@ export default function Auth() {
       });
 
       if (!mountedRef.current) return false;
-      if (!ok) {
+      if (!isBackendSuccess({ ok, status, json, text })) {
         const msg = (json && (json.message || json.error)) || text || `OTP verification failed (status ${status})`;
-        throw new Error(msg);
+        throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
       }
       setInfo("OTP verified.");
       return true;
@@ -195,9 +203,10 @@ export default function Auth() {
       });
 
       if (!mountedRef.current) return;
-      if (!ok) {
+      // backend in your file sometimes returns error=True even on 200 — treat HTTP 200 + success message as success
+      if (!isBackendSuccess({ ok, status, json, text })) {
         const msg = (json && (json.message || json.error)) || text || `Registration failed (status ${status})`;
-        throw new Error(msg);
+        throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
       }
 
       setInfo("Registration successful. Attempting to sign in...");
@@ -207,7 +216,7 @@ export default function Auth() {
         await auth.login(json);
         navigate("/dashboard");
       } else {
-        // fallback to login
+        // fallback to login attempt (user probably needs to login; we'll try auto-login)
         await handleAutoLoginAfterRegister(trimmedId, mobileNumber.trim(), role, password);
       }
     } catch (err) {
@@ -226,7 +235,7 @@ export default function Auth() {
         body: JSON.stringify({ emp_id, mobile_number, role: roleVal, password: pwd, is_app: false }),
       });
       if (!mountedRef.current) return;
-      if (!ok) {
+      if (!isBackendSuccess({ ok, status, json, text })) {
         setInfo("Registered — please sign in.");
         setMode("login");
         return;
@@ -253,6 +262,9 @@ export default function Auth() {
     }
   }
 
+  // NOTE: your backend's updatePassword endpoint requires auth (it is decorated with @auth_required).
+  // We will still call it (credentials: 'include') so if your backend expects a cookie token it will be sent.
+  // If your auth middleware intentionally blocks unauthenticated calls, backend will return an error.
   async function handleForgotResetPassword() {
     resetMessages();
     if (!password || password.length < 6) {
@@ -265,15 +277,20 @@ export default function Auth() {
       const { ok, status, json, text } = await safeFetch(ENDPOINTS.updatePassword, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include", // include cookie if backend expects JWT cookie
         body: JSON.stringify(body),
       });
 
       if (!mountedRef.current) return;
-      if (!ok) {
+
+      if (!isBackendSuccess({ ok, status, json, text })) {
         const msg = (json && (json.message || json.error)) || text || `Password update failed (status ${status})`;
-        throw new Error(msg);
+        throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
       }
-      setInfo("Password updated. Signing in...");
+
+      setInfo("Password updated. Attempting to sign in...");
+
+      // try to auto-login (if backend didn't set cookie)
       await handleAutoLoginAfterRegister(empId.trim(), mobileNumber.trim(), role, password);
     } catch (err) {
       if (mountedRef.current) setError(err?.message || "Password update failed.");
