@@ -1,8 +1,6 @@
 
 import datetime as dt
-import logging
-
-from flask import Blueprint, logging,request, jsonify
+from flask import Blueprint,request, jsonify
 from pydantic import ValidationError
 from utils.tokenAuth import auth_required
 from models.stages import FieldLevelVerification, FieldLevelVerificationInsert, FieldLevelVerificationUpdate, Plots, PlotsInsert, PlotsUpdate, statusHistory
@@ -170,11 +168,11 @@ def get_plots(villageId):
         docs = list(plots.find(query, {"_id": 0,"docs":0}))
 
         if not docs:
-            return make_response(True, "No plots found", status=404)
+            return make_response(True, "No plots found",result={"count": 0, "items": []}, status=404)
 
         return make_response(False, "Plots fetched successfully", result={"count": len(docs), "items": docs}, status=200)
     except Exception as e:
-        return make_response(True, f"Error fetching plots: {str(e)}", status=500)
+        return make_response(True, f"Error fetching plots: {str(e)}",result={"count": 0, "items": []}, status=500)
 
 @plots_BP.route("/plots/<villageId>/<plotId>", methods=["GET"])
 def get_plot_complete(villageId,plotId):
@@ -187,11 +185,11 @@ def get_plot_complete(villageId,plotId):
         docs = list(plots.find(query, {"_id": 0}))
 
         if not docs:
-            return make_response(True, "No plots found", status=404)
+            return make_response(True, "No plots found",result={"count": 0, "items": []}, status=404)
 
         return make_response(False, "Plots fetched successfully", result={"count": len(docs), "items": docs}, status=200)
     except Exception as e:
-        return make_response(True, f"Error fetching plots: {str(e)}", status=500)
+        return make_response(True, f"Error fetching plots: {str(e)}",result={"count": 0, "items": []}, status=500)
     
 
 
@@ -205,10 +203,10 @@ def get_deleted_plots(villageId):
 
         docs = list(plots.find(query, {"_id": 0}))
         if not docs:
-            return make_response(True, "No deleted plots found", status=404)
+            return make_response(True, "No deleted plots found", result={"count": 0, "items": []},status=404)
         return make_response(False, "Deleted plots fetched successfully", result={"count": len(docs), "items": docs}, status=200)
     except Exception as e:
-        return make_response(True, f"Error fetching deleted plots: {str(e)}", status=500)
+        return make_response(True, f"Error fetching deleted plots: {str(e)}",result={"count": 0, "items": []}, status=500)
 
 
 # ------------------ FIELD LEVEL VERIFICATION ------------------
@@ -224,6 +222,7 @@ def insert_verification(decoded_data,plotId):
             return make_response(True, "Missing request body or userId", status=400)
         user_id = decoded_data.get("userId")
         user_role=decoded_data.get("role")
+
         if not user_id or not user_role:
             return make_response(True, "Invalid token: missing userId", status=400)
         if user_id!=userId:
@@ -494,15 +493,15 @@ def get_verifications(plotId):
     try:
         plot = plots.find_one({"plotId": plotId, "deleted": False}, {"_id": 0})
         if not plot:
-            return make_response(True, "Plot not found", status=404)
+            return make_response(True, "Plot not found",result={"count": 0, "items": []}, status=404)
 
         verifications = [d for d in plot.get("docs", []) if not d.get("deleted", False)]
         if not verifications:
-            return make_response(True, "No verifications found", status=404)
+            return make_response(True, "No verifications found", result={"count": 0, "items": []},status=404)
 
         return make_response(False, "Verifications fetched successfully", result={"count": len(verifications), "items": verifications})
     except Exception as e:
-        return make_response(True, f"Error fetching verifications: {str(e)}", status=500)
+        return make_response(True, f"Error fetching verifications: {str(e)}", result={"count": 0, "items": []},status=500)
 
 
 @plots_BP.route("/deleted_field_verification/<plotId>", methods=["GET"])
@@ -510,12 +509,12 @@ def get_deleted_verifications(plotId):
     try:
         plot = plots.find_one({"plotId": plotId}, {"_id": 0})
         if not plot:
-            return make_response(True, "Plot not found", status=404)
+            return make_response(True, "Plot not found", result={"count": 0, "items": []},status=404)
 
         verifications = [d for d in plot.get("docs", []) if d.get("deleted", False)]
         if not verifications:
-            return make_response(True, "No deleted verifications found", status=404)
+            return make_response(True, "No deleted verifications found",result={"count": 0, "items": []}, status=404)
 
         return make_response(False, "Deleted verifications fetched successfully", result={"count": len(verifications), "items": verifications})
     except Exception as e:
-        return make_response(True, f"Error fetching deleted verifications: {str(e)}", status=500)
+        return make_response(True, f"Error fetching deleted verifications: {str(e)}", result={"count": 0, "items": []},status=500)

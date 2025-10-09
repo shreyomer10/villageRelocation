@@ -125,7 +125,7 @@ class VillageCard(BaseModel):
 
 
 class VillageLog(BaseModel):
-    type:str #new        meeting / family stage/community facility / family house
+    name:str #new        meeting / family stage/community facility / family house
     updateTime: str
     updateBy: str
     comments: Optional[str] = None
@@ -165,8 +165,8 @@ class Village(BaseModel):
     # districtUpdated: str
     # latUpdated: float
     # longUpdated: float
-    docs: List[Documents] = []
-    photos: List[str] = []
+    docs: List[Documents] = Field(default_factory=list)
+    photos: List[str] = Field(default_factory=list)
     logs: Optional[List[VillageLog]] = Field(default_factory=list)
     familyMasterList:str
 
@@ -190,6 +190,126 @@ class Village(BaseModel):
     @classmethod
     def from_mongo(cls, doc: dict):
         return cls.model_validate(doc)
+
+
+class VillageDocInsert(BaseModel):
+    name: str
+    siteOfRelocation: str
+    fd: str
+    sd:str
+    range:Optional[str]
+    circle:Optional[str]
+    beat:Optional[str]
+    gramPanchayat: str
+    tehsil: str
+    janpad: str
+    district: str
+    lat: float
+    long: float
+    kml: str
+    
+    fdUpdated: str
+    sdUpdated:str
+    rangeUpdated:Optional[str]
+    circleUpdated:Optional[str]
+    beatUpdated:Optional[str]
+    gramPanchayatUpdated: str
+    tehsilUpdated: str
+    janpadUpdated: str
+    districtUpdated: str
+    latUpdated: float
+    longUpdated: float
+    docs: List[Documents] =  Field(default_factory=list)
+    photos: List[str] =  Field(default_factory=list)
+    familyMasterList:str
+    
+    
+    
+    class Config:
+        extra = "forbid"   # ❌ reject unknown fields
+    # Example: ensure latitude/longitude look like numbers
+   
+   
+   
+    @field_validator("lat", "long","latUpdated","longUpdated")
+    @classmethod
+    def validate_coordinates(cls, v: str) -> str:
+        try:
+            float(v)
+        except ValueError:
+            raise ValueError("Latitude/Longitude must be numeric strings")
+        return v
+
+    # Function to validate a Mongo doc against this model
+    @classmethod
+    def from_mongo(cls, doc: dict):
+        return cls.model_validate(doc)
+
+
+class VillageDocUpdate(BaseModel):
+    name: Optional[str]=None
+    siteOfRelocation: Optional[str]=None
+    fd: Optional[str]=None
+    sd:Optional[str]=None
+    range:Optional[str]=None
+    circle:Optional[str]=None
+    beat:Optional[str]=None
+    gramPanchayat: Optional[str]=None
+    tehsil: Optional[str]=None
+    janpad: Optional[str]=None
+    district: Optional[str]=None
+    lat: Optional[float]=None
+    long: Optional[float]=None
+    kml: Optional[str]=None
+    
+    fdUpdated: Optional[str]=None
+    sdUpdated:Optional[str]=None
+    rangeUpdated:Optional[str]=None
+    circleUpdated:Optional[str]=None
+    beatUpdated:Optional[str]=None
+    gramPanchayatUpdated: Optional[str]=None
+    tehsilUpdated: Optional[str]=None
+    janpadUpdated: Optional[str]=None
+    districtUpdated: Optional[str]=None
+    latUpdated: Optional[float]=None
+    longUpdated: Optional[float]=None
+    docs: Optional[List[Documents]] = None
+    photos:Optional[ List[str]] =  None
+    familyMasterList:Optional[str]=None
+    
+    
+    
+    class Config:
+        extra = "forbid"   # ❌ reject unknown fields
+    # Example: ensure latitude/longitude look like numbers
+   
+   
+    
+    @field_validator("lat", "long", "latUpdated", "longUpdated")
+    @classmethod
+    def validate_coordinates(cls, v):
+        if v is None:   # ✅ allow null values
+            return v
+        try:
+            return float(v)  # ✅ ensure numeric if provided
+        except (TypeError, ValueError):
+            raise ValueError("Latitude/Longitude must be numeric")
+
+    # Function to validate a Mongo doc against this model
+    @classmethod
+    def from_mongo(cls, doc: dict):
+        return cls.model_validate(doc)
+
+
+
+class VillageDocComplete(VillageDocInsert):
+    villageId: str
+    currentStage:str
+    currentSubStage: str
+    logs: Optional[List[VillageLog]] = Field(default_factory=list)
+    updates:Optional[List[VillageUpdates]]= Field(default_factory=list)
+    completed_substages:Optional[List[str]]=Field(default_factory=list)
+    delete:bool=False
 
 
 

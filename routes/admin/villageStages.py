@@ -174,12 +174,12 @@ def get_Stages():
     try:
         docs = list(stages.find({"deleted": False}, {"_id": 0}).sort("position", 1))
         if not docs:
-            return make_response(True, "No Stages found", status=404)
+            return make_response(True, "No Stages found",result={"count": 0, "items": []}, status=404)
 
         return make_response(False, "Stages fetched successfully", result={"count": len(docs), "items": docs}, status=200)
 
     except Exception as e:
-        return make_response(True, f"Error fetching stages: {str(e)}", status=500)
+        return make_response(True, f"Error fetching stages: {str(e)}",result={"count": 0, "items": []}, status=500)
 
 
 @villageStages_BP.route("/deleted_stages", methods=["GET"])
@@ -187,12 +187,12 @@ def get_deleted_stages():
     try:
         docs = list(stages.find({"deleted": True}, {"_id": 0}).sort("position", 1))
         if not docs:
-            return make_response(True, "No deleted stages found", status=404)
+            return make_response(True, "No deleted stages found",result={"count": 0, "items": []}, status=404)
 
         return make_response(False, "Deleted stages fetched successfully", result={"count": len(docs), "items": docs}, status=200)
 
     except Exception as e:
-        return make_response(True, f"Error fetching deleted stages: {str(e)}", status=500)
+        return make_response(True, f"Error fetching deleted stages: {str(e)}",result={"count": 0, "items": []}, status=500)
     
 
 @villageStages_BP.route("/deleted_substages/<stageId>", methods=["GET"])
@@ -203,12 +203,12 @@ def get_deleted_substages(stageId):
             {"_id": 0}
         )
         if not option:
-            return make_response(True, "Stage not found", status=404)
+            return make_response(True, "Stage not found", result={"count": 0, "items": []},status=404)
 
         deleted_stages = [s for s in option.get("stages", []) if s.get("deleted", False)]
 
         if not deleted_stages:
-            return make_response(True, "No deleted sub stages found", status=404)
+            return make_response(True, "No deleted sub stages found",result={"count": 0, "items": []}, status=404)
 
         return make_response(
             False,
@@ -217,7 +217,7 @@ def get_deleted_substages(stageId):
             status=200
         )
     except Exception as e:
-        return make_response(True, f"Error fetching deleted sub stages: {str(e)}", status=500)
+        return make_response(True, f"Error fetching deleted sub stages: {str(e)}", result={"count": 0, "items": []},status=500)
 
 
 @villageStages_BP.route("/substage/insert/<stageId>", methods=["POST"])
@@ -534,18 +534,18 @@ def get_village_updates(villageId):
         # --------- Fetch Village ---------
         village = villages.find_one({"villageId": villageId}, {"_id": 0})
         if not village:
-            return make_response(True, "Village not found", status=404)
+            return make_response(True, "Village not found",result={"count": 0, "items": []}, status=404)
 
         # --------- Filter by Deleted Flag ---------
         flag = request.args.get("deleted", "false").lower()  # default = false
         if flag not in ["true", "false"]:
-            return make_response(True, "Invalid 'deleted' flag. Use true or false.", status=400)
+            return make_response(True, "Invalid 'deleted' flag. Use true or false.",result={"count": 0, "items": []}, status=400)
 
         deleted = flag == "true"
         updates = [u for u in village.get("updates", []) if u.get("deleted", False) == deleted]
 
         if not updates:
-            return make_response(True, "No updates found", status=404)
+            return make_response(True, "No updates found", result={"count": 0, "items": []},status=404)
 
         return make_response(
             False,
@@ -554,4 +554,4 @@ def get_village_updates(villageId):
         )
 
     except Exception as e:
-        return make_response(True, f"Error fetching village updates: {str(e)}", status=500)
+        return make_response(True, f"Error fetching village updates: {str(e)}",result={"count": 0, "items": []}, status=500)

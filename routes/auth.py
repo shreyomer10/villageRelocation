@@ -135,8 +135,8 @@ def login():
                 "name": user.name,
                 "ip": ip_address,
                 "ua": user_agent,
-                "is_app": is_app  # ✅ store this in JWT
-
+                "is_app": is_app,  # ✅ store this in JWT
+                "activated":user.activated
             })
         except Exception as e:
             return make_response(True, f"JWT creation failed: {str(e)}", status=500)
@@ -208,7 +208,9 @@ def refresh_token(decoded_data):
                 "name": user.name,
                 "ip": ip_address,
                 "ua": user_agent,
-                "is_app": is_app  # ✅ store this in JWT
+                "is_app": is_app,  # ✅ store this in JWT
+                "activated":user.activated
+
             })
         except Exception as e:
             return make_response(True, f"JWT creation failed: {str(e)}", status=500)

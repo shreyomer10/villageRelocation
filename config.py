@@ -13,6 +13,14 @@ OTP_EXPIRE_MIN = int(os.getenv("OTP_EXPIRE_MIN", "1"))
 SENDER_EMAIL=os.getenv("SENDER_EMAIL",default="shreyomer41@gmail.com")
 RECIEVER_EMAIL=os.getenv("RECIEVER_EMAIL",default="luckyomer10@gmail.com")
 APP_PASSWORD=os.getenv("APP_PASSWORD")
+
+AWS_ACCESS_KEY_ID=os.getenv("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS_KEY=os.getenv("AWS_SECRET_ACCESS_KEY")
+AWS_DEFAULT_REGION=os.getenv("AWS_DEFAULT_REGION")
+
+BUCKET_NAME = os.getenv("BUCKET_NAME")
+
+MAX_FILE_SIZE_MB = 1  # max allowed file size in MB
 client = MongoClient(
     MONGO_URI,
     tls=True,

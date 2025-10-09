@@ -651,7 +651,7 @@ def get_updates(familyId):
         # 1️⃣ Fetch family
         family = families.find_one({"familyId": familyId}, {"_id": 0})
         if not family:
-            return make_response(True, "Family not found", status=404)
+            return make_response(True, "Family not found", result={"count": 0, "items": []},status=404)
 
         # 2️⃣ Determine updates source
         updates = []
@@ -664,7 +664,7 @@ def get_updates(familyId):
             gender = request.args.get("gender")
 
             if not all([name, age, gender]):
-                return make_response(True, "Missing member details (name, age, gender)", status=400)
+                return make_response(True, "Missing member details (name, age, gender)", result={"count": 0, "items": []},status=400)
 
             member = next(
                 (m for m in family.get("members", [])
@@ -675,14 +675,14 @@ def get_updates(familyId):
             )
 
             if not member:
-                return make_response(True, "Member not found", status=404)
+                return make_response(True, "Member not found",result={"count": 0, "items": []}, status=404)
 
             updates = [u for u in member.get("updates", []) if u.get("deleted", False) == deleted_flag]
 
         # 3️⃣ Return response
         if not updates:
             msg = "No deleted updates found" if deleted_flag else "No updates found"
-            return make_response(True, msg, status=404)
+            return make_response(True, msg, result={"count": 0, "items": []},status=404)
 
         return make_response(
             False,
@@ -691,4 +691,4 @@ def get_updates(familyId):
         )
 
     except Exception as e:
-        return make_response(True, f"Error fetching updates: {str(e)}", status=500)
+        return make_response(True, f"Error fetching updates: {str(e)}",result={"count": 0, "items": []}, status=500)

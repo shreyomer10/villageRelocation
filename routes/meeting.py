@@ -83,7 +83,7 @@ def get_meetings_by_village(village_id):
         return make_response(
             True,
             f"Database error while fetching meetings: {str(e)}",
-            result=None,
+            result=[],
             status=500
         )
     except Exception as e:
@@ -91,7 +91,7 @@ def get_meetings_by_village(village_id):
         return make_response(
             True,
             f"Unexpected error: {str(e)}",
-            result=None,
+            result=[],
             status=500
         )
 
@@ -130,7 +130,7 @@ def get_meetings_held_by(held_by):
         return make_response(
             True,
             f"Database error while fetching meetings: {str(e)}",
-            result=None,
+            result=[],
             status=500
         )
     except Exception as e:
@@ -138,7 +138,7 @@ def get_meetings_held_by(held_by):
         return make_response(
             True,
             f"Unexpected error: {str(e)}",
-            result=None,
+            result=[],
             status=500
         )
 

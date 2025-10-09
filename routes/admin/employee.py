@@ -213,6 +213,46 @@ def update_employee(emp_id):
     except Exception as e:
         return make_response(True, "Unexpected error", result=str(e), status=500)
 
+@emp_bp.route("/employee/activate/<emp_id>", methods=["PUT"])
+def activate_employee(emp_id):
+    try:
+        result = users.find_one_and_update(
+            {"userId": emp_id, "deleted": False},
+            {"$set": {"activated": True}},
+            projection={"userId": 1, "activated": 1, "_id": 0},
+            return_document=ReturnDocument.AFTER
+        )
+
+        if not result:
+            return make_response(True, "Employee not found or deleted", status=404)
+
+        return make_response(False, "Employee activated successfully", result=result, status=200)
+
+    except mongo_errors as me:
+        return make_response(True, "Database error", result=str(me), status=500)
+    except Exception as e:
+        return make_response(True, "Unexpected error", result=str(e), status=500)
+
+@emp_bp.route("/employee/deactivate/<emp_id>", methods=["PUT"])
+def deactivate_employee(emp_id):
+    try:
+        result = users.find_one_and_update(
+            {"userId": emp_id, "deleted": False},
+            {"$set": {"activated": False}},
+            projection={"userId": 1, "activated": 1, "_id": 0},
+            return_document=ReturnDocument.AFTER
+        )
+
+        if not result:
+            return make_response(True, "Employee not found or deleted", status=404)
+
+        return make_response(False, "Employee deactivated successfully", result=result, status=200)
+
+    except mongo_errors as me:
+        return make_response(True, "Database error", result=str(me), status=500)
+    except Exception as e:
+        return make_response(True, "Unexpected error", result=str(e), status=500)
+
 
 @emp_bp.route("/employee/delete/<emp_id>", methods=["DELETE"])
 def delete_employee(emp_id):
@@ -251,31 +291,39 @@ def get_all_employees():
     try:
         employees = list(users.find(
             {},
-            {"_id": 0, "userId": 1, "name": 1, "email": 1, "role": 1, "mobile": 1}
+            {"_id": 0,
+            "userId": 1, 
+            "name": 1, 
+            "email": 1, 
+            "role": 1, 
+            "mobile": 1,
+            "villageID":1,
+            "activated":1,
+            "verified":1}
         ))
-        return make_response(False, "Employees fetched successfully", result=employees)
+        return make_response(False, "Employees fetched successfully", result={"count": len(employees), "items": employees},status=200)
 
     except mongo_errors.PyMongoError as me:
-        return make_response(True, "Database error", result=str(me), status=500)
+        return make_response(True, "Database error", message=str(me),  result={"count": 0, "items": []},status=500)
 
     except Exception as e:
-        return make_response(True, "Unexpected error", result=str(e), status=500)
+        return make_response(True, "Unexpected error", message=str(e), result={"count": 0, "items": []},status=500)
 
 
-@emp_bp.route("/employee/<emp_id>", methods=["GET"])
-def get_employee_details(emp_id):
-    try:
-        if not emp_id or not isinstance(emp_id, str):
-            return make_response(True, "Invalid or missing emp_id", status=400)
+# @emp_bp.route("/employee/<emp_id>", methods=["GET"])
+# def get_employee_details(emp_id):
+#     try:
+#         if not emp_id or not isinstance(emp_id, str):
+#             return make_response(True, "Invalid or missing emp_id", status=400)
 
-        emp = users.find_one({"userId": emp_id,"deleted":False},{"_id": 0,"otp":0,"password":0})
-        if not emp:
-            return make_response(True, "Employee not found", status=404)
+#         emp = users.find_one({"userId": emp_id,"deleted":False},{"_id": 0,"otp":0,"password":0})
+#         if not emp:
+#             return make_response(True, "Employee not found", status=404)
 
-        return make_response(False, "Employee fetched successfully", result=emp)
+#         return make_response(False, "Employee fetched successfully", result=emp)
 
-    except mongo_errors.PyMongoError as me:
-        return make_response(True, "Database error", result=str(me), status=500)
+#     except mongo_errors.PyMongoError as me:
+#         return make_response(True, "Database error", result=str(me), status=500)
 
-    except Exception as e:
-        return make_response(True, "Unexpected error", result=str(e), status=500)
+#     except Exception as e:
+#         return make_response(True, "Unexpected error", result=str(e), status=500)

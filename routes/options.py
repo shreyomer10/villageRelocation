@@ -172,7 +172,7 @@ def get_options():
         docs = list(options.find({"deleted": False}, {"_id": 0}))
 
         if not docs:
-            return make_response(True, "No options found", status=404)
+            return make_response(True, "No options found",result={"count":0,"items":[]}, status=404)
 
         return make_response(False, "Options fetched successfully", result={"count": len(docs), "items": docs}, status=200)
 
@@ -186,7 +186,7 @@ def get_deleted_options():
     try:
         docs = list(options.find({"deleted": True}, {"_id": 0}).sort("position", 1))
         if not docs:
-            return make_response(True, "No deleted options found", status=404)
+            return make_response(True, "No deleted options found",result={"count":0,"items":[]}, status=404)
 
         return make_response(False, "Deleted options fetched successfully", result={"count": len(docs), "items": docs}, status=200)
 
@@ -208,7 +208,7 @@ def get_deleted_option_stages(optionId):
         deleted_stages = [s for s in option.get("stages", []) if s.get("deleted", False)]
 
         if not deleted_stages:
-            return make_response(True, "No deleted option stages found", status=404)
+            return make_response(True, "No deleted option stages found",result={"count":0,"items":[]}, status=404)
 
         return make_response(
             False,

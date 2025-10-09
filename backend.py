@@ -10,6 +10,8 @@ from routes.family import family_bp
 from routes.maati import maati_bp
 from routes.meeting import meeting_bp
 from routes.admin.community import building_bp
+from routes.document import s3_bp
+
 from routes.app.plotsVerification import plots_BP
 from routes.app.optionStageVerification import option_verification_BP
 from routes.options import options_BP
@@ -50,6 +52,7 @@ app.register_blueprint(emp_bp,url_prefix="/")
 app.register_blueprint(villageStages_BP,url_prefix="/")
 app.register_blueprint(option_verification_BP,url_prefix="/")
 app.register_blueprint(analytics_BP,url_prefix="/")
+app.register_blueprint(s3_bp,url_prefix="/")
 
 
 @app.route("/", methods=["GET"])

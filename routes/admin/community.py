@@ -123,13 +123,19 @@ def delete_building(buildingId, villageId):
 @building_bp.route("/buildings/<villageId>", methods=["GET"])
 def get_buildings(villageId):
     try:
-        docs = list(buildings.find(
-            {"villageId": villageId, "deleted": False},
-            {"_id": 0}
-        ))
+        type_id = request.args.get("typeId")
+        query = {"villageId": villageId, "deleted": False}
+        if type_id:  # add filter only if provided
+            query["typeId"] = str(type_id)
+
+        docs = list(buildings.find(query, {"_id": 0}))
+        # docs = list(buildings.find(
+        #     {"villageId": villageId, "deleted": False},
+        #     {"_id": 0}
+        # ))
 
         if not docs:
-            return make_response(True, "No buildings found", status=404)
+            return make_response(True, "No buildings found",result={"count": 0, "items": []}, status=404)
 
         for doc in docs:
             doc["stages"] = [s for s in doc.get("stages", []) if not s.get("deleted", False)]
@@ -141,7 +147,8 @@ def get_buildings(villageId):
             status=200
         )
     except Exception as e:
-        return make_response(True, f"Error fetching buildings: {str(e)}", status=500)
+        return make_response(True, f"Error fetching buildings: {str(e)}",result={"count": 0, "items": []}, status=500)
+
 
 @building_bp.route("/deleted_bstages/<buildingId>/<villageId>", methods=["GET"])
 def get_deleted_stages(buildingId, villageId):
@@ -151,12 +158,12 @@ def get_deleted_stages(buildingId, villageId):
             {"_id": 0}
         )
         if not building:
-            return make_response(True, "Building not found", status=404)
+            return make_response(True, "Building not found",result={"count": 0, "items": []}, status=404)
 
         deleted_stages = [s for s in building.get("stages", []) if s.get("deleted", False)]
 
         if not deleted_stages:
-            return make_response(True, "No deleted stages found", status=404)
+            return make_response(True, "No deleted stages found", result={"count": 0, "items": []},status=404)
 
         return make_response(
             False,
@@ -176,7 +183,7 @@ def get_deleted_buildings(villageId):
         ))
 
         if not docs:
-            return make_response(True, "No deleted buildings found", status=404)
+            return make_response(True, "No deleted buildings found",result={"count": 0, "items": []}, status=404)
 
         return make_response(
             False,
