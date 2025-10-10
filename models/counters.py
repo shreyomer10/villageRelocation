@@ -14,6 +14,14 @@ def get_next_village_id(db):
 
 
 
+def get_next_feedback_id(feedbackType,db):
+    counter = db.counters.find_one_and_update(
+        {"_id": f"FB_{feedbackType.value}"},
+        {"$inc": {"seq": 1}},
+        upsert=True,
+        return_document=ReturnDocument.AFTER
+    )
+    return f"T_{feedbackType.value}_{counter['seq']}"
 
 def get_next_user_id(db):
     counter = db.counters.find_one_and_update(

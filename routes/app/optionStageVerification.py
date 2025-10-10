@@ -31,10 +31,17 @@ def insert_family_update(decoded_data,familyId):
             return make_response(True, "Missing userId or req body", status=400)
         user_id = decoded_data.get("userId")
         user_role=decoded_data.get("role")
+        activated=bool(decoded_data.get("activated"))
+        #print(activated)
+
+
+
         if not user_id or not user_role:
             return make_response(True, "Invalid token: missing userId", status=400)
         if user_id!=userId:
             return make_response(True, "Unauthorized access", status=403)
+        if not activated:
+            return make_response(True, "User is not activated. Contact DD", status=400)
         try:
             verification_obj = UpdatesInsert(**payload)
         except ValidationError as ve:
@@ -133,10 +140,17 @@ def insert_member_update(decoded_data,familyId):
             return make_response(True, "Missing userId or req body", status=400)
         user_id = decoded_data.get("userId")
         user_role=decoded_data.get("role")
+        activated=bool(decoded_data.get("activated"))
+        #print(activated)
+
+
+
         if not user_id or not user_role:
             return make_response(True, "Invalid token: missing userId", status=400)
         if user_id!=userId:
             return make_response(True, "Unauthorized access", status=403)
+        if not activated:
+            return make_response(True, "User is not activated. Contact DD", status=400)
         # Required fields
         name = payload.get("name")              # update name
         nameUpdate = payload.get("nameUpdate")  # existing member name
@@ -250,11 +264,17 @@ def update_family_update(decoded_data,familyId, updateId):
             return make_response(True, "Missing request body or userId", status=400)
         user_id = decoded_data.get("userId")
         user_role=decoded_data.get("role")
+        activated=bool(decoded_data.get("activated"))
+        #print(activated)
+
+
+
         if not user_id or not user_role:
             return make_response(True, "Invalid token: missing userId", status=400)
         if user_id!=userId:
             return make_response(True, "Unauthorized access", status=403)
-        # Validate payload using Pydantic
+        if not activated:
+            return make_response(True, "User is not activated. Contact DD", status=400)
         try:
             update_obj = UpdatesUpdate(**payload)  # similar to VillageUpdatesUpdate
         except ValidationError as ve:
@@ -320,11 +340,17 @@ def update_member_update(decoded_data,familyId, updateId):
             return make_response(True, "Missing request body or userId", status=400)
         user_id = decoded_data.get("userId")
         user_role=decoded_data.get("role")
+        activated=bool(decoded_data.get("activated"))
+        #print(activated)
+
+
+
         if not user_id or not user_role:
             return make_response(True, "Invalid token: missing userId", status=400)
         if user_id!=userId:
             return make_response(True, "Unauthorized access", status=403)
-        # Validate payload
+        if not activated:
+            return make_response(True, "User is not activated. Contact DD", status=400)
         try:
             update_obj = UpdatesUpdate(**payload)
         except ValidationError as ve:
@@ -413,10 +439,17 @@ def delete_update(decoded_data):
             return make_response(True, "Missing required fields", status=400)
         user_id = decoded_data.get("userId")
         user_role=decoded_data.get("role")
+        activated=bool(decoded_data.get("activated"))
+        #print(activated)
+
+
+
         if not user_id or not user_role:
             return make_response(True, "Invalid token: missing userId", status=400)
         if user_id!=userId:
             return make_response(True, "Unauthorized access", status=403)
+        if not activated:
+            return make_response(True, "User is not activated. Contact DD", status=400)
         # Fetch family
         family_doc = families.find_one({"familyId": familyId})
         if not family_doc:
@@ -551,10 +584,17 @@ def verify_update(decoded_data):
             return make_response(True, "Missing required fields", status=400)
         user_id = decoded_data.get("userId")
         user_role=decoded_data.get("role")
+        activated=bool(decoded_data.get("activated"))
+        #print(activated)
+
+
+
         if not user_id or not user_role:
             return make_response(True, "Invalid token: missing userId", status=400)
         if user_id!=userId:
             return make_response(True, "Unauthorized access", status=403)
+        if not activated:
+            return make_response(True, "User is not activated. Contact DD", status=400)
 
         # Fetch family
         family = families.find_one({"familyId": familyId})

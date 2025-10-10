@@ -222,11 +222,17 @@ def insert_verification(decoded_data,plotId):
             return make_response(True, "Missing request body or userId", status=400)
         user_id = decoded_data.get("userId")
         user_role=decoded_data.get("role")
+        activated=bool(decoded_data.get("activated"))
+        #print(activated)
+
+
 
         if not user_id or not user_role:
             return make_response(True, "Invalid token: missing userId", status=400)
         if user_id!=userId:
             return make_response(True, "Unauthorized access", status=403)
+        if not activated:
+            return make_response(True, "User is not activated. Contact DD", status=400)
         try:
             verification_obj = FieldLevelVerificationInsert(**payload)
         except ValidationError as ve:
@@ -325,10 +331,17 @@ def update_verification(decoded_data,plotId, verificationId):
             return make_response(True, "Missing request body or userId", status=400)
         user_id = decoded_data.get("userId")
         user_role=decoded_data.get("role")
+        activated=bool(decoded_data.get("activated"))
+        #print(activated)
+
+
+
         if not user_id or not user_role:
             return make_response(True, "Invalid token: missing userId", status=400)
         if user_id!=userId:
             return make_response(True, "Unauthorized access", status=403)
+        if not activated:
+            return make_response(True, "User is not activated. Contact DD", status=400)
         try:
             verification_obj = FieldLevelVerificationUpdate(**payload)
         except ValidationError as ve:
@@ -388,10 +401,17 @@ def verify_verification(decoded_data,plotId, verificationId):
             return make_response(True, "Missing userId ,comments or invalid status (must be 1 or -1)", status=400)
         user_id = decoded_data.get("userId")
         user_role=decoded_data.get("role")
+        activated=bool(decoded_data.get("activated"))
+        #print(activated)
+
+
+
         if not user_id or not user_role:
             return make_response(True, "Invalid token: missing userId", status=400)
         if user_id!=userId:
             return make_response(True, "Unauthorized access", status=403)
+        if not activated:
+            return make_response(True, "User is not activated. Contact DD", status=400)
 
         # Fetch plot
         plot = plots.find_one({"plotId": plotId, "deleted": False})
@@ -450,10 +470,17 @@ def delete_verification(decoded_data,plotId, verificationId):
             return make_response(True, "Missing userId in request body", status=400)
         user_id = decoded_data.get("userId")
         user_role=decoded_data.get("role")
+        activated=bool(decoded_data.get("activated"))
+        #print(activated)
+
+
+
         if not user_id or not user_role:
             return make_response(True, "Invalid token: missing userId", status=400)
         if user_id!=userId:
             return make_response(True, "Unauthorized access", status=403)
+        if not activated:
+            return make_response(True, "User is not activated. Contact DD", status=400)
         plot = plots.find_one({"plotId": plotId, "deleted": False})
         if not plot:
             return make_response(True, "Plot not found", status=404)

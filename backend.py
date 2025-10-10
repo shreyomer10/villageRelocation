@@ -18,7 +18,7 @@ from routes.options import options_BP
 from routes.admin.villageStages import villageStages_BP
 from routes.admin.employee import emp_bp
 from routes.admin.analytics import analytics_BP
-
+from routes.complaints import feedback_bp
 app = Flask(__name__)
 CORS(app,
      supports_credentials=True,
@@ -53,10 +53,12 @@ app.register_blueprint(villageStages_BP,url_prefix="/")
 app.register_blueprint(option_verification_BP,url_prefix="/")
 app.register_blueprint(analytics_BP,url_prefix="/")
 app.register_blueprint(s3_bp,url_prefix="/")
+app.register_blueprint(feedback_bp,url_prefix="/")
 
 
 @app.route("/", methods=["GET"])
 def home():
+    
     """
     Village Relocation Management System API Documentation
     Complete API reference with all endpoints, parameters, and responses
