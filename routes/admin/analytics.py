@@ -77,6 +77,66 @@ def get_option_analytics(option_id):
         return make_response(True, f"Internal server error: {str(e)}", status=500)
 
 
+@analytics_BP.route("/analytics/building/<villageId>/<type_id>", methods=["GET"])
+def get_building_analytics(villageId,type_id):
+    try:
+        if not villageId or not type_id or not isinstance(type_id, str):
+            return make_response(True, "Invalid or missing villageId or missing type_id ", status=400)
+
+
+        try:
+            buildings_doc = buildings.find_one(
+                {"typeId": type_id, "villageId":villageId,"deleted": False},
+                {"_id": 0, "stages": 1, "name": 1}
+            )
+        except Exception as e:
+            return make_response(True, f"Database error fetching buildings: {str(e)}", status=500)
+
+        if not buildings_doc:
+            return make_response(True, "building not found", status=404)
+
+        building_name = buildings_doc.get("name", "Unknown plot")
+        stages = buildings_doc.get("stages", [])
+        if not stages:
+            return make_response(True, "No stages found for this plot", status=404)
+
+        stage_counters = [{"id": stage.get("stageId"), "name": stage.get("name"), "count": 0} for stage in stages]
+
+        # -------- Prepare Family Query -------- #
+        query = {"villageId":villageId,"typeId":type_id}
+
+
+        # -------- Fetch Families -------- #
+        try:
+            plot_cursor = plots.find(query, {"_id": 0, "stagesCompleted": 1})
+        except Exception as e:
+            return make_response(True, f"Database error fetching families: {str(e)}", status=500)
+
+        for plot in plot_cursor:
+            
+            stages_completed = plot.get("stagesCompleted", [])
+            if stages_completed:  # Checks if the list is not empty
+                plot_stage = stages_completed[-1]
+            else:
+                plot_stage = None  # Or some other default value
+            for stage in stage_counters:
+                if stage["id"] == plot_stage:  
+                    stage["count"] += 1
+
+        # -------- Response -------- #
+        result = {
+            "typeId": type_id,
+            "buildingName": building_name,
+            "stages": stage_counters
+        }
+
+        return make_response(False, "Analytics fetched successfully", result=result, status=200)
+
+    except Exception as e:
+        return make_response(True, f"Internal server error: {str(e)}", status=500)
+
+
+
 @analytics_BP.route("/villages/family-count", defaults={"village_id": None}, methods=["GET"])
 @analytics_BP.route("/villages/<village_id>/family-count", methods=["GET"])
 def get_family_count(village_id):

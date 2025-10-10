@@ -89,8 +89,8 @@ def upload_files():
                     "ContentType": file.content_type
                 }
             )
-            url = f"https://{BUCKET_NAME}.s3.{AWS_DEFAULT_REGION}.amazonaws.com/{s3_key}"
-            uploaded_map[name] = url
+            s3_uri = f"s3://{BUCKET_NAME}/{s3_key}"
+            uploaded_map[name] = s3_uri
             uploaded_keys.append(s3_key)
 
         except ClientError as e:
@@ -114,17 +114,7 @@ def upload_files():
         status=201
     )
 
-# @s3_bp.route("/docs/<filename>", methods=["GET"])
-# def get_file_url(filename):
-#     try:
-#         url = s3_client.generate_presigned_url(
-#             "get_object",
-#             Params={"Bucket": BUCKET_NAME, "Key": filename},
-#             ExpiresIn=3600  # URL expires in 1 hour
-#         )
-#         return jsonify({"url": url}), 200
-#     except ClientError as e:
-#         return jsonify({"error": str(e)}), 500
+
 
 
 @s3_bp.route("/delete", methods=["DELETE"])
@@ -177,5 +167,68 @@ def delete_file():
         except ClientError as e:
             return make_response(error=True, message="Failed to delete file", status=500)
 
+    except Exception as e:
+        return make_response(error=True, message=f"Unexpected error: {str(e)}", status=500)
+
+
+
+
+
+@s3_bp.route("/access", methods=["POST"])
+def get_file_url():
+    """
+    Generates a pre-signed URL for a private S3 object using its S3 URI.
+
+    Expected Body (JSON):
+        { "s3_uri": "s3://wethink-storage/uploads/a1b2c3d4-e5f6-7890-a1b2-c3d4e5f67890.pdf" }
+
+    Returns:
+        A JSON response with a temporary, pre-signed URL.
+    """
+    try:
+        data = request.get_json()
+        if not data or "s3_uri" not in data:
+            return make_response(error=True, message="S3 URI is required in the request body", status=400)
+            
+        s3_uri = data["s3_uri"]
+        
+        parsed_uri = urlparse(s3_uri)
+        
+        # Validate URI scheme
+        if parsed_uri.scheme != "s3":
+            return make_response(error=True, message="Invalid URI scheme. Expected 's3'.", status=400)
+            
+        bucket_name = parsed_uri.netloc
+        s3_key = parsed_uri.path.lstrip("/")
+        
+        # Validate that the URI refers to the correct bucket
+        if bucket_name != BUCKET_NAME:
+            return make_response(error=True, message="Invalid bucket name in URI.", status=400)
+        
+        # Optional: Add a check to ensure the key is in the correct path
+        if not s3_key.startswith("uploads/"):
+            return make_response(error=True, message="Invalid S3 key format or path.", status=400)
+        
+        # Check if the object exists
+        s3_client.head_object(Bucket=bucket_name, Key=s3_key)
+        
+        # Generate the pre-signed URL
+        url = s3_client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": bucket_name, "Key": s3_key},
+            ExpiresIn=3600  # URL expires in 1 hour
+        )
+        
+        return make_response(
+            error=False,
+            message="Pre-signed URL generated successfully",
+            result={"url": url},
+            status=200
+        )
+        
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "404":
+            return make_response(error=True, message="File not found", status=404)
+        return make_response(error=True, message=f"Failed to generate URL: {str(e)}", status=500)
     except Exception as e:
         return make_response(error=True, message=f"Unexpected error: {str(e)}", status=500)
