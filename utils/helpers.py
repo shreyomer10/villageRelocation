@@ -1,3 +1,4 @@
+import re
 import bcrypt
 from flask import jsonify
 import datetime as dt
@@ -58,6 +59,19 @@ STATUS_TRANSITIONS = {
     "ro": 2,  # range Officer can transition a plot with status 2 to status 3
     "ad": 3,  # Admin can transition a plot with status 3 to status 4
 }
+
+
+# A regex pattern for validating S3 URLs
+s3_url_pattern = re.compile(
+    r'^s3://'  # Must start with 's3://'
+    r'(?=[a-z0-9])'  # Bucket name must start with a letter or digit
+    r'(?!.*--)' # Disallow double hyphens
+    r'(?!-)' # Disallow starting with hyphen
+    r'(?!.*-/$)' # Disallow ending with hyphen
+    r'[a-z0-9][a-z0-9.-]{2,62}[a-z0-9]' # Validate bucket name length and characters
+    r'(/.*)?$' # Key part is optional
+)
+
 
 def nowIST():
     """
