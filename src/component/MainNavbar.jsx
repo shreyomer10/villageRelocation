@@ -421,6 +421,7 @@ export default function MainNavbar({
             <>
               <div className="space-y-2">
                 <div className="text-sm text-gray-500 mb-4">Account Actions</div>
+                
                 <button
                   onClick={() => setMenuMode("refresh")}
                   className="w-full text-left px-3 py-2 rounded border hover:bg-gray-50 flex items-center gap-2"

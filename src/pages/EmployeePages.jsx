@@ -9,6 +9,11 @@ import {
 } from "lucide-react";
 import { API_BASE } from "../config/Api.js";
 
+/* ---------- config ---------- */
+const ADD_ERROR_TIMEOUT_MS = 5000;       // auto-dismiss add-error box after this many ms
+const LOAD_MAX_ATTEMPTS = 4;            // number of attempts to fetch /employee/all
+const LOAD_INITIAL_DELAY_MS = 500;      // initial backoff delay in ms
+
 /* ---------- role helpers ---------- */
 const ROLE_DEFS = [
   { code: "admin", label: "Admin" },
@@ -462,6 +467,19 @@ export default function EmployeesPage() {
   // update-specific error (render in modal instead of alert)
   const [updateError, setUpdateError] = useState(null);
 
+  // add-specific error
+  const [addError, setAddError] = useState(null);
+
+  // delete-specific error (shown inside delete modal)
+  const [deleteError, setDeleteError] = useState(null);
+
+  // retry states for loadEmployees
+  const [retrying, setRetrying] = useState(false);
+  const [retryAttempt, setRetryAttempt] = useState(0);
+
+  // keep a ref to the add-error timer so we can clear on unmount/change
+  const addErrorTimerRef = useRef(null);
+
   useEffect(() => {
     let mounted = true;
     async function fetchVillagesMap() {
@@ -484,39 +502,104 @@ export default function EmployeesPage() {
         setVillagesMap(map);
         setVillagesNameToId(nameToId);
       } catch (e) {
-        console.warn("Could not load villages map", e);
+        // keep quiet - UI will continue to work; village name resolution will show "name not found"
       }
     }
     fetchVillagesMap();
     return () => { mounted = false; };
   }, []);
 
-  // load employees
+  // helper sleep
+  const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+
+  // load employees with retry/backoff
   async function loadEmployees() {
     setLoading(true);
     setError(null);
+    setRetrying(false);
+    setRetryAttempt(0);
+
+    let attempt = 0;
+    let delay = LOAD_INITIAL_DELAY_MS;
+    let lastErr = null;
+    let mounted = true;
+
+    // we use a mounted flag to prevent state updates after unmount
     try {
-      const res = await fetch(`${API_BASE}/employee/all`);
-      if (!res.ok) throw new Error(`Failed to load (${res.status})`);
-      const data = await res.json();
-      const list = Array.isArray(data) ? data : (data.result || []);
-      const normalized = list.map((e) => {
-        const vIDs = e.villageID ?? e.villageIds ?? (e.villageId ? (Array.isArray(e.villageId) ? e.villageId : [e.villageId]) : []);
-        return {
-          ...e,
-          role: getRoleCode(e.role ?? e.roleCode ?? e.role),
-          villageIDs: Array.isArray(vIDs) ? vIDs : (vIDs ? [vIDs] : []),
-          villageId: Array.isArray(vIDs) ? (vIDs[0] || "") : (vIDs || ""),
-        };
-      });
-      setEmployees(normalized);
-    } catch (e) {
-      setError(e.message || "Could not load employees");
+      while (attempt < LOAD_MAX_ATTEMPTS) {
+        attempt += 1;
+        try {
+          const res = await fetch(`${API_BASE}/employee/all`);
+          const text = await res.text().catch(() => null);
+          const json = (() => { try { return text ? JSON.parse(text) : null; } catch { return null; } })();
+          if (!res.ok) {
+            lastErr = new Error((json && (json.message || json.error)) || text || `Failed to load (${res.status})`);
+            throw lastErr;
+          }
+          const data = Array.isArray(json) ? json : (json?.result ?? json);
+          const list = Array.isArray(data) ? data : (Array.isArray(json) ? json : []);
+          const normalized = list.map((e) => {
+            const vIDs = e.villageID ?? e.villageIds ?? (e.villageId ? (Array.isArray(e.villageId) ? e.villageId : [e.villageId]) : []);
+            return {
+              ...e,
+              role: getRoleCode(e.role ?? e.roleCode ?? e.role),
+              villageIDs: Array.isArray(vIDs) ? vIDs : (vIDs ? [vIDs] : []),
+              villageId: Array.isArray(vIDs) ? (vIDs[0] || "") : (vIDs || ""),
+            };
+          });
+          if (mounted) {
+            setEmployees(normalized);
+            setLoading(false);
+            setRetrying(false);
+            setRetryAttempt(0);
+          }
+          return;
+        } catch (err) {
+          lastErr = err;
+          if (attempt < LOAD_MAX_ATTEMPTS) {
+            if (mounted) {
+              setRetrying(true);
+              setRetryAttempt(attempt);
+            }
+            await sleep(delay);
+            delay *= 2;
+            continue;
+          } else {
+            break;
+          }
+        }
+      }
+      if (mounted) {
+        setError(lastErr ? lastErr.message || String(lastErr) : "Could not load employees");
+        setLoading(false);
+        setRetrying(false);
+      }
     } finally {
-      setLoading(false);
+      mounted = false;
     }
   }
+
   useEffect(() => { loadEmployees(); }, []);
+
+  // auto-dismiss addError after timeout
+  useEffect(() => {
+    if (!addError) return;
+    if (addErrorTimerRef.current) {
+      clearTimeout(addErrorTimerRef.current);
+      addErrorTimerRef.current = null;
+    }
+    addErrorTimerRef.current = setTimeout(() => {
+      setAddError(null);
+      addErrorTimerRef.current = null;
+    }, ADD_ERROR_TIMEOUT_MS);
+
+    return () => {
+      if (addErrorTimerRef.current) {
+        clearTimeout(addErrorTimerRef.current);
+        addErrorTimerRef.current = null;
+      }
+    };
+  }, [addError]);
 
   const filtered = employees.filter(e =>
     [e.name, e.email, e.mobile].join(" ").toLowerCase().includes(search.toLowerCase()) &&
@@ -525,6 +608,7 @@ export default function EmployeesPage() {
 
   /* ---------- add single ---------- */
   const handleAdd = async (payload) => {
+    setAddError(null);
     try {
       const toSend = {
         name: payload.name,
@@ -538,38 +622,28 @@ export default function EmployeesPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(toSend),
       });
+      const text = await res.text().catch(() => null);
+      const json = (() => { try { return text ? JSON.parse(text) : null; } catch { return null; } })();
       if (!res.ok) {
-        const text = await res.text().catch(() => null);
-        throw new Error(`Add failed (${res.status})${text ? ": " + text : ""}`);
+        const msg = (json && (json.message || json.error)) || text || `Add failed (${res.status})`;
+        setAddError(msg);
+        return;
       }
-      // reload list so new user appears
       await loadEmployees();
       setShowNewForm(false);
+      setAddError(null);
     } catch (e) {
-      alert(e?.message || "Failed to add");
+      setAddError(e?.message || "Failed to add");
     }
   };
 
-  /* ---------- helper: fetch full employee details before showing modal ---------- */
-  async function fetchEmployeeDetails(emp) {
-    const id = emp?.userId ?? emp?._id ?? emp?.id;
+  /* ---------- helper: find employee in loaded list (we NO LONGER call single-user API) ---------- */
+  const extractId = (emp) => emp?.userId ?? emp?._id ?? emp?.id;
+  const findEmployeeInState = (emp) => {
+    const id = extractId(emp);
     if (!id) return emp;
-    setSelectedLoading(true);
-    try {
-      const res = await fetch(`${API_BASE}/employee/${encodeURIComponent(String(id))}`);
-      const text = await res.text().catch(() => null);
-      let json = {};
-      try { json = text ? JSON.parse(text) : {}; } catch { json = { raw: text }; }
-      if (!res.ok) {
-        return emp;
-      }
-      return json.result || emp;
-    } catch (e) {
-      return emp;
-    } finally {
-      setSelectedLoading(false);
-    }
-  }
+    return employees.find(e => String(e.userId) === String(id) || String(e._id) === String(id) || String(e.id) === String(id)) || emp;
+  };
 
   const handleOpenDetails = async (emp) => {
     setUpdateError(null);
@@ -577,7 +651,7 @@ export default function EmployeesPage() {
     setEditingEmployee(null);
     setSelectedLoading(true);
     try {
-      const details = await fetchEmployeeDetails(emp);
+      const details = findEmployeeInState(emp);
       setSelectedEmployee(details);
     } finally {
       setSelectedLoading(false);
@@ -590,8 +664,7 @@ export default function EmployeesPage() {
     setSelectedEmployee(null);
     setSelectedLoading(true);
     try {
-      const details = await fetchEmployeeDetails(emp);
-      // normalize for editing: ensure role is code and villageID is array
+      const details = findEmployeeInState(emp);
       const normalized = {
         ...details,
         role: getRoleCode(details.role ?? details.roleCode ?? details.role),
@@ -617,9 +690,8 @@ export default function EmployeesPage() {
   };
 
   // Convert village tokens/names -> village IDs using villagesMap / villagesNameToId (best-effort).
-  // If a token already matches an id it will be used; if it matches name, convert to id; otherwise leave as-is (backend will reject).
   const normalizeVillageTokensToIds = (raw) => {
-    if (!raw) return [];
+    if (raw === undefined || raw === null) return [];
     const tokens = Array.isArray(raw) ? raw.flatMap(r => (typeof r === "string" ? r.split(/[;,]/) : [r])) : String(raw).split(/[;,]/);
     const out = [];
     tokens.forEach(t => {
@@ -653,30 +725,43 @@ export default function EmployeesPage() {
       return;
     }
 
-    // Build minimal payload with only allowed, non-empty fields
+    // Build minimal payload with only allowed fields (but handle villages specially: send array if provided)
     const toSend = {};
-    if (payload.name !== undefined && String(payload.name).trim() !== "") toSend.name = String(payload.name).trim();
-    if (payload.email !== undefined && String(payload.email).trim() !== "") toSend.email = String(payload.email).trim();
-    if (payload.mobile !== undefined && String(payload.mobile).trim() !== "") {
-      toSend.mobile = normalizeMobileForSubmit(payload.mobile);
-    }
-    if (payload.role !== undefined && String(payload.role).trim() !== "") toSend.role = getRoleCode(payload.role);
 
-    // Normalize villages to an array of IDs
-    const villagesRaw = payload.villageID ?? payload.villageIDs ?? payload.villageIds;
-    const normalizedVillageIds = normalizeVillageTokensToIds(villagesRaw);
-    if (normalizedVillageIds && normalizedVillageIds.length) {
+    if (payload.name !== undefined) {
+      const v = String(payload.name || "").trim();
+      if (v !== "") toSend.name = v;
+    }
+
+    if (payload.email !== undefined) {
+      const v = String(payload.email || "").trim();
+      if (v !== "") toSend.email = v;
+    }
+
+    if (payload.mobile !== undefined) {
+      const raw = String(payload.mobile || "");
+      const v = normalizeMobileForSubmit(raw);
+      if (v !== "") toSend.mobile = v;
+    }
+
+    // Role: if provided, always send the short code (even if it's already short)
+    if (payload.role !== undefined) {
+      const code = getRoleCode(payload.role);
+      if (String(code || "").trim() !== "") toSend.role = code;
+    }
+
+    // Villages: if the caller provided any village data (even empty array/string), send villageID array.
+    if (payload.villageID !== undefined || payload.villageIDs !== undefined || payload.villageIds !== undefined) {
+      const villagesRaw = payload.villageID ?? payload.villageIDs ?? payload.villageIds;
+      const normalizedVillageIds = normalizeVillageTokensToIds(villagesRaw);
       toSend.villageID = normalizedVillageIds;
     }
 
-    // don't send empty strings or empty arrays
+    // don't send empty object
     if (Object.keys(toSend).length === 0) {
       setUpdateError("No fields to update.");
       return;
     }
-
-    // debug: log outgoing body (useful when debugging Pydantic errors)
-    console.info("PUT /employee/update payload:", toSend);
 
     // preserve numeric id when possible (backend stores numeric userId in many deployments)
     const idForUrl = (!isNaN(Number(id)) && String(Number(id)) === String(id)) ? Number(id) : String(id);
@@ -693,9 +778,7 @@ export default function EmployeesPage() {
       try { json = text ? JSON.parse(text) : null; } catch { json = null; }
 
       if (!res.ok) {
-        console.error("Update failed response", res.status, json || text);
-
-        // Format common Pydantic response shapes into friendly message
+        // Format common response shapes into friendly message
         let messages = [];
         if (json && Array.isArray(json.detail)) {
           messages = json.detail.map(d => {
@@ -725,18 +808,18 @@ export default function EmployeesPage() {
       setSelectedEmployee(null);
       setUpdateError(null);
     } catch (err) {
-      console.error("Update exception", err);
       setUpdateError(err?.message || String(err) || "Update failed");
     }
   };
 
   /* ---------- delete flow ---------- */
-  const openDeleteModal = (emp) => { setPendingDelete(emp); };
-  const closeDeleteModal = () => { if (deleteLoading) return; setPendingDelete(null); };
+  const openDeleteModal = (emp) => { setPendingDelete(emp); setDeleteError(null); };
+  const closeDeleteModal = () => { if (deleteLoading) return; setPendingDelete(null); setDeleteError(null); };
 
   const performDelete = async () => {
     if (!pendingDelete) return;
     setDeleteLoading(true);
+    setDeleteError(null);
     try {
       const rawId = pendingDelete.userId ?? pendingDelete._id ?? pendingDelete.id;
       if (!rawId) throw new Error("Missing user id for delete");
@@ -752,8 +835,9 @@ export default function EmployeesPage() {
       await loadEmployees();
       setPendingDelete(null);
       setSelectedEmployee(null);
+      setDeleteError(null);
     } catch (e) {
-      alert(e?.message || "Delete failed");
+      setDeleteError(e?.message || "Delete failed");
     } finally {
       setDeleteLoading(false);
     }
@@ -770,7 +854,7 @@ export default function EmployeesPage() {
   };
 
   const handleParseBulk = async () => {
-    if (!bulkFile) { alert("Choose a CSV/XLSX file first"); return; }
+    if (!bulkFile) { setBulkProgress({ status: "error", message: "Choose a CSV/XLSX file first" }); return; }
     setBulkProgress({ status: "parsing" });
     try {
       const XLSX = (await import("xlsx")).default ?? (await import("xlsx"));
@@ -854,7 +938,6 @@ export default function EmployeesPage() {
       setShowBulkPreview(true);
       setBulkProgress(null);
     } catch (err) {
-      console.error("Bulk parse error", err);
       setBulkProgress({ status: "error", message: err?.message || String(err) || "Failed to parse file" });
     }
   };
@@ -894,7 +977,7 @@ export default function EmployeesPage() {
 
   /* ---------- confirm bulk add: convert names and send ---------- */
   const handleConfirmBulkAdd = async () => {
-    if (!bulkPreview || bulkPreview.length === 0) { alert("No rows to add"); return; }
+    if (!bulkPreview || bulkPreview.length === 0) { setBulkProgress({ status: "error", message: "No rows to add" }); return; }
     setBulkProgress({ status: "uploading", total: bulkPreview.length, done: 0 });
 
     try {
@@ -992,7 +1075,6 @@ export default function EmployeesPage() {
       setBulkFile(null);
       if (fileInputRef.current) fileInputRef.current.value = null;
     } catch (e) {
-      console.error("Bulk upload error:", e);
       setBulkProgress({ status: "error", message: e.message || "Bulk add failed" });
     }
   };
@@ -1021,7 +1103,7 @@ export default function EmployeesPage() {
               </div>
 
               <div className="flex gap-2 items-center">
-                <button onClick={() => setShowNewForm((s) => !s)} className="flex items-center gap-2 px-4 py-2 bg-white rounded shadow">
+                <button onClick={() => { setShowNewForm((s) => !s); setAddError(null); }} className="flex items-center gap-2 px-4 py-2 bg-white rounded shadow">
                   <PlusCircle className="w-4 h-4" /> <span className="hidden sm:inline">New Employee</span>
                 </button>
 
@@ -1035,6 +1117,13 @@ export default function EmployeesPage() {
               </div>
             </div>
           </div>
+
+          {/* retry indicator */}
+          {retrying && (
+            <div className="mb-3">
+              <div className="text-sm text-yellow-700">Retrying to load employees (attempt {retryAttempt} of {LOAD_MAX_ATTEMPTS})...</div>
+            </div>
+          )}
 
           {/* bulk progress */}
           {bulkProgress && (
@@ -1091,7 +1180,13 @@ export default function EmployeesPage() {
           {/* new form */}
           {showNewForm && (
             <div className="mb-4">
-              <EmployeeForm initial={{}} onCancel={() => setShowNewForm(false)} onSubmit={handleAdd} />
+              {addError && (
+                <div className="mb-3 p-3 rounded bg-red-50 border border-red-100 text-red-700">
+                  <div className="font-medium">Failed to add user</div>
+                  <div className="text-sm mt-1">{addError}</div>
+                </div>
+              )}
+              <EmployeeForm initial={{}} onCancel={() => { setShowNewForm(false); setAddError(null); }} onSubmit={handleAdd} />
             </div>
           )}
 
@@ -1280,6 +1375,14 @@ export default function EmployeesPage() {
               <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl p-6 z-70">
                 <h3 className="text-lg font-semibold mb-2">Confirm delete</h3>
                 <p className="text-sm text-gray-600 mb-4">Are you sure you want to delete <span className="font-medium">{pendingDelete.name || pendingDelete.email || "this employee"}</span>? This action cannot be undone.</p>
+
+                {deleteError && (
+                  <div className="mb-3 p-3 rounded bg-red-50 border border-red-100 text-red-700">
+                    <div className="font-medium">Delete failed</div>
+                    <div className="text-sm mt-1">{deleteError}</div>
+                  </div>
+                )}
+
                 <div className="flex items-center justify-end gap-2">
                   <button onClick={closeDeleteModal} disabled={deleteLoading} className="px-4 py-2 bg-gray-100 rounded">Cancel</button>
                   <button onClick={performDelete} disabled={deleteLoading} className={`px-4 py-2 rounded text-white ${deleteLoading ? "bg-red-300" : "bg-red-600"}`}>{deleteLoading ? "Deleting..." : "Delete"}</button>

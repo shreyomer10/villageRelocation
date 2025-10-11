@@ -16,6 +16,7 @@ import PlotPage from "./pages/PlotPage.jsx";
 import Building from "./pages/Buildings.jsx";
 import PlotDetails from "./pages/PlotDetails.jsx";
 import FamilyDetails from "./pages/FamilyDetail.jsx";
+import Feedbacks from "./pages/Feedbacks.jsx";
 
 export default function App() {
   return (
@@ -44,6 +45,15 @@ export default function App() {
         element={
           <PrivateRoute>
             <PlotPage />
+          </PrivateRoute>
+        }
+      />
+
+      <Route
+        path="/feedbacks"
+        element={
+          <PrivateRoute>
+            <Feedbacks />
           </PrivateRoute>
         }
       />

@@ -4,6 +4,16 @@ import MainNavbar from '../component/MainNavbar';
 import { API_BASE } from '../config/Api.js';
 import { motion } from 'framer-motion';
 import { FileText, ChevronDown, RefreshCw, ArrowLeft, Search } from 'lucide-react';
+import {
+  ResponsiveContainer,
+  BarChart,
+  CartesianGrid,
+  XAxis,
+  YAxis,
+  Tooltip,
+  Legend,
+  Bar
+} from 'recharts';
 
 function fmtDate(iso) {
   try {
@@ -46,6 +56,13 @@ export default function PlotStagesPage() {
   const [expandedStage, setExpandedStage] = useState(null);
   const [search, setSearch] = useState('');
 
+  // analytics chart state
+  const [chartLoading, setChartLoading] = useState(false);
+  const [chartError, setChartError] = useState(null);
+  const [chartData, setChartData] = useState([]);
+  const [chartKeys, setChartKeys] = useState(['count']);
+  const [filterOption, setFilterOption] = useState('');
+
   // modal for status history
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
   const [historyModalStage, setHistoryModalStage] = useState(null);
@@ -57,6 +74,19 @@ export default function PlotStagesPage() {
     loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [villageId, plotId]);
+
+  useEffect(() => {
+    // whenever plot/building data changes, try to fetch analytics for the building type id
+    const typeId = getTypeIdForAnalytics();
+    if (typeId) {
+      fetchAnalytics(typeId);
+    } else {
+      // clear chart if no type id available
+      setChartData([]);
+      setFilterOption('');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [villageId, buildings, plot]);
 
   async function loadAll() {
     setLoading(true);
@@ -116,6 +146,34 @@ export default function PlotStagesPage() {
     }
   }
 
+  // analytics fetch
+  async function fetchAnalytics(typeId) {
+    setChartLoading(true);
+    setChartError(null);
+    try {
+      const url = `${API_BASE}/analytics/building/${encodeURIComponent(villageId)}/${encodeURIComponent(typeId)}`;
+      const res = await fetch(url);
+      if (!res.ok) {
+        const t = await res.text().catch(() => '');
+        throw new Error(`Analytics API error: ${res.status} ${t}`);
+      }
+      const payload = await res.json();
+      const result = payload?.result ?? {};
+      const stages = result?.stages ?? [];
+      const data = stages.map(s => ({ name: s.name ?? s.id ?? 'Unknown', count: Number(s.count ?? 0) }));
+      setChartData(data);
+      setChartKeys(['count']);
+      setFilterOption((result?.buildingName ?? typeId) || typeId);
+    } catch (e) {
+      console.error('analytics fetch error', e);
+      setChartError(e.message || 'Failed to load analytics');
+      setChartData([]);
+      setChartKeys(['count']);
+    } finally {
+      setChartLoading(false);
+    }
+  }
+
   function findBuildingForPlot() {
     if (!plot || buildings.length === 0) return null;
     const idsToMatch = new Set([String(plot.plotId ?? ''), String(plot.buildingId ?? ''), String(plot._id ?? ''), String(plot.id ?? ''), String(plot.familyId ?? '')]);
@@ -130,6 +188,13 @@ export default function PlotStagesPage() {
     const b = findBuildingForPlot();
     if (b) return b.typeName ?? b.type ?? b.buildingType ?? b.type_id ?? b.name ?? '';
     return plot?.typeName ?? plot?.type ?? plot?.typeId ?? '';
+  }
+
+  function getTypeIdForAnalytics() {
+    // try to find the most probable type identifier that matches backend's `typeId` field
+    const b = findBuildingForPlot();
+    if (!b) return null;
+    return b.typeId ?? b.type_id ?? b.type ?? b._id ?? b.id ?? b.buildingId ?? null;
   }
 
   function getStagesMap() {
@@ -372,6 +437,35 @@ export default function PlotStagesPage() {
 
         </div>
 
+        {/* STAGE ANALYTICS BAR CHART - placed just below the timeline */}
+        <div className="mb-6 w-full bg-white rounded-xl p-4 shadow">
+          <div className="flex items-center justify-between mb-3">
+            <div className="font-semibold text-gray-800">Stage analytics</div>
+            <div className="text-xs text-gray-500">{filterOption ? `Showing ${String(filterOption).replace(/_/g, ' ')}` : 'Analytics'}</div>
+          </div>
+
+          <div className="h-64">
+            {chartLoading ? (
+              <div className="h-full flex items-center justify-center text-sm text-gray-600">Loading chart…</div>
+            ) : chartError ? (
+              <div className="h-full flex items-center justify-center text-sm text-red-600">{chartError}</div>
+            ) : chartData && chartData.length ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={chartData} margin={{ top: 10, right: 24, left: 8, bottom: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="name" tick={{ fontSize: 12 }} interval={0} angle={-20} textAnchor="end" height={60} />
+                  <YAxis />
+                  <Tooltip />
+                  <Legend />
+                  <Bar dataKey={chartKeys[0]} name={chartKeys[0].replace(/_/g, ' ')} fill="#4f46e5" />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-full flex items-center justify-center text-sm text-gray-500">No analytics available</div>
+            )}
+          </div>
+        </div>
+
         {/* STAGE CARDS (filter moved into header to the right) */}
         <div className="space-y-4">
           <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }} className="space-y-4">
@@ -424,7 +518,7 @@ export default function PlotStagesPage() {
                     </div>
                   </div>
 
-                            
+                             
                   {expanded && (
                     <div className="mt-3 pt-3 border-t text-sm text-slate-700 grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[46vh] overflow-y-auto pr-2">
                       <div>
