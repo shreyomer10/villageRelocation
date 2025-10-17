@@ -5,7 +5,6 @@ from models.stages import statusHistory
 
 class FacilityInsert(BaseModel):
     name: str             
-    deleted:bool=False
     villageId:str
     class Config:
         extra = "forbid"   # ❌ reject unknown fields
@@ -26,29 +25,15 @@ class FacilityInsert(BaseModel):
         return v
 
 class FacilityUpdate(BaseModel):
-    name: Optional[str]  
-    deleted:bool=False
-    villageId:Optional[str]
+    name: Optional[str] = None
+    villageId: Optional[str] = None  # make sure default=None
 
     class Config:
-        extra = "forbid"   # ❌ reject unknown fields
-    
-    @field_validator("villageId")
-    @classmethod
-    def validate_villageId_name(cls, v):
-        if v is not None and not v.strip():
-            raise ValueError("village name cannot be empty if provided")
-        return v
+        extra = "forbid"
 
-    @field_validator("name")
-    @classmethod
-    def validate_name(cls, v):
-        if v is not None and not v.strip():
-            raise ValueError("name cannot be empty if provided")
-        return v
-    
 class Facility(FacilityInsert):
     facilityId:str
+    deleted:bool=False
 
 
 
@@ -108,9 +93,3 @@ class FacilityVerification(FacilityVerificationInsert):
     insertedBy:str
 
     statusHistory:List[statusHistory]
-    @field_validator("type")
-    @classmethod
-    def validate_type(cls, v: str) -> str:
-        if v not in ["house","plot"]:
-            raise ValueError(f"type should be plot or house")
-        return v

@@ -21,6 +21,28 @@ def get_next_material_id(db) -> str:
         return_document=ReturnDocument.AFTER
     )
     return f"CM_{counter['seq']}"
+
+def get_next_facility_id(villageId,db) -> str:
+
+    counter = db.counters.find_one_and_update(
+        {"_id": f"facilities_{villageId}_maati"},
+        {"$inc": {"seq": 1}},
+        upsert=True,
+        return_document=ReturnDocument.AFTER
+    )
+    return f"facility_{villageId}_{counter['seq']}"
+
+def get_next_facilityVerification_id(facilityId,db) -> str:
+
+    counter = db.counters.find_one_and_update(
+        {"_id": f"Update_{facilityId}"},
+        {"$inc": {"seq": 1}},
+        upsert=True,
+        return_document=ReturnDocument.AFTER
+    )
+    return f"{facilityId}_U{counter['seq']}"
+
+
 def get_next_materialUpdate_id(materialId,db) -> str:
 
     counter = db.counters.find_one_and_update(
@@ -30,7 +52,6 @@ def get_next_materialUpdate_id(materialId,db) -> str:
         return_document=ReturnDocument.AFTER
     )
     return f"{materialId}_U{counter['seq']}"
-
 
 def get_next_feedback_id(feedbackType,db):
     counter = db.counters.find_one_and_update(

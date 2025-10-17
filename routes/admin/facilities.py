@@ -1,96 +1,102 @@
 from flask import Blueprint, request
 from pydantic import ValidationError
+from models.facilities import Facility, FacilityInsert, FacilityUpdate
 from utils.helpers import make_response, validation_error_response
 from config import db
 from models.constructionMaterial import MaterialInsert, MaterialUpdate, Material  # your Pydantic models
-from models.counters import get_next_material_id
+from models.counters import get_next_facility_id, get_next_material_id
 
 facilities_bp = Blueprint("facilities", __name__)
 facilities = db.facilities
 
 
-# # ================= CREATE MATERIAL =================
-# @facilities_bp.route("/facilities", methods=["POST"])
-# def insert_facility():
-#     try:
-#         payload = request.get_json(force=True)
-#         if not payload:
-#             return make_response(True, "Missing request body", status=400)
+# ================= CREATE FACILITY =================
+@facilities_bp.route("/facilities", methods=["POST"])
+def insert_facility():
+    try:
+        payload = request.get_json(force=True)
+        if not payload:
+            return make_response(True, "Missing request body", status=400)
 
-#         # Validate
-#         try:
-#             material_obj = MaterialInsert(**payload)
-#         except ValidationError as ve:
-#             return validation_error_response(ve)
+        # Validate
+        try:
+            facility_obj = FacilityInsert(**payload)
+        except ValidationError as ve:
+            return validation_error_response(ve)
 
-#         # Generate materialId
-#         new_material_id = get_next_material_id(db)
+        # Generate facilityId
+        new_facility_id = get_next_facility_id(villageId=facility_obj.villageId,db=db)
 
-#         material_complete = Material(
-#             materialId=new_material_id,
-#             **material_obj.model_dump(exclude_none=True)
-#         )
+        facility_complete = Facility(
+            facilityId=new_facility_id,
+            **facility_obj.model_dump(exclude_none=True),
+            deleted=False
+        )
 
-#         materials.insert_one(material_complete.model_dump(exclude_none=True))
+        facilities.insert_one(facility_complete.model_dump(exclude_none=True))
 
-#         return make_response(False, "Material inserted successfully", result=material_complete.model_dump(exclude_none=True), status=200)
-#     except Exception as e:
-#         return make_response(True, f"Error inserting material: {str(e)}", status=500)
-
-
-# # ================= UPDATE MATERIAL =================
-# @facilities_bp.route("/facilities/<facilityId>", methods=["PUT"])
-# def update_facility(materialId):
-#     try:
-#         payload = request.get_json(force=True)
-#         if not payload:
-#             return make_response(True, "Missing request body", status=400)
-
-#         try:
-#             update_obj = MaterialUpdate(**payload)
-#         except ValidationError as ve:
-#             return validation_error_response(ve)
-
-#         update_dict = update_obj.model_dump(exclude_none=True)
-#         if not update_dict:
-#             return make_response(True, "No valid fields to update", status=400)
-
-#         material = materials.find_one({"materialId": str(materialId)})
-#         if not material:
-#             return make_response(True, "Material not found", status=404)
-
-#         materials.update_one({"materialId": str(materialId)}, {"$set": update_dict})
-
-#         return make_response(False, "Material updated successfully", result=update_dict)
-#     except Exception as e:
-#         return make_response(True, f"Error updating material: {str(e)}", status=500)
+        return make_response(
+            False,
+            "Facility inserted successfully",
+            result=facility_complete.model_dump(exclude_none=True),
+            status=200
+        )
+    except Exception as e:
+        return make_response(True, f"Error inserting facility: {str(e)}", status=500)
 
 
-# # ================= DELETE MATERIAL =================
-# @facilities_bp.route("/facilities/<facilityId>", methods=["DELETE"])
-# def delete_facility(materialId):
-#     try:
-#         material = materials.find_one({"materialId": str(materialId)})
-#         if not material:
-#             return make_response(True, "Material not found", status=404)
+# ================= UPDATE FACILITY =================
+@facilities_bp.route("/facilities/<facilityId>", methods=["PUT"])
+def update_facility(facilityId):
+    try:
+        payload = request.get_json(force=True)
+        if not payload:
+            return make_response(True, "Missing request body", status=400)
 
-#         # Hard delete
-#         materials.delete_one({"materialId": str(materialId)})
+        try:
+            update_obj = FacilityUpdate(**payload)
+        except ValidationError as ve:
+            return validation_error_response(ve)
 
-#         return make_response(False, "Material deleted successfully")
-#     except Exception as e:
-#         return make_response(True, f"Error deleting material: {str(e)}", status=500)
+        update_dict = update_obj.model_dump(exclude_none=True)
+        if not update_dict:
+            return make_response(True, "No valid fields to update", status=400)
+
+        facility = facilities.find_one({"facilityId": str(facilityId), "deleted": False})
+        if not facility:
+            return make_response(True, "Facility not found", status=404)
+
+        facilities.update_one({"facilityId": str(facilityId)}, {"$set": update_dict})
+
+        return make_response(False, "Facility updated successfully", result=update_dict)
+    except Exception as e:
+        return make_response(True, f"Error updating facility: {str(e)}", status=500)
 
 
-# # ================= GET MATERIALS =================
-# @facilities_bp.route("/facilities", methods=["GET"])
-# def get_facility():
-#     try:
-#         docs = list(materials.find({}, {"_id": 0}))
+# ================= SOFT DELETE FACILITY =================
+@facilities_bp.route("/facilities/<facilityId>", methods=["DELETE"])
+def delete_facility(facilityId):
+    try:
+        facility = facilities.find_one({"facilityId": str(facilityId), "deleted": False})
+        if not facility:
+            return make_response(True, "Facility not found", status=404)
 
-#         if not docs:
-#             return make_response(True, "No materials found", result={"count": 0, "items": []}, status=404)
+        # Soft delete: mark deleted=True
+        facilities.update_one({"facilityId": str(facilityId)}, {"$set": {"deleted": True}})
 
-#         return make_response(False, "Materials fetched successfully", result={"count": len(docs), "items": docs}, status=200)
-#     except Exception as e:
-#         return make_response(True, f"Error fetching materials: {str(e)}", status=500)
+        return make_response(False, "Facility deleted successfully (soft delete)")
+    except Exception as e:
+        return make_response(True, f"Error deleting facility: {str(e)}", status=500)
+
+
+@facilities_bp.route("/facilities", methods=["GET"])
+def get_facilities():
+    try:
+        docs = list(facilities.find({"deleted": False}, {"_id": 0}))
+
+        if not docs:
+            return make_response(True, "No facilities found", result={"count": 0, "items": []}, status=404)
+
+        return make_response(False, "Facilities fetched successfully", result={"count": len(docs), "items": docs}, status=200)
+    except Exception as e:
+        return make_response(True, f"Error fetching facilities: {str(e)}", status=500)

@@ -95,7 +95,7 @@ def update_material_update(decoded_data,updateId):
 
         history=statusHistory(
             status=1,
-            comments=update_dict.notes,
+            comments=update_obj.notes,
             verifier=userId,
             time=str(now)
         )

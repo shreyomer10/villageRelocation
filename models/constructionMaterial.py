@@ -26,6 +26,7 @@ class MaterialUpdateInsert(BaseModel):
     villageId:str
     qty:str
     unit:str
+    notes:str
     docs:List[str]=Field(default_factory=list)
     
     @field_validator("type")
@@ -53,6 +54,7 @@ class MaterialUpdateUpdate(BaseModel):
     type:Optional[str] # (house or plot)
     materialId:Optional[str] 
     villageId:str
+    notes:Optional[str] 
 
     qty:Optional[str] 
     unit:Optional[str] 
