@@ -96,6 +96,8 @@ def insert_family_update(decoded_data,familyId):
             verifiedBy=userId,
             insertedBy=userId,
             verifiedAt=str(now),
+            insertedAt=str(now),
+
             statusHistory=[history.model_dump()],
             **verification_obj.model_dump(exclude_none=True)
         )
@@ -327,24 +329,108 @@ def verify_update(decoded_data):
         return make_response(True, f"Error verifying update: {str(e)}", status=500)
 
 
-@option_verification_BP.route("/updates/<familyId>", methods=["GET"])
-def get_updates(familyId):
+@option_verification_BP.route("/updates/one/<updateId>", methods=["GET"])
+@auth_required
+def get_update(updateId):
 
     try:
 
         # 2️⃣ Determine updates source
-        update = list(updates.find({"familyId":familyId}, {"_id": 0}))
+        update = updates.find_one({"updateId":updateId}, {"_id": 0})
 
         # 3️⃣ Return response
         if not update:
-            msg = "No updates found"
-            return make_response(True, msg, result={"count": 0, "items": []},status=404)
+            msg = " Update not found"
+            return make_response(True, msg,status=404)
+
+        return make_response(
+            False,
+            "Update fetched successfully",
+            result=update
+        )
+
+    except Exception as e:
+        return make_response(True, f"Error fetching updates: {str(e)}", status=500)
+
+
+@option_verification_BP.route("/updates/<villageId>/<familyId>", methods=["GET"])
+@auth_required
+def get_updates(decoded_data, villageId, familyId):
+    try:
+        args = request.args
+        userId = args.get("userId")
+        if not userId:
+            return make_response(True, "Missing userId", status=400)
+
+        error = authorization(decoded_data, userId)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
+
+        # Extract filters
+        current_stage = args.get("currentStage")
+        status = args.get("status")
+        from_date = args.get("fromDate")
+        to_date = args.get("toDate")
+        user_role = decoded_data.get("role")
+
+        page = int(args.get("page", 1))
+        limit = int(args.get("limit", 15))
+
+        # Build query
+        query = {"villageId": villageId, "familyId": familyId}
+
+        if current_stage:
+            query["currentStage"] = current_stage
+        if status:
+            query["status"] = int(status)
+        elif user_role and user_role.lower() in STATUS_TRANSITIONS:
+            query["status"] = STATUS_TRANSITIONS[user_role.lower()]
+
+        # Date filtering
+        if from_date or to_date:
+            date_filter = {}
+            if from_date:
+                date_filter["$gte"] = from_date
+            if to_date:
+                date_filter["$lte"] = to_date
+            query["insertedAt"] = date_filter
+
+        projection = {"_id": 0, "statusHistory": 0, "docs": 0}
+        skip = (page - 1) * limit
+
+        cursor = (
+            updates.find(query, projection)
+            .sort("insertedAt", -1)
+            .skip(skip)
+            .limit(limit)
+        )
+
+        update_items = list(cursor)
+        total_count = updates.count_documents(query)
+
+        if not update_items:
+            return make_response(
+                True,
+                f"No updates found for family {familyId} in village {villageId}",
+                result={"count": 0, "items": []},
+                status=404,
+            )
 
         return make_response(
             False,
             "Updates fetched successfully",
-            result={"count": len(update), "items": update}
+            result={
+                "count": total_count,
+                "page": page,
+                "limit": limit,
+                "items": update_items,
+            },
         )
 
     except Exception as e:
-        return make_response(True, f"Error fetching updates: {str(e)}",result={"count": 0, "items": []}, status=500)
+        return make_response(
+            True,
+            f"Error fetching updates: {str(e)}",
+            result={"count": 0, "items": []},
+            status=500,
+        )

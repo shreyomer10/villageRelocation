@@ -59,6 +59,8 @@ class VillageUpdates(VillageUpdatesInsert):
     updateId:str                   
     verifiedBy:str
     verifiedAt:str
+    insertedAt:str
+
 
 
 

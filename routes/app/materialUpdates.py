@@ -3,7 +3,7 @@ from pydantic import ValidationError
 from utils.tokenAuth import auth_required
 from models.stages import statusHistory
 from config import db
-from utils.helpers import authorization, make_response, nowIST, validation_error_response
+from utils.helpers import STATUS_TRANSITIONS, authorization, make_response, nowIST, validation_error_response
 from models.constructionMaterial import MaterialUpdateInsert, MaterialUpdateUpdate, MaterialUpdates
 from models.counters import get_next_material_id, get_next_materialUpdate_id
 from datetime import datetime
@@ -57,6 +57,8 @@ def insert_material_update(decoded_data):
             verifiedAt=str(now),
             verifiedBy=userId,  # or set from user
             insertedBy=userId,
+            insertedAt=str(now),
+
             statusHistory=[history.model_dump()]
         )
 
@@ -136,12 +138,95 @@ def delete_material_update(decoded_data,updateId):
 
 
 # ================= GET ALL MATERIAL UPDATES =================
-@material_updates_bp.route("/material_update", methods=["GET"])
-def get_material_updates():
+@material_updates_bp.route("/material_update/one/<updateId>", methods=["GET"])
+@auth_required
+def get_material_update(updateId):
     try:
-        docs = list(material_updates.find({}, {"_id": 0}))
+        docs = material_updates.find_one({"updateId":updateId}, {"_id": 0})
         if not docs:
-            return make_response(True, "No material updates found", result={"count": 0, "items": []}, status=404)
-        return make_response(False, "Material updates fetched successfully", result={"count": len(docs), "items": docs})
+            return make_response(True, "Material updates not found",status=404)
+        return make_response(False, "Material update fetched successfully", result=docs,status=200)
     except Exception as e:
         return make_response(True, f"Error fetching material updates: {str(e)}", status=500)
+
+@material_updates_bp.route("/material_updates/<villageId>/<materialId>", methods=["GET"])
+@auth_required
+def get_updates(decoded_data, villageId, materialId):
+    try:
+        args = request.args
+        userId = args.get("userId")
+        if not userId:
+            return make_response(True, "Missing userId", status=400)
+
+        error = authorization(decoded_data, userId)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
+
+        # Extract filters
+        type=args.get("type")
+        status = args.get("status")
+        from_date = args.get("fromDate")
+        to_date = args.get("toDate")
+        user_role = decoded_data.get("role")
+
+        page = int(args.get("page", 1))
+        limit = int(args.get("limit", 15))
+
+        # Build query
+        query = {"villageId": villageId, "materialId": materialId}
+
+        if type:
+            query["type"] = type
+        if status:
+            query["status"] = int(status)
+        elif user_role and user_role.lower() in STATUS_TRANSITIONS:
+            query["status"] = STATUS_TRANSITIONS[user_role.lower()]
+
+        # Date filtering
+        if from_date or to_date:
+            date_filter = {}
+            if from_date:
+                date_filter["$gte"] = from_date
+            if to_date:
+                date_filter["$lte"] = to_date
+            query["insertedAt"] = date_filter
+
+        projection = {"_id": 0, "statusHistory": 0, "docs": 0}
+        skip = (page - 1) * limit
+
+        cursor = (
+            material_updates.find(query, projection)
+            .sort("insertedAt", -1)
+            .skip(skip)
+            .limit(limit)
+        )
+
+        update_items = list(cursor)
+        total_count = material_updates.count_documents(query)
+
+        if not update_items:
+            return make_response(
+                True,
+                f"No updates found",
+                result={"count": 0, "items": []},
+                status=404,
+            )
+
+        return make_response(
+            False,
+            "Updates fetched successfully",
+            result={
+                "count": total_count,
+                "page": page,
+                "limit": limit,
+                "items": update_items,
+            },
+        )
+
+    except Exception as e:
+        return make_response(
+            True,
+            f"Error fetching updates: {str(e)}",
+            result={"count": 0, "items": []},
+            status=500,
+        )

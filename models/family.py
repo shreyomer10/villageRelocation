@@ -63,6 +63,8 @@ class Updates(UpdatesInsert):
     verifiedBy:str
     verifiedAt:str
     insertedBy:str
+    insertedAt:str
+
     statusHistory:List[StatusHistory]
 
 

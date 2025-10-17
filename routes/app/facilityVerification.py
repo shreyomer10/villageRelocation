@@ -6,8 +6,7 @@ from models.facilities import FacilityVerification, FacilityVerificationInsert, 
 from utils.tokenAuth import auth_required
 from models.stages import statusHistory
 from config import db
-from utils.helpers import authorization, make_response, nowIST, validation_error_response
-from models.constructionMaterial import MaterialUpdateInsert, MaterialUpdateUpdate, MaterialUpdates
+from utils.helpers import STATUS_TRANSITIONS, authorization, make_response, nowIST, validation_error_response
 from models.counters import get_next_facilityVerification_id, get_next_material_id, get_next_materialUpdate_id
 from datetime import datetime
 
@@ -66,6 +65,8 @@ def insert_facility_verification(decoded_data):
             verifiedAt=str(now),
             verifiedBy=userId,
             insertedBy=userId,
+            insertedAt=str(now),
+
             statusHistory=[history.model_dump()]
         )
 
@@ -151,12 +152,102 @@ def delete_facility_verification(decoded_data, verificationId):
         return make_response(True, f"Error deleting facility verification: {str(e)}", status=500)
 
 
-@facility_verifications_bp.route("/facility_verification", methods=["GET"])
-def get_facility_verifications():
+@facility_verifications_bp.route("/facility_verification/one/<verificationId>", methods=["GET"])
+@auth_required
+def get_facility_verifications(verificationId):
     try:
-        docs = list(facility_updates.find({}, {"_id": 0}))
-        if not docs:
-            return make_response(True, "No facility verifications found", result={"count": 0, "items": []}, status=404)
-        return make_response(False, "Facility verifications fetched successfully", result={"count": len(docs), "items": docs})
+        doc = facility_updates.find_one({"verificationId":verificationId}, {"_id": 0})
+        if not doc:
+            return make_response(True, "No facility verification found", status=404)
+        return make_response(False, "Facility verification fetched successfully", result=doc)
     except Exception as e:
-        return make_response(True, f"Error fetching facility verifications: {str(e)}", status=500)
+        return make_response(True, f"Error fetching facility verification: {str(e)}", status=500)
+
+
+@facility_verifications_bp.route("/facility_verification/<villageId>/<facilityId>", methods=["GET"])
+@auth_required
+def get_facility_verifications(decoded_data,villageId,facilityId):
+    try:
+        # --- Extract query parameters ---
+        args = request.args
+        userId=args.get("userId")
+        if not userId:
+            return 
+        error = authorization(decoded_data, userId)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
+
+        status = args.get("status")
+
+        user_role = decoded_data.get("role")  # Optional user role/status
+        from_date = args.get("fromDate")
+        to_date = args.get("toDate")
+        page = int(args.get("page", 1))
+        limit = int(args.get("limit", 15))
+        # --- Build MongoDB filter query dynamically ---
+        query = {"facilityId": facilityId,"villageId":villageId}
+
+        if status:
+            query["status"] = int(status)
+        elif user_role in STATUS_TRANSITIONS:
+            query["status"] = STATUS_TRANSITIONS[user_role]
+
+        # --- Date Range Filtering ---
+        if from_date or to_date:
+            date_filter = {}
+            if from_date:
+                date_filter["$gte"] = (from_date)
+            if to_date:
+                date_filter["$lte"] = (to_date)
+            query["insertedAt"] = date_filter
+
+        # --- Projection (exclude heavy fields) ---
+        projection = {"_id": 0, "statusHistory": 0, "docs": 0}
+
+        # --- Sorting & Pagination ---
+        skip = (page - 1) * limit
+
+        cursor = (
+            facility_updates.find(query, projection)
+            .sort("insertedAt", -1)  # latest first
+            .skip(skip)
+            .limit(limit)
+        )
+
+        verifications = list(cursor)
+        total_count = facility_updates.count_documents(query)
+
+        if not verifications:
+            return make_response(
+                True,
+                "No verifications found",
+                result={"count": 0, "items": []},
+                status=404,
+            )
+
+        return make_response(
+            False,
+            "Verifications fetched successfully",
+            result={
+                "count": total_count,
+                "page": page,
+                "limit": limit,
+                "items": verifications,
+            },
+        )
+
+    except ValueError as ve:
+        return make_response(
+            True,
+            f"Invalid date format: {str(ve)}",
+            result={"count": 0, "items": []},
+            status=400,
+        )
+
+    except Exception as e:
+        return make_response(
+            True,
+            f"Error fetching verifications: {str(e)}",
+            result={"count": 0, "items": []},
+            status=500,
+        )

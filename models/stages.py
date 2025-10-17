@@ -197,6 +197,7 @@ class FieldLevelVerification(FieldLevelVerificationInsert):
     verifiedAt:str
     verifiedBy:str
     insertedBy:str
+    insertedAt:str
 
     statusHistory:List[statusHistory]
     @field_validator("type")

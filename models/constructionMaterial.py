@@ -86,5 +86,6 @@ class MaterialUpdates(MaterialUpdateInsert):
     verifiedAt:str
     verifiedBy:str
     insertedBy:str
+    insertedAt:str
 
     statusHistory:List[statusHistory]

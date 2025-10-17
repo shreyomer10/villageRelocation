@@ -6,7 +6,7 @@ from models.complaints import StatusHistory
 from utils.tokenAuth import auth_required
 from models.stages import FieldLevelVerification, FieldLevelVerificationInsert, FieldLevelVerificationUpdate, House, HouseInsert, Plots, PlotsInsert, PlotsUpdate, statusHistory
 from models.counters import get_next_house_id, get_next_plot_id, get_next_verification_id
-from utils.helpers import STATUS_TRANSITIONS, authorization, make_response, nowIST, validation_error_response
+from utils.helpers import STATUS_TRANSITIONS, authorization, make_response, nowIST, str_to_ist_datetime, validation_error_response
 from config import  db
 from pymongo import UpdateOne
 from config import client
@@ -119,6 +119,7 @@ def insert_verification(decoded_data, plotId):
             verifiedAt=str(now),
             verifiedBy=userId,
             insertedBy=userId,
+            insertedAt=str(now),
             statusHistory=[history.model_dump()],  # ✅ Important fix
             **verification_obj.model_dump(exclude_none=True)
         )
@@ -285,7 +286,11 @@ def verify_verification(decoded_data,plotId, verificationId):
 def delete_verification(decoded_data,plotId, verificationId):
     try:
         payload = request.get_json(force=True)
-        userId = payload.get("userId") if payload else None
+        userId = payload.get("userId") 
+
+        if not payload or not userId:
+            return make_response(True, "Request body missing", status=400)
+
         comments = payload.get("comments", f"Deleted by user{userId}") if payload else "Deleted by user"
         type_ = payload.pop("type", None)  # 'house' or 'plot'
         homeId = request.args.get("homeId")
@@ -369,16 +374,110 @@ def delete_verification(decoded_data,plotId, verificationId):
         return make_response(True, f"Error deleting verification: {str(e)}", status=500)
 
 
-@plots_verification_BP.route("/field_verification/<plotId>", methods=["GET"])
-def get_verifications(plotId):
+@plots_verification_BP.route("/field_verification/one/<verificationId>", methods=["GET"])
+@auth_required
+def get_verification(verificationId):
     try:
-        verifications = list(updates.find({"plotId": plotId}, {"_id": 0}))
+        verification = updates.find_one({"verificationId": verificationId}, {"_id": 0})
+
+        if not verification:
+            return make_response(True, "verification not found",result=None, status=404)
+
+        return make_response(False, "Verification fetched successfully", result=verification,status=200)
+    except Exception as e:
+        return make_response(True, f"Error fetching verification: {str(e)}", result=None,status=500)
+
+
+@plots_verification_BP.route("/field_verification/<villageId>/<plotId>", methods=["GET"])
+@auth_required
+def get_field_verifications(decoded_data,villageId,plotId):
+    try:
+        # --- Extract query parameters ---
+        args = request.args
+        userId=args.get("userId")
+        if not userId:
+            return 
+        error = authorization(decoded_data, userId)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
+
+        current_stage = args.get("currentStage")
+        home_id = args.get("homeId")
+        status = args.get("status")
+
+        user_role = decoded_data.get("role")  # Optional user role/status
+        from_date = args.get("fromDate")
+        to_date = args.get("toDate")
+        page = int(args.get("page", 1))
+        limit = int(args.get("limit", 15))
+        # --- Build MongoDB filter query dynamically ---
+        query = {"plotId": plotId,"villageId":villageId}
+
+        if current_stage:
+            query["currentStage"] = current_stage
+        if home_id:
+            query["homeId"] = home_id
+        if status:
+            query["status"] = int(status)
+        elif user_role in STATUS_TRANSITIONS:
+            query["status"] = STATUS_TRANSITIONS[user_role]
+
+        # --- Date Range Filtering ---
+        if from_date or to_date:
+            date_filter = {}
+            if from_date:
+                date_filter["$gte"] = (from_date)
+            if to_date:
+                date_filter["$lte"] = (to_date)
+            query["insertedAt"] = date_filter
+
+        # --- Projection (exclude heavy fields) ---
+        projection = {"_id": 0, "statusHistory": 0, "docs": 0}
+
+        # --- Sorting & Pagination ---
+        skip = (page - 1) * limit
+
+        cursor = (
+            updates.find(query, projection)
+            .sort("insertedAt", -1)  # latest first
+            .skip(skip)
+            .limit(limit)
+        )
+
+        verifications = list(cursor)
+        total_count = updates.count_documents(query)
 
         if not verifications:
-            return make_response(True, "verifications not found",result={"count": 0, "items": []}, status=404)
+            return make_response(
+                True,
+                "No verifications found",
+                result={"count": 0, "items": []},
+                status=404,
+            )
 
-        return make_response(False, "Verifications fetched successfully", result={"count": len(verifications), "items": verifications})
+        return make_response(
+            False,
+            "Verifications fetched successfully",
+            result={
+                "count": total_count,
+                "page": page,
+                "limit": limit,
+                "items": verifications,
+            },
+        )
+
+    except ValueError as ve:
+        return make_response(
+            True,
+            f"Invalid date format: {str(ve)}",
+            result={"count": 0, "items": []},
+            status=400,
+        )
+
     except Exception as e:
-        return make_response(True, f"Error fetching verifications: {str(e)}", result={"count": 0, "items": []},status=500)
-
-
+        return make_response(
+            True,
+            f"Error fetching verifications: {str(e)}",
+            result={"count": 0, "items": []},
+            status=500,
+        )
