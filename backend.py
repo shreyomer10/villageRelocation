@@ -12,7 +12,9 @@ from routes.meeting import meeting_bp
 from routes.admin.community import building_bp
 from routes.document import s3_bp
 
-from routes.app.plotsVerification import plots_BP
+from routes.app.plotsVerification import plots_verification_BP
+from routes.app.plots import plots_BP
+
 from routes.app.optionStageVerification import option_verification_BP
 from routes.options import options_BP
 from routes.admin.villageStages import villageStages_BP
@@ -46,7 +48,9 @@ app.register_blueprint(family_bp,url_prefix="/")
 app.register_blueprint(maati_bp,url_prefix="/")
 app.register_blueprint(meeting_bp,url_prefix="/")
 app.register_blueprint(building_bp,url_prefix="/")
+app.register_blueprint(plots_verification_BP,url_prefix="/")
 app.register_blueprint(plots_BP,url_prefix="/")
+
 app.register_blueprint(options_BP,url_prefix="/")
 app.register_blueprint(emp_bp,url_prefix="/")
 app.register_blueprint(villageStages_BP,url_prefix="/")

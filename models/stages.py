@@ -1,5 +1,6 @@
-from pydantic import BaseModel, Field, HttpUrl, field_validator, validator
+from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator, root_validator, validator
 from typing import List, Optional
+from utils.helpers import s3_url_pattern
 
 
 class OprionStageInsert(BaseModel):
@@ -147,17 +148,50 @@ class FieldLevelVerificationInsert(BaseModel):
         extra = "forbid"
 
 
+
+    @field_validator("docs")
+    @classmethod
+    def validate_urls(cls, v: List[str]) -> List[str]:
+        if v is []:
+            return v
+        for url in v:
+            # Check for both http/https and s3 schemas
+            if not isinstance(url, str) or not (
+                url.startswith(("http://", "https://")) or s3_url_pattern.match(url)
+            ):
+                raise ValueError(f"Invalid URL: {url}")
+        return v 
+
+
 class FieldLevelVerificationUpdate(BaseModel):
-    currentStage:Optional[str] =None#new
+    
     name:Optional[str]  =None
     docs:Optional[List[str]]=Field(default_factory=list)
     notes:Optional[str]  =None
     class Config:
         extra = "forbid"
 
+    @field_validator("docs")
+    @classmethod
+    def validate_urls(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is None:
+            return v
+        for url in v:
+            # Check for both http/https and s3 schemas
+            if not isinstance(url, str) or not (
+                url.startswith(("http://", "https://")) or s3_url_pattern.match(url)
+            ):
+                raise ValueError(f"Invalid URL: {url}")
+        return v
 
 
 class FieldLevelVerification(FieldLevelVerificationInsert):
+    
+    type:str
+    villageId:str
+    plotId:str
+    homeId:Optional[str]=None
+
     status:int
     verificationId:str
     verifiedAt:str
@@ -165,16 +199,32 @@ class FieldLevelVerification(FieldLevelVerificationInsert):
     insertedBy:str
 
     statusHistory:List[statusHistory]
-
+    @field_validator("type")
+    @classmethod
+    def validate_type(cls, v: str) -> str:
+        if v not in ["house","plot"]:
+            raise ValueError(f"type should be plot or house")
+        return v
+    # @model_validator(mode="after")
+    # def check_home_for_house(cls, values):
+    #     t = values.get("type")
+    #     plot = values.get("plotId")
+    #     home = values.get("homeId")
+        
+    #     if t == "house" and not home:
+    #         raise ValueError("homeId is required when type is 'house'")
+    #     if t == "plot" and home is not None:
+    #         raise ValueError("homeId must be None when type is 'plot'")
+    #     if not plot:
+    #         raise ValueError("plotId is always required")
+    #     return values
 
 class PlotsInsert(BaseModel):
     name: str
     typeId: str            
     villageId: str   # required for community projects
-    familyId: Optional[str] = None    
-    stagesCompleted:Optional[List[str]]=Field(default_factory=list)
-    docs: Optional[List[FieldLevelVerificationInsert]] = Field(default_factory=list)
-    deleted:bool=False
+    docs:List[str]=Field(default_factory=list)
+
     class Config:
         extra = "forbid"
 
@@ -182,15 +232,58 @@ class PlotsInsert(BaseModel):
 
 class PlotsUpdate(BaseModel):
     name: Optional[str]
-    typeId: Optional[str]            
-    villageId: Optional[str]   # required for community projects
-    familyId: Optional[str] = None    
-    stagesCompleted:Optional[List[str]]=Field(default_factory=list)
-    docs: Optional[List[FieldLevelVerification]] = Field(default_factory=list)
-    deleted:bool=False
+    typeId: Optional[str]  
+    docs:List[str]=Field(default_factory=list)
+          
     class Config:
         extra = "forbid"
 
 
 class Plots(PlotsInsert):
     plotId:str
+    currentStage:str
+    stagesCompleted:Optional[List[str]]=Field(default_factory=list)
+    deleted:bool=False
+
+#house is also a type of plot but have some other properties so made it different !!!
+
+class homeDetails(BaseModel):    #for insert update
+    mukhiyaName:str
+    familyId:str
+    docs:List[str]=Field(default_factory=list)
+
+    class Config:
+        extra = "forbid"
+
+class homeDetailsComplete(homeDetails):
+    homeId:str
+    currentStage:Optional[str]=""
+    stagesCompleted:Optional[List[str]]=Field(default_factory=list)
+    class Config:
+        extra = "forbid"
+
+
+class HouseInsert(BaseModel):
+    mukhiyaName: str
+    typeId: str            
+    villageId: str   # required for community projects
+    familyId: str    
+    numberOfHome:int=1
+    homeDetails:List[homeDetailsComplete]=Field(default_factory=list)
+    class Config:
+        extra = "forbid"
+
+class HouseUpdate(BaseModel):
+    mukhiyaName: Optional[str]=None
+    familyId: Optional[str] = None    
+    numberOfHome:int=1
+    homeDetails:List[homeDetailsComplete]=Field(default_factory=list)
+
+    class Config:
+        extra = "forbid"
+
+
+class House(HouseInsert):
+    plotId:str
+    deleted:bool=False
+

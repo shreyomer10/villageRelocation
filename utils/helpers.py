@@ -71,6 +71,25 @@ s3_url_pattern = re.compile(
     r'[a-z0-9][a-z0-9.-]{2,62}[a-z0-9]' # Validate bucket name length and characters
     r'(/.*)?$' # Key part is optional
 )
+from flask import jsonify
+
+def authorization(decoded_data, userId: str = None):
+
+    user_id = decoded_data.get("userId")
+    user_role = decoded_data.get("role")
+    activated = bool(decoded_data.get("activated"))
+
+    if not user_id or not user_role:
+        return {"error": True, "message": "Invalid token: missing userId or role", "status": 400}
+    
+    if userId and user_id != userId:
+        return {"error": True, "message": "Unauthorized access", "status": 403}
+
+    if not activated:
+        return {"error": True, "message": "User is not activated. Contact DD", "status": 400}
+
+    # All checks passed
+    return None
 
 
 def nowIST():

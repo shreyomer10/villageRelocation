@@ -164,7 +164,7 @@ def login():
                 httponly=True,
                 secure=True,
                 samesite="None",
-                max_age=JWT_EXPIRE_MIN
+                max_age=JWT_EXPIRE_MIN*60
             )
             return response, 200
 

@@ -12,6 +12,24 @@ def get_next_village_id(db):
     )
     return f"VILL_{counter['seq']}"
 
+def get_next_material_id(db) -> str:
+
+    counter = db.counters.find_one_and_update(
+        {"_id": f"materials_maati"},
+        {"$inc": {"seq": 1}},
+        upsert=True,
+        return_document=ReturnDocument.AFTER
+    )
+    return f"CM_{counter['seq']}"
+def get_next_materialUpdate_id(materialId,db) -> str:
+
+    counter = db.counters.find_one_and_update(
+        {"_id": f"Update_{materialId}"},
+        {"$inc": {"seq": 1}},
+        upsert=True,
+        return_document=ReturnDocument.AFTER
+    )
+    return f"{materialId}_U{counter['seq']}"
 
 
 def get_next_feedback_id(feedbackType,db):
@@ -105,6 +123,7 @@ def get_next_stage_id(db, buildingTypeId: str) -> str:
         return_document=ReturnDocument.AFTER
     )
     return f"stage_{buildingTypeId}_{counter['seq']}"
+
 def get_next_plot_id(db, villageId: str, typeId: str) -> str:
     """
     Generate a unique plot ID per village and type.
@@ -118,6 +137,23 @@ def get_next_plot_id(db, villageId: str, typeId: str) -> str:
         return_document=ReturnDocument.AFTER
     )
     return f"P_{villageId}_{typeId}_{counter['seq']}"
+
+def get_next_house_id(db, villageId: str) -> str:
+    """
+    Generate a unique plot ID per village and type.
+
+    Format: P_<villageId>_<typeId>_<seq>
+    """
+    counter = db.counters.find_one_and_update(
+        {"_id": f"plot_{villageId}_house"},
+        {"$inc": {"seq": 1}},
+        upsert=True,
+        return_document=ReturnDocument.AFTER
+    )
+    return f"P_{villageId}_house_{counter['seq']}"
+
+
+
 def get_next_verification_id(db, villageId: str, typeId: str) -> str:
     """
     Generate a unique verification ID per village and type.
@@ -141,6 +177,8 @@ def get_next_option_id(db) -> str:
         return_document=ReturnDocument.AFTER
     )
     return f"Option_{counter['seq']}"
+
+
 
 def get_next_option_stage_id(db,optionId:str) -> str:
 

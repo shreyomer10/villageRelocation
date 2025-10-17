@@ -113,14 +113,14 @@ def insert_feedback():
         feedback.insert_one(doc)
 
         # ✅ Send email confirmation (non-blocking best practice)
-        send_email_feedback(
-            receiver_email=validated.email,
-            name=validated.name,
-            feedbackCategory=validated.type,
-            feedbackType=validated.feedbackType,
-            villageId=validated.villageId,
-            feedbackId=feedbackId
-        )
+        # send_email_feedback(
+        #     receiver_email=validated.email,
+        #     name=validated.name,
+        #     feedbackCategory=validated.type,
+        #     feedbackType=validated.feedbackType,
+        #     villageId=validated.villageId,
+        #     feedbackId=feedbackId
+        # )
 
         return make_response(
             False,

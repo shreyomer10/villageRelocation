@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field, HttpUrl, field_validator, validator
 from typing import Optional, List
+from utils.helpers import s3_url_pattern
 
 from pydantic_core import ValidationError
 
@@ -17,6 +18,19 @@ class UpdatesInsert(BaseModel):
     class Config:
         extra = "forbid"
 
+    @field_validator("docs")
+    @classmethod
+    def validate_urls(cls, v: List[str]) -> List[str]:
+        if v is []:
+            return v
+        for url in v:
+            # Check for both http/https and s3 schemas
+            if not isinstance(url, str) or not (
+                url.startswith(("http://", "https://")) or s3_url_pattern.match(url)
+            ):
+                raise ValueError(f"Invalid URL: {url}")
+        return v    
+
 class UpdatesUpdate(BaseModel):
   #  currentStage:Optional[str]=None
     name:Optional[str]=None
@@ -24,10 +38,25 @@ class UpdatesUpdate(BaseModel):
     notes:Optional[str]=None
     class Config:
         extra = "forbid"
-
+    
+    @field_validator("docs")
+    @classmethod
+    def validate_urls(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is None:
+            return v
+        for url in v:
+            # Check for both http/https and s3 schemas
+            if not isinstance(url, str) or not (
+                url.startswith(("http://", "https://")) or s3_url_pattern.match(url)
+            ):
+                raise ValueError(f"Invalid URL: {url}")
+        return v
 
 
 class Updates(UpdatesInsert):
+
+    villageId:str
+    familyId:str 
 
     status:int
     updateId:str                   
@@ -48,24 +77,15 @@ class FamilyCard(BaseModel):
         return cls.model_validate(doc)
 
 
-class MemberInsert(BaseModel):
+class Member(BaseModel):
     name: str
     age: int
     gender: str
     healthIssues: Optional[str] = None
-    relocationOption:str
     photo: Optional[str] = None
-    plotId: Optional[str] = None
 
     class Config:
         extra = "forbid"   # 🚫 reject unknown fields like "updates"
-
-
-
-class Member(MemberInsert):
-    updates: Optional[List[Updates]] = None
-    stagesCompleted:List[str]=Field(default_factory=list)
-    currentStage:str
 
 
 
@@ -82,7 +102,7 @@ class Family(BaseModel):
     lat:float   #new
     long:float   #new
     plotId:Optional[str]=None #new
-    members:List[MemberInsert]=[]
+    members:List[Member]=[]
     photos:List[str]=[]
     docs:List[str]=[]
 
@@ -93,8 +113,8 @@ class Family(BaseModel):
     @field_validator("mukhiyaAge")
     @classmethod
     def validate_mukhiya_age(cls, v: str) -> str:
-        if not v.isdigit():
-            raise ValueError("Mukhiya age must be numeric (string of digits)")
+        if not v.isdigit() and not (int(v) >= 18):
+            raise ValueError("Mukhiya age must be numeric (string of digits) and greater than 18")
         return v
 
     # ✅ validation: lat must be -90 to 90
@@ -113,6 +133,13 @@ class Family(BaseModel):
             raise ValueError("Longitude must be between -180 and 180")
         return v
 
+    @field_validator("mukhiyaGender")
+    @classmethod
+    def validate_Gender(cls, v: str) -> str:
+        if not (v.lower() in ["male","m"]):
+            raise ValueError("Gender should be male or m")
+        return v
+
 class FamilyUpdate(BaseModel):
     #familyId: Optional[str] = None
     mukhiyaName: Optional[str] = None
@@ -126,7 +153,7 @@ class FamilyUpdate(BaseModel):
     lat: Optional[float] = None
     long: Optional[float] = None
     plotId: Optional[str] = None
-    members: Optional[List[MemberInsert]] = None   # or List[Members]
+    members: Optional[List[Member]] = None   # or List[Members]
     photos: Optional[List[str]] = None
     docs: Optional[List[str]] = None
     class Config:
@@ -134,12 +161,14 @@ class FamilyUpdate(BaseModel):
 
 
 
+    # ✅ validation: mukhiyaAge must be numeric string
     @field_validator("mukhiyaAge")
     @classmethod
-    def validate_mukhiya_age(cls, v: Optional[str]) -> Optional[str]:
-        if v is not None and not v.isdigit():
-            raise ValueError("Mukhiya age must be numeric (string of digits)")
+    def validate_mukhiya_age(cls, v: str) -> str:
+        if not v.isdigit() and not (int(v) >= 18):
+            raise ValueError("Mukhiya age must be numeric (string of digits) and greater than 18")
         return v
+
 
     @field_validator("lat")
     @classmethod
@@ -155,11 +184,17 @@ class FamilyUpdate(BaseModel):
             raise ValueError("Longitude must be between -180 and 180")
         return v
 
-
+    @field_validator("mukhiyaGender")
+    @classmethod
+    def validate_gender(cls, v: str) -> str:
+        if not (v.lower() in ["male","m"]):
+            raise ValueError("Gender should be male or m")
+        return v
+    
 class FamilyComplete(Family):
     familyId:str
     currentStage:str
-    updates:List[Updates]= Field(default_factory=list)
+    #updates:List[Updates]= Field(default_factory=list)
     stagesCompleted:List[str]=Field(default_factory=list)
-    members: List[Member] = Field(default_factory=list)  # 👈
+    members: List[Member] = Field(default_factory=list)  
 

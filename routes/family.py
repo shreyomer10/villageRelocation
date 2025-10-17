@@ -20,6 +20,9 @@ stages = db.stages
 
 families = db.testing
 options = db.options
+updates=db.optionUpdates
+
+
 family_bp = Blueprint("family",__name__)
 
 
@@ -76,10 +79,10 @@ def get_family_data(family_id):
         # Remove top-level updates
         f.pop("updates", None)
 
-        # Remove updates inside each member
-        if "members" in f and isinstance(f["members"], list):
-            for member in f["members"]:
-                member.pop("updates", None)
+        # # Remove updates inside each member
+        # if "members" in f and isinstance(f["members"], list):
+        #     for member in f["members"]:
+        #         member.pop("updates", None)
 
         return make_response(False, "Family fetched successfully", result=f, status=200)
 
@@ -93,47 +96,25 @@ def get_family_updates(family_id):
         if not family_id or not isinstance(family_id, str):
             return make_response(True, "Invalid or missing family_id", status=400)
 
-        # -------- Fetch Family -------- #
         try:
-            f = families.find_one({"familyId": family_id}, {"_id": 0})
+            u = list(updates.find({"familyId": family_id}, {"_id": 0}))
         except Exception as db_err:
             return make_response(True, f"Database query failed: {str(db_err)}", status=500)
 
-        if not f:
-            return make_response(True, "Family not found", result=[], status=404)
+        if not u:
+            return make_response(True, "Updates not found for this family", result=[], status=404)
 
-        # -------- Build Response -------- #
         updates_data = {
             "familyId": family_id,
             "familyUpdates": [],
-            "memberUpdates": []
         }
 
         # Safely extract family updates
         try:
-            if isinstance(f.get("updates"), list):
-                updates_data["familyUpdates"] = f["updates"]
+            if isinstance(u, list):
+                updates_data["familyUpdates"] = u
         except Exception:
             updates_data["familyUpdates"] = []
-
-        # Safely extract member updates
-        try:
-            if "members" in f and isinstance(f["members"], list):
-                for member in f["members"]:
-                    try:
-                        member_updates = member.get("updates", [])
-                        if isinstance(member_updates, list) and member_updates:
-                            updates_data["memberUpdates"].append({
-                                "name": member.get("name"),
-                                "age": member.get("age"),
-                                "gender": member.get("gender"),
-                                "updates": member_updates
-                            })
-                    except Exception:
-                        # If one member is malformed, skip instead of crashing
-                        continue
-        except Exception:
-            updates_data["memberUpdates"] = []
 
         # -------- Return Response -------- #
         return make_response(False, "Family updates fetched successfully", result=updates_data, status=200)
@@ -173,9 +154,6 @@ def bulk_insert_families():
                 members_complete = [
                     Member(
                         **m.model_dump(),
-                        currentStage="INIT",
-                        updates=[],
-                        stagesCompleted=[]
                     )
                     for m in family_obj.members
                 ]
@@ -187,7 +165,6 @@ def bulk_insert_families():
                     familyId=new_family_id,
                     currentStage="INIT",
                     stagesCompleted=[],
-                    updates=[],
                     members=members_complete,
                     **family_obj.model_dump(exclude={"members"}, exclude_none=True)
                 )
@@ -231,7 +208,7 @@ def insert_family():
             return make_response(True, "Missing request body", status=400)
 
 
-        forbidden_fields = {"updates", "currentStage", "statusHistory","stagesCompleted"}
+        forbidden_fields = { "currentStage", "statusHistory","stagesCompleted"}
         if any(f in payload for f in forbidden_fields):
             return make_response(True, f"Fields {forbidden_fields} are not allowed at insert", status=400)
 
@@ -242,21 +219,20 @@ def insert_family():
             return validation_error_response(ve)
 
         # ✅ Generate familyId automatically based on villageId
-        new_family_id = get_next_family_id(db, family_obj.villageId)
         members_complete = [
             Member(
                 **m.model_dump(),
-                currentStage="INIT",
-                updates=[],
-                stagesCompleted=[]
             )
             for m in family_obj.members
         ]
+
+        new_family_id = get_next_family_id(db, family_obj.villageId)
+
         # ✅ Build FamilyComplete object
         fam_complete = FamilyComplete(
             familyId=new_family_id,
             currentStage="INIT",     # 👈 system-managed
-            stagesCompleted=[],updates=[],
+            stagesCompleted=[],
             members=members_complete,
 
             **family_obj.model_dump(exclude={"members"}, exclude_none=True)
@@ -310,7 +286,7 @@ def update_family(family_id):
         if not payload:
             return make_response(True, "Missing request body", status=400)
         
-        forbidden_fields = {"updates", "currentStage", "statusHistory", "familyId","stagesCompleted"}
+        forbidden_fields = {"currentStage", "statusHistory", "familyId","stagesCompleted"}
         if any(f in payload for f in forbidden_fields):
             return make_response(True, f"Fields {forbidden_fields} are not allowed here", status=400)
 

@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field, HttpUrl, ValidationError, field_validator
 from typing import Optional, List
 
 
+from utils.helpers import s3_url_pattern
 
 
 # class StatusHistory(BaseModel):
@@ -17,6 +18,18 @@ class VillageUpdatesInsert(BaseModel):
     notes:str
     class Config:
         extra = "forbid"
+    @field_validator("docs")
+    @classmethod
+    def validate_urls(cls, v: List[str]) -> List[str]:
+        if v is []:
+            return v
+        for url in v:
+            # Check for both http/https and s3 schemas
+            if not isinstance(url, str) or not (
+                url.startswith(("http://", "https://")) or s3_url_pattern.match(url)
+            ):
+                raise ValueError(f"Invalid URL: {url}")
+        return v   
 
 class VillageUpdatesUpdate(BaseModel):
     # currentStage:Optional[str]=None
@@ -28,6 +41,18 @@ class VillageUpdatesUpdate(BaseModel):
     class Config:
         extra = "forbid"
 
+    @field_validator("docs")
+    @classmethod
+    def validate_urls(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is None:
+            return v
+        for url in v:
+            # Check for both http/https and s3 schemas
+            if not isinstance(url, str) or not (
+                url.startswith(("http://", "https://")) or s3_url_pattern.match(url)
+            ):
+                raise ValueError(f"Invalid URL: {url}")
+        return v
 
 
 class VillageUpdates(VillageUpdatesInsert):
