@@ -5,9 +5,10 @@ from flask import Flask, Blueprint, logging,request, jsonify
 from flask_cors import CORS
 from pydantic import ValidationError
 from pymongo import  ASCENDING, DESCENDING
+from utils.tokenAuth import auth_required
 from models.counters import get_next_meeting_id
 from models.meeting import Meeting, MeetingInsert, MeetingUpdate
-from utils.helpers import make_response
+from utils.helpers import authorization, make_response
 from models.family import Family, FamilyCard, FamilyUpdate
 from config import JWT_EXPIRE_MIN, db
 
@@ -19,11 +20,16 @@ meetings=db.meetings
 meeting_bp = Blueprint("meetings",__name__)
 
 @meeting_bp.route("/meetings/insert", methods=["POST"])
-def insert_meeting():
+def insert_meeting(decoded_data):
     try:
         payload = request.get_json(force=True)
-        if not payload:
-            return make_response(True, "Missing request body", status=400)
+        userId = payload.pop("userId") 
+
+        if not payload or not userId:
+            return make_response(True, "Request body missing", status=400)
+        error = authorization(decoded_data, userId)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
 
         # Validate input
         try:
@@ -57,97 +63,20 @@ def insert_meeting():
     except Exception as e:
         return make_response(True, f"Unexpected error: {str(e)}", status=500)
 
-@meeting_bp.route("/meetings/<village_id>", methods=["GET"])
-def get_meetings_by_village(village_id):
-    try:
-        # Fetch meetings for the village, exclude MongoDB _id
-        meetings = list(db.meetings.find({"villageId": village_id}, {"_id": 0}))
-
-        if not meetings:
-            return make_response(
-                True,
-                f"No meetings found for village '{village_id}'",
-                result=[],
-                status=404
-            )
-
-        return make_response(
-            False,
-            f"Meetings for village '{village_id}' retrieved successfully",
-            result=meetings,
-            status=200
-        )
-
-    except errors.PyMongoError as e:
-        # Database-level errors
-        return make_response(
-            True,
-            f"Database error while fetching meetings: {str(e)}",
-            result=[],
-            status=500
-        )
-    except Exception as e:
-        # Catch-all for unexpected errors
-        return make_response(
-            True,
-            f"Unexpected error: {str(e)}",
-            result=[],
-            status=500
-        )
-
-
-@meeting_bp.route("/meetings/heldby/<held_by>", methods=["GET"])
-def get_meetings_held_by(held_by):
-    try:
-        if not held_by.strip():
-            return make_response(
-                True,
-                "Invalid 'heldBy' parameter",
-                result=[],
-                status=400
-            )
-
-        # Fetch meetings held by this user, exclude MongoDB _id
-        meetings = list(db.meetings.find({"heldBy": held_by}, {"_id": 0}))
-
-        if not meetings:
-            return make_response(
-                True,
-                f"No meetings found held by '{held_by}'",
-                result=[],
-                status=404
-            )
-
-        return make_response(
-            False,
-            f"Meetings held by '{held_by}' retrieved successfully",
-            result=meetings,
-            status=200
-        )
-
-    except errors.PyMongoError as e:
-        # Database-level errors
-        return make_response(
-            True,
-            f"Database error while fetching meetings: {str(e)}",
-            result=[],
-            status=500
-        )
-    except Exception as e:
-        # Catch-all for unexpected errors
-        return make_response(
-            True,
-            f"Unexpected error: {str(e)}",
-            result=[],
-            status=500
-        )
-
 
 @meeting_bp.route("/meetings/<meeting_id>", methods=["DELETE"])
-def delete_meeting(meeting_id):
+@auth_required
+def delete_meeting(decoded_data,meeting_id):
     try:
         # ✅ Get JSON payload safely
-        payload = request.get_json(silent=True)  # won't raise if no JSON
+        payload = request.get_json(force=True)  # won't raise if no JSON
+        userId = payload.pop("userId") 
+
+        if not payload or not userId:
+            return make_response(True, "Request body missing", status=400)
+        error = authorization(decoded_data, userId)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
         held_by = payload.get("heldBy") if payload else None
 
         # ✅ Validate heldBy
@@ -177,12 +106,17 @@ def delete_meeting(meeting_id):
         return make_response(True, f"Unexpected error: {str(e)}", status=500)
 
 @meeting_bp.route("/meetings/<meeting_id>", methods=["PUT"])
-def update_meeting(meeting_id):
+@auth_required
+def update_meeting(decoded_data,meeting_id):
     try:
         payload = request.get_json(force=True)
-        if not payload:
-            return make_response(True, "Missing request body", status=400)
+        userId = payload.pop("userId") 
 
+        if not payload or not userId:
+            return make_response(True, "Request body missing", status=400)
+        error = authorization(decoded_data, userId)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
         held_by = payload.get("heldBy")
         if not held_by or not held_by.strip():
             return make_response(True, "Missing or invalid 'heldBy'", status=400)
@@ -221,3 +155,82 @@ def update_meeting(meeting_id):
         return make_response(True, f"Database error: {str(e)}", status=500)
     except Exception as e:
         return make_response(True, f"Unexpected error: {str(e)}", status=500)
+
+
+@meeting_bp.route("/meetings/<villageId>", methods=["GET"])
+@auth_required
+def get_meetings(decoded_data, villageId):
+    try:
+        args = request.args
+        userId = args.get("userId")
+        if not userId:
+            return make_response(True, "Missing userId", status=400)
+
+        error = authorization(decoded_data, userId)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
+
+        # Extract filters
+        from_date = args.get("fromDate")
+        to_date = args.get("toDate")
+        venue = args.get("venue")
+        heldBy = args.get("heldBy")
+
+        page = int(args.get("page", 1))
+        limit = int(args.get("limit", 15))
+
+        # Build query
+        query = {"villageId": villageId}
+        if heldBy:
+            query["heldBy"] = heldBy
+        if venue:
+            query["venue"] = {"$regex": venue, "$options": "i"}  # ✅ allows partial match (e.g. "school")
+
+        # Date filtering
+        if from_date or to_date:
+            date_filter = {}
+            if from_date:
+                date_filter["$gte"] = from_date
+            if to_date:
+                date_filter["$lte"] = to_date
+            query["time"] = date_filter
+
+        projection = {"_id": 0, "photos": 0, "docs": 0}
+        skip = (page - 1) * limit
+
+        cursor = (
+            meetings.find(query, projection)
+            .sort("time", -1)
+            .skip(skip)
+            .limit(limit)
+        )
+
+        update_items = list(cursor)
+        total_count = meetings.count_documents(query)
+
+        if not update_items:
+            return make_response(
+                True,
+                f"No meetings found",
+                result={"count": 0, "items": []},
+                status=404,
+            )
+
+        return make_response(
+            False,
+            "meetings fetched successfully",
+            result={
+                "count": total_count,
+                "page": page,
+                "limit": limit,
+                "items": update_items,
+            },
+        )
+
+    except Exception as e:
+        return make_response(
+            True,
+            f"Error fetching meetings: {str(e)}",
+            result={"count": 0, "items": []},
+            status=500,
+        )

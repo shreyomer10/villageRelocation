@@ -154,7 +154,7 @@ def delete_facility_verification(decoded_data, verificationId):
 
 @facility_verifications_bp.route("/facility_verification/one/<verificationId>", methods=["GET"])
 @auth_required
-def get_facility_verifications(verificationId):
+def get_facility_verification(decoded_data,verificationId):
     try:
         doc = facility_updates.find_one({"verificationId":verificationId}, {"_id": 0})
         if not doc:
@@ -166,13 +166,13 @@ def get_facility_verifications(verificationId):
 
 @facility_verifications_bp.route("/facility_verification/<villageId>/<facilityId>", methods=["GET"])
 @auth_required
-def get_facility_verifications(decoded_data,villageId,facilityId):
+def get_facility_verifications_all(decoded_data,villageId,facilityId):
     try:
         # --- Extract query parameters ---
         args = request.args
         userId=args.get("userId")
         if not userId:
-            return 
+            return make_response(True, message="Missing UserId in Argumments", status=400)
         error = authorization(decoded_data, userId)
         if error:
             return make_response(True, message=error["message"], status=error["status"])

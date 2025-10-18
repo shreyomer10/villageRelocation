@@ -77,7 +77,6 @@ def get_family_data(family_id):
             return make_response(True, "Family not found",  result=[],status=404)
 
         # Remove top-level updates
-        f.pop("updates", None)
 
         # # Remove updates inside each member
         # if "members" in f and isinstance(f["members"], list):
@@ -89,39 +88,42 @@ def get_family_data(family_id):
     except Exception as e:
         return make_response(True, "Internal server error", status=500)
 
-@family_bp.route("/families/<family_id>/updates", methods=["GET"])
-def get_family_updates(family_id):
-    try:
-        # -------- Input Validation -------- #
-        if not family_id or not isinstance(family_id, str):
-            return make_response(True, "Invalid or missing family_id", status=400)
 
-        try:
-            u = list(updates.find({"familyId": family_id}, {"_id": 0}))
-        except Exception as db_err:
-            return make_response(True, f"Database query failed: {str(db_err)}", status=500)
+# deprecated ( in option stage verification file inside routes/app )
 
-        if not u:
-            return make_response(True, "Updates not found for this family", result=[], status=404)
+# @family_bp.route("/families/<family_id>/updates", methods=["GET"])
+# def get_family_updates(family_id):
+#     try:
+#         # -------- Input Validation -------- #
+#         if not family_id or not isinstance(family_id, str):
+#             return make_response(True, "Invalid or missing family_id", status=400)
 
-        updates_data = {
-            "familyId": family_id,
-            "familyUpdates": [],
-        }
+#         try:
+#             u = list(updates.find({"familyId": family_id}, {"_id": 0}))
+#         except Exception as db_err:
+#             return make_response(True, f"Database query failed: {str(db_err)}", status=500)
 
-        # Safely extract family updates
-        try:
-            if isinstance(u, list):
-                updates_data["familyUpdates"] = u
-        except Exception:
-            updates_data["familyUpdates"] = []
+#         if not u:
+#             return make_response(True, "Updates not found for this family", result=[], status=404)
 
-        # -------- Return Response -------- #
-        return make_response(False, "Family updates fetched successfully", result=updates_data, status=200)
+#         updates_data = {
+#             "familyId": family_id,
+#             "familyUpdates": [],
+#         }
 
-    except Exception as e:
-        # Catch any unexpected errors at the outer level
-        return make_response(True, f"Internal server error: {str(e)}", status=500)
+#         # Safely extract family updates
+#         try:
+#             if isinstance(u, list):
+#                 updates_data["familyUpdates"] = u
+#         except Exception:
+#             updates_data["familyUpdates"] = []
+
+#         # -------- Return Response -------- #
+#         return make_response(False, "Family updates fetched successfully", result=updates_data, status=200)
+
+#     except Exception as e:
+#         # Catch any unexpected errors at the outer level
+#         return make_response(True, f"Internal server error: {str(e)}", status=500)
 
 #Static API's FOR ADMIN PURPOSE
 

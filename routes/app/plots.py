@@ -5,7 +5,7 @@ from pydantic import ValidationError
 from utils.tokenAuth import auth_required
 from models.stages import FieldLevelVerification, FieldLevelVerificationInsert, FieldLevelVerificationUpdate, House, HouseInsert, HouseUpdate, Plots, PlotsInsert, PlotsUpdate, statusHistory
 from models.counters import get_next_house_id, get_next_plot_id, get_next_verification_id
-from utils.helpers import STATUS_TRANSITIONS, make_response, nowIST, validation_error_response
+from utils.helpers import STATUS_TRANSITIONS, authorization, make_response, nowIST, validation_error_response
 from config import  db
 from pymongo import UpdateOne
 from config import client
@@ -324,98 +324,182 @@ def delete_house(plotId):
     except Exception as e:
         return make_response(True, f"Error deleting house: {str(e)}", status=500)
 
-@plots_BP.route("/plots/<villageId>", methods=["GET"])
-def get_plots(villageId):
-    try:
-        typeId = request.args.get("typeId")
-        query = {"villageId": villageId, "deleted": False}
-        if typeId:
-            query["typeId"] = typeId
 
-        docs = list(plots.find(query, {"_id": 0}))
+@plots_BP.route("/plots/one/<plotId>", methods=["GET"])
+@auth_required
+def get_plot_complete(decoded_data,plotId):
+    try:
+        query = {"plotId":plotId,"deleted": False}
+
+        docs = plots.find_one(query, {"_id": 0})
 
         if not docs:
-            return make_response(True, "No plots found",result={"count": 0, "items": []}, status=404)
+            return make_response(True, "Plot not found", status=404)
 
-        return make_response(False, "Plots fetched successfully", result={"count": len(docs), "items": docs}, status=200)
+        return make_response(False, "Plot fetched successfully", result=docs, status=200)
     except Exception as e:
-        return make_response(True, f"Error fetching plots: {str(e)}",result={"count": 0, "items": []}, status=500)
+        return make_response(True, f"Error fetching plots: {str(e)}",result=None, status=500)
+    
+
+@plots_BP.route("/house/one/<plotId>", methods=["GET"])
+@auth_required
+def get_house_complete(decoded_data,plotId):
+    try:
+        query = {"plotId":plotId,"deleted": False}
+
+        docs = houses.find_one(query, {"_id": 0})
+
+        if not docs:
+            return make_response(True, "house not found", status=404)
+
+        return make_response(False, "house fetched successfully", result=docs, status=200)
+    except Exception as e:
+        return make_response(True, f"Error fetching house: {str(e)}", status=500)
+    
+@plots_BP.route("/plots/<villageId>", methods=["GET"])
+@auth_required
+def get_plots(decoded_data, villageId):
+    try:
+        args = request.args
+        userId = args.get("userId")
+        if not userId:
+            return make_response(True, "Missing userId in arguments", status=400)
+
+        error = authorization(decoded_data, userId)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
+        name = args.get("name")
+
+        deleted = args.get("deleted")
+        current_stage = args.get("currentStage")
+        type_id = args.get("typeId")
+        page = int(args.get("page", 1))
+        limit = int(args.get("limit", 15))
+
+        query = {"villageId": villageId}
+
+        # ✅ Deleted field validation
+        if deleted is not None:
+            if str(deleted) == "1":
+                query["deleted"] = True
+            elif str(deleted) == "0":
+                query["deleted"] = False
+            else:
+                return make_response(True, "Deleted must be 0 or 1", status=400)
+        if name:
+            query["name"] = {"$regex": name, "$options": "i"}
+        if type_id:
+            query["typeId"] = type_id
+        if current_stage:
+            query["currentStage"] = current_stage
+
+
+        projection = {"_id": 0}
+        skip = (page - 1) * limit
+
+        plots_cursor = (
+            plots.find(query, projection)
+            .skip(skip)
+            .limit(limit)
+        )
+
+        plots_list = list(plots_cursor)
+        total_count = plots.count_documents(query)
+
+        if not plots_list:
+            return make_response(True, "No plots found", result={"count": 0, "items": []}, status=404)
+
+        return make_response(
+            False,
+            "Plots fetched successfully",
+            result={
+                "count": total_count,
+                "page": page,
+                "limit": limit,
+                "items": plots_list,
+            },
+        )
+
+    except ValueError as ve:
+        return make_response(True, f"Invalid date format: {str(ve)}", result={"count": 0, "items": []}, status=400)
+    except Exception as e:
+        return make_response(True, f"Error fetching plots: {str(e)}", result={"count": 0, "items": []}, status=500)
 
 @plots_BP.route("/house/<villageId>", methods=["GET"])
-def get_house(villageId):
+@auth_required
+def get_house(decoded_data, villageId):
     try:
-        typeId = request.args.get("typeId")
-        query = {"villageId": villageId, "deleted": False}
-        if typeId:
-            query["typeId"] = typeId
+        args = request.args
+        userId = args.get("userId")
+        if not userId:
+            return make_response(True, "Missing userId in arguments", status=400)
 
-        docs = list(houses.find(query, {"_id": 0}))
+        error = authorization(decoded_data, userId)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
 
-        if not docs:
-            return make_response(True, "No house found",result={"count": 0, "items": []}, status=404)
+        mukhiya_name = args.get("mukhiyaName")
+        deleted = args.get("deleted")
+        num_homes = args.get("numberOfHomes")
+        family_id = args.get("familyId")
 
-        return make_response(False, "house fetched successfully", result={"count": len(docs), "items": docs}, status=200)
+        page = int(args.get("page", 1))
+        limit = int(args.get("limit", 15))
+
+        query = {"villageId": villageId}
+
+        # ✅ Deleted field validation
+        if deleted is not None:
+            if str(deleted) == "1":
+                query["deleted"] = True
+            elif str(deleted) == "0":
+                query["deleted"] = False
+            else:
+                return make_response(True, "Deleted must be 0 or 1", status=400)
+
+        if mukhiya_name:
+            query["mukhiyaName"] = {"$regex": mukhiya_name, "$options": "i"}
+        if family_id:
+            query["familyId"] = family_id
+        if num_homes:
+            if str(num_homes) in ["1", "2", "3"]:
+                query["numberOfHomes"] = int(num_homes)
+            else:
+                return make_response(True, "numberOfHomes must be 1, 2, or 3", status=400)
+
+
+        projection = {"_id": 0}
+        skip = (page - 1) * limit
+
+        houses_cursor = (
+            plots.find(query, projection)
+            .skip(skip)
+            .limit(limit)
+        )
+
+        houses_list = list(houses_cursor)
+        total_count = plots.count_documents(query)
+
+        if not houses_list:
+            return make_response(
+                True,
+                "No houses found",
+                result={"count": 0, "items": []},
+                status=404,
+            )
+
+        return make_response(
+            False,
+            "Houses fetched successfully",
+            result={
+                "count": total_count,
+                "page": page,
+                "limit": limit,
+                "items": houses_list,
+            },
+        )
+
+    except ValueError as ve:
+        return make_response(True, f"Invalid date format: {str(ve)}", result={"count": 0, "items": []}, status=400)
     except Exception as e:
-        return make_response(True, f"Error fetching plots: {str(e)}",result={"count": 0, "items": []}, status=500)
-
-@plots_BP.route("/plots/<villageId>/<plotId>", methods=["GET"])
-def get_plot_complete(villageId,plotId):
-    try:
-        query = {"villageId": villageId, "deleted": False,"plotId":plotId}
-
-        docs = list(plots.find_one(query, {"_id": 0}))
-
-        if not docs:
-            return make_response(True, "Plot not found",result={"count": 0, "items": []}, status=404)
-
-        return make_response(False, "Plot fetched successfully", result={"count": len(docs), "items": docs}, status=200)
-    except Exception as e:
-        return make_response(True, f"Error fetching plots: {str(e)}",result={"count": 0, "items": []}, status=500)
-    
-
-@plots_BP.route("/house/<villageId>/<plotId>", methods=["GET"])
-def get_house_complete(villageId,plotId):
-    try:
-        query = {"villageId": villageId, "deleted": False,"plotId":plotId}
-
-        docs = list(houses.find_one(query, {"_id": 0}))
-
-        if not docs:
-            return make_response(True, "house not found",result={"count": 0, "items": []}, status=404)
-
-        return make_response(False, "house fetched successfully", result={"count": len(docs), "items": docs}, status=200)
-    except Exception as e:
-        return make_response(True, f"Error fetching house: {str(e)}",result={"count": 0, "items": []}, status=500)
-    
-
-
-@plots_BP.route("/deleted_plots/<villageId>", methods=["GET"])
-def get_deleted_plots(villageId):
-    try:
-        typeId = request.args.get("typeId")
-        query = {"villageId": villageId, "deleted": True}
-        if typeId:
-            query["typeId"] = typeId
-
-        docs = list(plots.find(query, {"_id": 0}))
-        if not docs:
-            return make_response(True, "No deleted plots found", result={"count": 0, "items": []},status=404)
-        return make_response(False, "Deleted plots fetched successfully", result={"count": len(docs), "items": docs}, status=200)
-    except Exception as e:
-        return make_response(True, f"Error fetching deleted plots: {str(e)}",result={"count": 0, "items": []}, status=500)
-
-
-@plots_BP.route("/deleted_house/<villageId>", methods=["GET"])
-def get_deleted_houses(villageId):
-    try:
-        typeId = request.args.get("typeId")
-        query = {"villageId": villageId, "deleted": True}
-        if typeId:
-            query["typeId"] = typeId
-
-        docs = list(houses.find(query, {"_id": 0}))
-        if not docs:
-            return make_response(True, "No deleted houses found", result={"count": 0, "items": []},status=404)
-        return make_response(False, "Deleted houses fetched successfully", result={"count": len(docs), "items": docs}, status=200)
-    except Exception as e:
-        return make_response(True, f"Error fetching deleted houses: {str(e)}",result={"count": 0, "items": []}, status=500)
+        return make_response(True, f"Error fetching houses: {str(e)}", result={"count": 0, "items": []}, status=500)
