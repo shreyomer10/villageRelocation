@@ -19,7 +19,7 @@ AWS_SECRET_ACCESS_KEY=os.getenv("AWS_SECRET_ACCESS_KEY")
 AWS_DEFAULT_REGION=os.getenv("AWS_DEFAULT_REGION")
 
 BUCKET_NAME = os.getenv("BUCKET_NAME")
-
+REDIS_URL = os.getenv("REDIS_URL")
 MAX_FILE_SIZE_MB = 1  # max allowed file size in MB
 client = MongoClient(
     MONGO_URI,

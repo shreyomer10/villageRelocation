@@ -11,6 +11,7 @@ from models.emp import Users
 from config import JWT_EXPIRE_MIN, db,OTP_EXPIRE_MIN,RECIEVER_EMAIL,SENDER_EMAIL,APP_PASSWORD
 from utils.helpers import hash_password, is_time_past, make_response, nowIST, str_to_ist_datetime, verify_password
 from utils.tokenAuth import auth_required,make_jwt
+from utils.rate_limiting import limiter
 from pymongo import errors as mongo_errors
 users = db.users
 password_history=db.passwords
@@ -353,6 +354,7 @@ def verify_employee():
 
 
 @auth_bp.route("/sendOtp", methods=["POST"])
+@limiter.limit("1 per minute")
 def send_otp():
     data = request.get_json(force=True)
     emp_id = data.get("emp_id")

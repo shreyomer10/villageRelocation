@@ -472,13 +472,13 @@ def get_house(decoded_data, villageId):
         skip = (page - 1) * limit
 
         houses_cursor = (
-            plots.find(query, projection)
+            houses.find(query, projection)
             .skip(skip)
             .limit(limit)
         )
 
         houses_list = list(houses_cursor)
-        total_count = plots.count_documents(query)
+        total_count = houses.count_documents(query)
 
         if not houses_list:
             return make_response(
