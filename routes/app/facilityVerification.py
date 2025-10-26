@@ -170,13 +170,6 @@ def get_facility_verifications_all(decoded_data,villageId,facilityId):
     try:
         # --- Extract query parameters ---
         args = request.args
-        userId=args.get("userId")
-        if not userId:
-            return make_response(True, message="Missing UserId in Argumments", status=400)
-        error = authorization(decoded_data, userId)
-        if error:
-            return make_response(True, message=error["message"], status=error["status"])
-
         status = args.get("status")
 
         user_role = decoded_data.get("role")  # Optional user role/status

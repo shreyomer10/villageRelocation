@@ -394,13 +394,6 @@ def get_field_verifications(decoded_data,villageId,plotId):
     try:
         # --- Extract query parameters ---
         args = request.args
-        userId=args.get("userId")
-        if not userId:
-            return 
-        error = authorization(decoded_data, userId)
-        if error:
-            return make_response(True, message=error["message"], status=error["status"])
-
         current_stage = args.get("currentStage")
         home_id = args.get("homeId")
         status = args.get("status")

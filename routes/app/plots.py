@@ -361,13 +361,6 @@ def get_house_complete(decoded_data,plotId):
 def get_plots(decoded_data, villageId):
     try:
         args = request.args
-        userId = args.get("userId")
-        if not userId:
-            return make_response(True, "Missing userId in arguments", status=400)
-
-        error = authorization(decoded_data, userId)
-        if error:
-            return make_response(True, message=error["message"], status=error["status"])
         name = args.get("name")
 
         deleted = args.get("deleted")
@@ -430,14 +423,6 @@ def get_plots(decoded_data, villageId):
 def get_house(decoded_data, villageId):
     try:
         args = request.args
-        userId = args.get("userId")
-        if not userId:
-            return make_response(True, "Missing userId in arguments", status=400)
-
-        error = authorization(decoded_data, userId)
-        if error:
-            return make_response(True, message=error["message"], status=error["status"])
-
         mukhiya_name = args.get("mukhiyaName")
         deleted = args.get("deleted")
         num_homes = args.get("numberOfHomes")

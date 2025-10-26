@@ -358,14 +358,6 @@ def get_update(updateId):
 def get_updates(decoded_data, villageId, familyId):
     try:
         args = request.args
-        userId = args.get("userId")
-        if not userId:
-            return make_response(True, "Missing userId", status=400)
-
-        error = authorization(decoded_data, userId)
-        if error:
-            return make_response(True, message=error["message"], status=error["status"])
-
         # Extract filters
         current_stage = args.get("currentStage")
         status = args.get("status")

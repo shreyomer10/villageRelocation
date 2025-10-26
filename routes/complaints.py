@@ -186,33 +186,91 @@ def take_action(decoded_data,feedbackId):
         return make_response(True, message=f"Error while updating feedback: {str(e)}", result=None, status=500)
 
 
-@feedback_bp.route("/feedbacks", methods=["GET"])
-def get_all_feedbacks():
+@feedback_bp.route("/feedbacks/<villageId>", methods=["GET"])
+@auth_required
+def get_all_feedbacks(decoded_data,villageId):
     try:
+        args = request.args
+
         query = {}
-        allowed_filters = ["villageId", "familyId", "plotId", "feedbackType"]
+        
+        familyId = args.get("familyId")
+        plotId = args.get("plotId")
+        feedbackType = args.get("feedbackType")
 
-        for field in allowed_filters:
-            value = request.args.get(field)
-            if value:
-                query[field] = value
+        from_date = args.get("fromDate")
+        to_date = args.get("toDate")
+        page = int(args.get("page", 1))
+        limit = int(args.get("limit", 15))
+        query = {"villageId":villageId}
 
-        # Optional pagination
-        limit = int(request.args.get("limit", 50))
-        skip = int(request.args.get("skip", 0))
-        if limit > 100:
-            limit = 100  # Security: prevent large data exposure
 
-        data = list(feedback.find(query, {"_id": 0,"statusHistory":0}).skip(skip).limit(limit))
+        if familyId:
+            query["familyId"] = familyId
+        if plotId:
+            query["plotId"] = plotId
+        if feedbackType:
+            query["feedbackType"] = feedbackType
 
-        if not data:
-            return make_response(False, "No feedback found for the given filters", result={"filters": query}, status=200)
+        # --- Date Range Filtering ---
+        if from_date or to_date:
+            date_filter = {}
+            if from_date:
+                date_filter["$gte"] = (from_date)
+            if to_date:
+                date_filter["$lte"] = (to_date)
+            query["insertedAt"] = date_filter
 
-        return make_response(False, "Feedbacks fetched successfully", result={"filters": query, "count": len(data), "data": data}, status=200)
+        # --- Projection (exclude heavy fields) ---
+        projection = {"_id": 0, "statusHistory": 0, "docs": 0}
+
+        # --- Sorting & Pagination ---
+        skip = (page - 1) * limit
+
+        cursor = (
+            feedback.find(query, projection)
+            .sort("insertedAt", -1)  # latest first
+            .skip(skip)
+            .limit(limit)
+        )
+
+        verifications = list(cursor)
+        total_count = feedback.count_documents(query)
+
+        if not verifications:
+            return make_response(
+                True,
+                "No feedbacks found",
+                result={"count": 0, "items": []},
+                status=404,
+            )
+
+        return make_response(
+            False,
+            "feedbacks fetched successfully",
+            result={
+                "count": total_count,
+                "page": page,
+                "limit": limit,
+                "items": verifications,
+            },
+        )
+
+    except ValueError as ve:
+        return make_response(
+            True,
+            f"Invalid date format: {str(ve)}",
+            result={"count": 0, "items": []},
+            status=400,
+        )
 
     except Exception as e:
-        return make_response(True, message=f"Error fetching feedbacks: {str(e)}", result=None, status=500)
-
+        return make_response(
+            True,
+            f"Error fetching feedback: {str(e)}",
+            result={"count": 0, "items": []},
+            status=500,
+        )
 
 @feedback_bp.route("/feedback/<feedbackId>", methods=["GET"])
 def get_feedback(feedbackId):

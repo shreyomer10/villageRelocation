@@ -162,14 +162,6 @@ def update_meeting(decoded_data,meeting_id):
 def get_meetings(decoded_data, villageId):
     try:
         args = request.args
-        userId = args.get("userId")
-        if not userId:
-            return make_response(True, "Missing userId", status=400)
-
-        error = authorization(decoded_data, userId)
-        if error:
-            return make_response(True, message=error["message"], status=error["status"])
-
         # Extract filters
         from_date = args.get("fromDate")
         to_date = args.get("toDate")

@@ -34,12 +34,17 @@ def get_beneficiaries(village_id):
             return make_response(True, "Invalid or missing village_id", status=400)
 
         option_id = request.args.get("optionId")
+        name=request.args.get("mukhiyaName")
+
+        page = int(request.args.get("page", 1))
+        limit = int(request.args.get("limit", 15))
 
         # -------- Build Query --------
         q = {"villageId": village_id}
         if option_id:
             q["relocationOption"] = option_id
-
+        if name:
+            q["mukhiyaName"] = {"$regex": name, "$options": "i"}
         projection = {
             "_id": 0,
             "familyId": 1,
@@ -47,9 +52,15 @@ def get_beneficiaries(village_id):
             "mukhiyaPhoto": 1,
             "relocationOption": 1,
         }
+        skip = (page - 1) * limit
 
-        # -------- DB Call (Safe, no no_cursor_timeout) --------
-        cursor = families.find(q, projection).sort("mukhiyaName", ASCENDING)
+
+        cursor = (
+            families.find(q, projection)
+            .sort("mukhiyaName", ASCENDING)
+            .skip(skip)
+            .limit(limit)
+        )
 
         # -------- Transform Results --------
         results = list(cursor)  # just return as is
@@ -63,7 +74,6 @@ def get_beneficiaries(village_id):
         logging.error(f"Unexpected error in get_beneficiaries: {str(e)}")
         return make_response(True, f"Internal server error {str(e)}", status=500)
 
-#static data only 
 
 @family_bp.route("/families/<family_id>", methods=["GET"])
 def get_family_data(family_id):
@@ -88,44 +98,6 @@ def get_family_data(family_id):
     except Exception as e:
         return make_response(True, "Internal server error", status=500)
 
-
-# deprecated ( in option stage verification file inside routes/app )
-
-# @family_bp.route("/families/<family_id>/updates", methods=["GET"])
-# def get_family_updates(family_id):
-#     try:
-#         # -------- Input Validation -------- #
-#         if not family_id or not isinstance(family_id, str):
-#             return make_response(True, "Invalid or missing family_id", status=400)
-
-#         try:
-#             u = list(updates.find({"familyId": family_id}, {"_id": 0}))
-#         except Exception as db_err:
-#             return make_response(True, f"Database query failed: {str(db_err)}", status=500)
-
-#         if not u:
-#             return make_response(True, "Updates not found for this family", result=[], status=404)
-
-#         updates_data = {
-#             "familyId": family_id,
-#             "familyUpdates": [],
-#         }
-
-#         # Safely extract family updates
-#         try:
-#             if isinstance(u, list):
-#                 updates_data["familyUpdates"] = u
-#         except Exception:
-#             updates_data["familyUpdates"] = []
-
-#         # -------- Return Response -------- #
-#         return make_response(False, "Family updates fetched successfully", result=updates_data, status=200)
-
-#     except Exception as e:
-#         # Catch any unexpected errors at the outer level
-#         return make_response(True, f"Internal server error: {str(e)}", status=500)
-
-#Static API's FOR ADMIN PURPOSE
 
 @family_bp.route("/families/insertbulk", methods=["POST"])
 def bulk_insert_families():
