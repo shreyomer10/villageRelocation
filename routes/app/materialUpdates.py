@@ -1,5 +1,6 @@
 from flask import Blueprint, request
 from pydantic import ValidationError
+from models.complaints import StatusHistory
 from utils.tokenAuth import auth_required
 from models.stages import statusHistory
 from config import db
@@ -223,3 +224,62 @@ def get_updates(decoded_data, villageId, materialId):
             result={"count": 0, "items": []},
             status=500,
         )
+
+
+@material_updates_bp.route("/material_updates/verify", methods=["POST"])
+@auth_required
+def verify_update(decoded_data):
+    try:
+        payload = request.get_json(force=True)
+        materialId = payload.get("materialId")
+        updateId = payload.get("updateId")
+        userId = payload.get("userId")
+        status = payload.get("status")  # 1=accept, -1=send back
+        comments = payload.get("comments", "")
+
+
+        if not materialId or not updateId or not userId or not comments or status not in [1, -1]:
+            return make_response(True, "Missing required fields", status=400)
+        error = authorization(decoded_data, userId)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
+        user_role = decoded_data.get("role")
+
+        update = material_updates.find_one({"materialId":materialId,"updateId":updateId}, {"_id": 0})
+
+        if not update:
+            return make_response(True, "Update not found", status=404)
+        previous_status = update.get("status", 1) 
+        
+        required_status = STATUS_TRANSITIONS.get(user_role)
+        if not required_status or previous_status != required_status:
+            return make_response(True, f"Unauthorized: {user_role} cannot verify status {previous_status}", status=403)
+
+
+        # Update status
+        now = nowIST()
+        final_status = min(max(previous_status + status, 1), 4)
+        new_history=StatusHistory(
+            status=1,
+            comments=comments,
+            verifier=userId,
+            time=str(now)
+        )
+
+
+        material_updates.update_one(
+            {"updateId": updateId, "materialId": materialId},
+            {
+                "$set": {
+                    "status": final_status,
+                    "verifiedBy": userId,
+                    "verifiedAt": now,
+                },
+                "$push": {"statusHistory": new_history.model_dump(exclude_none=True)}
+            },
+            upsert=False
+        )
+        return make_response(False, "Verification status updated successfully", result=new_history)
+
+    except Exception as e:
+        return make_response(True, f"Error verifying update: {str(e)}", status=500)
