@@ -425,7 +425,7 @@ def get_house(decoded_data, villageId):
         args = request.args
         mukhiya_name = args.get("mukhiyaName")
         deleted = args.get("deleted")
-        num_homes = args.get("numberOfHomes")
+        num_homes = args.get("numberOfHome")
         family_id = args.get("familyId")
 
         page = int(args.get("page", 1))
@@ -448,9 +448,9 @@ def get_house(decoded_data, villageId):
             query["familyId"] = family_id
         if num_homes:
             if str(num_homes) in ["1", "2", "3"]:
-                query["numberOfHomes"] = int(num_homes)
+                query["numberOfHome"] = int(num_homes)
             else:
-                return make_response(True, "numberOfHomes must be 1, 2, or 3", status=400)
+                return make_response(True, "numberOfHome must be 1, 2, or 3", status=400)
 
 
         projection = {"_id": 0}
