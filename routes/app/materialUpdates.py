@@ -59,7 +59,7 @@ def insert_material_update(decoded_data):
             verifiedBy=userId,  # or set from user
             insertedBy=userId,
             insertedAt=str(now),
-
+            notes=update_obj.notes,
             statusHistory=[history.model_dump()]
         )
 
@@ -141,7 +141,7 @@ def delete_material_update(decoded_data,updateId):
 # ================= GET ALL MATERIAL UPDATES =================
 @material_updates_bp.route("/material_update/one/<updateId>", methods=["GET"])
 @auth_required
-def get_material_update(updateId):
+def get_material_update(decoded_data,updateId):
     try:
         docs = material_updates.find_one({"updateId":updateId}, {"_id": 0})
         if not docs:
