@@ -21,6 +21,7 @@ class Material(MaterialInsert):
 
 
 class MaterialUpdateInsert(BaseModel):
+    name:str
     type:str # (house or plot)
     materialId:str
     villageId:str

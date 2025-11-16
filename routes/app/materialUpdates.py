@@ -48,6 +48,7 @@ def insert_material_update(decoded_data):
         )
         update_doc = MaterialUpdates(
             updateId=update_id,
+            name=update_obj.name,
             type=update_obj.type,
             materialId=update_obj.materialId,
             villageId=update_obj.villageId,
@@ -157,6 +158,7 @@ def get_updates(decoded_data, villageId, materialId):
         args = request.args
 
         # Extract filters
+        name=args.get("name")
         type=args.get("type")
         status = args.get("status")
         from_date = args.get("fromDate")
@@ -168,7 +170,8 @@ def get_updates(decoded_data, villageId, materialId):
 
         # Build query
         query = {"villageId": villageId, "materialId": materialId}
-
+        if name:
+            query["name"] = {"$regex": name, "$options": "i"}
         if type:
             query["type"] = type
         if status:
