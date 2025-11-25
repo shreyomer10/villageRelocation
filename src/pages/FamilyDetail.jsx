@@ -39,6 +39,56 @@ function ProgressBar({ pct }) {
   );
 }
 
+/* Reusable small pagination UI */
+function PaginationControls({ page, totalCount, pageSize, onPage }) {
+  const totalPages = totalCount ? Math.max(1, Math.ceil(totalCount / pageSize)) : null;
+  if (!totalPages) return <div className="text-sm">Page {page}</div>;
+
+  const windowSize = 5;
+  let start = Math.max(1, page - Math.floor(windowSize / 2));
+  let end = Math.min(totalPages, start + windowSize - 1);
+  if (end - start + 1 < windowSize) start = Math.max(1, end - windowSize + 1);
+
+  const buttons = [];
+  for (let i = start; i <= end; i++) {
+    buttons.push(
+      <button
+        key={i}
+        onClick={() => onPage(i)}
+        className={`px-2 py-1 rounded ${i === page ? "bg-gray-200" : "hover:bg-gray-100"}`}
+      >
+        {i}
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2 text-sm">
+      <button onClick={() => onPage(1)} disabled={page === 1} className="px-2 py-1 rounded disabled:opacity-50">
+        {"<<"}
+      </button>
+      <button onClick={() => onPage(page - 1)} disabled={page === 1} className="px-2 py-1 rounded disabled:opacity-50">
+        Prev
+      </button>
+      {buttons}
+      <button
+        onClick={() => onPage(page + 1)}
+        disabled={totalPages !== null && page >= totalPages}
+        className="px-2 py-1 rounded disabled:opacity-50"
+      >
+        Next
+      </button>
+      <button
+        onClick={() => onPage(totalPages)}
+        disabled={totalPages !== null && page >= totalPages}
+        className="px-2 py-1 rounded disabled:opacity-50"
+      >
+        {">>"}
+      </button>
+    </div>
+  );
+}
+
 /* Main component */
 export default function FamilyDetailPage() {
   const { familyId } = useParams();
@@ -49,9 +99,21 @@ export default function FamilyDetailPage() {
   const [familyLoading, setFamilyLoading] = useState(true);
   const [familyError, setFamilyError] = useState(null);
 
-  const [updates, setUpdates] = useState({ familyUpdates: [], memberUpdates: [] });
-  const [updatesLoading, setUpdatesLoading] = useState(true);
+  // Updates (paginated)
+  const [familyUpdates, setFamilyUpdates] = useState([]);
+  const [updatesLoading, setUpdatesLoading] = useState(false);
   const [updatesError, setUpdatesError] = useState(null);
+  const [updatesPage, setUpdatesPage] = useState(1);
+  const [updatesLimit, setUpdatesLimit] = useState(15);
+  const [updatesTotal, setUpdatesTotal] = useState(null);
+
+  // Member updates (paginated)
+  const [memberUpdates, setMemberUpdates] = useState([]); // flattened
+  const [memberUpdatesLoading, setMemberUpdatesLoading] = useState(false);
+  const [memberUpdatesError, setMemberUpdatesError] = useState(null);
+  const [memberUpdatesPage, setMemberUpdatesPage] = useState(1);
+  const [memberUpdatesLimit, setMemberUpdatesLimit] = useState(15);
+  const [memberUpdatesTotal, setMemberUpdatesTotal] = useState(null);
 
   // options for overview (fetched on mount) - used for family timeline
   const [optionsList, setOptionsList] = useState([]);
@@ -79,6 +141,35 @@ export default function FamilyDetailPage() {
   const [expandedStage, setExpandedStage] = useState(null);
   const stageRefs = useRef({});
 
+  // safe fetch helper (returns { ok, status, json, text })
+  async function safeFetch(url, opts = {}) {
+    try {
+      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+      const headers = { ...(opts.headers || {}) };
+      if (!headers["Content-Type"]) headers["Content-Type"] = "application/json";
+      if (!headers.Accept) headers.Accept = "application/json";
+      if (token) headers.Authorization = `Bearer ${token}`;
+
+      const res = await fetch(url, {
+        credentials: "include",
+        ...opts,
+        headers,
+      });
+
+      const text = await res.text().catch(() => "");
+      let json = null;
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch (e) {
+        json = null;
+      }
+
+      return { res, ok: res.ok, status: res.status, json, text };
+    } catch (err) {
+      return { res: null, ok: false, status: 0, json: null, text: String(err) };
+    }
+  }
+
   useEffect(() => {
     mountedRef.current = true;
     const ctrl = new AbortController();
@@ -87,24 +178,16 @@ export default function FamilyDetailPage() {
       setFamilyLoading(true);
       setFamilyError(null);
       try {
-        const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-        const headers = token
-          ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }
-          : { "Content-Type": "application/json" };
+        const url = `${API_BASE}/families/${encodeURIComponent(familyId)}`;
+        const { ok, status, json, text } = await safeFetch(url, { method: "GET", signal: ctrl.signal });
 
-        const res = await fetch(`${API_BASE}/families/${encodeURIComponent(familyId)}`, {
-          method: "GET",
-          headers,
-          signal: ctrl.signal,
-        });
-
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error(body.message || `Failed to fetch family (${res.status})`);
+        if (!ok) {
+          if (status === 401) throw new Error("Unauthorized — please login");
+          const msg = (json && (json.message || json.error)) || text || `Failed to fetch family (${status})`;
+          throw new Error(msg);
         }
 
-        const data = await res.json();
-        const doc = data.result ?? data;
+        const doc = (json && (json.result ?? json)) ?? {};
         if (mountedRef.current) setFamily(doc);
       } catch (err) {
         if (err.name !== "AbortError" && mountedRef.current) setFamilyError(err.message || "Unable to load family");
@@ -113,65 +196,36 @@ export default function FamilyDetailPage() {
       }
     }
 
-    async function loadUpdates() {
-      setUpdatesLoading(true);
-      setUpdatesError(null);
-      try {
-        const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-        const headers = token
-          ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }
-          : { "Content-Type": "application/json" };
-
-        const res = await fetch(`${API_BASE}/families/${encodeURIComponent(familyId)}/updates`, {
-          method: "GET",
-          headers,
-          signal: ctrl.signal,
-        });
-
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error(body.message || `Failed to fetch updates (${res.status})`);
-        }
-
-        const data = await res.json();
-        if (mountedRef.current) setUpdates(data.result ?? data);
-      } catch (err) {
-        if (err.name !== "AbortError" && mountedRef.current) setUpdatesError(err.message || "Unable to load updates");
-      } finally {
-        if (mountedRef.current) setUpdatesLoading(false);
-      }
-    }
-
-    // fetch global options for overview timeline
+    // initial options fetch
     fetchOptionsList(false);
+
+    // load family details
     loadFamily();
-    loadUpdates();
+
+    // load updates (first page)
+    loadFamilyUpdates(updatesPage, updatesLimit, ctrl.signal);
+    loadMemberUpdates(memberUpdatesPage, memberUpdatesLimit, ctrl.signal);
 
     return () => {
       mountedRef.current = false;
       ctrl.abort();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [familyId]);
 
-  // --- Options fetch for overview ---
+  // fetch options
   async function fetchOptionsList(force = false) {
     if (!force && optionsList && optionsList.length) return optionsList;
     setOptionsLoading(true);
     setOptionsError(null);
     try {
-      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-      const headers = token
-        ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }
-        : { "Content-Type": "application/json" };
-
-      const res = await fetch(`${API_BASE}/options`, { method: "GET", headers });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.message || `Failed to fetch options (${res.status})`);
+      const url = `${API_BASE}/options`;
+      const { ok, status, json, text } = await safeFetch(url, { method: "GET" });
+      if (!ok) {
+        const msg = (json && (json.message || json.error)) || text || `Failed to fetch options (${status})`;
+        throw new Error(msg);
       }
-
-      const payload = await res.json();
-      const items = payload?.result?.items ?? payload?.result ?? (Array.isArray(payload) ? payload : []);
+      const items = json?.result?.items ?? json?.result ?? (Array.isArray(json) ? json : []);
       if (mountedRef.current) setOptionsList(items);
       return items;
     } catch (err) {
@@ -183,37 +237,163 @@ export default function FamilyDetailPage() {
     }
   }
 
-  // --- Always-fetch for member modal (per your request) ---
-  async function fetchOptionsForMember() {
-    setMemberOptionsLoading(true);
-    setMemberOptionsError(null);
-    setMemberOptionsList([]);
+  /* ------------------------------------------------------------------ */
+  // ===== Pagination-enabled family updates fetch =====
+  async function loadFamilyUpdates(requestPage = 1, requestLimit = 15, signal = undefined) {
+    setUpdatesLoading(true);
+    setUpdatesError(null);
     try {
-      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-      const headers = token
-        ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }
-        : { "Content-Type": "application/json" };
-
-      const res = await fetch(`${API_BASE}/options`, { method: "GET", headers });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.message || `Failed to fetch options (${res.status})`);
+      if (!familyId) {
+        setFamilyUpdates([]);
+        setUpdatesLoading(false);
+        return;
       }
 
-      const payload = await res.json();
-      const items = payload?.result?.items ?? payload?.result ?? (Array.isArray(payload) ? payload : []);
-      if (mountedRef.current) setMemberOptionsList(items);
-      return items;
+      // some backends expose: /updates/<villageId>/<familyId> — try both patterns
+      const villageId = family?.villageId ?? (localStorage.getItem("villageId") || "");
+      // prefer the canonical family endpoint if present
+      const candidates = [
+        `${API_BASE}/families/${encodeURIComponent(familyId)}/updates?page=${encodeURIComponent(requestPage)}&limit=${encodeURIComponent(requestLimit)}`,
+        `${API_BASE}/updates/${encodeURIComponent(villageId)}/${encodeURIComponent(familyId)}?page=${encodeURIComponent(requestPage)}&limit=${encodeURIComponent(requestLimit)}`,
+      ];
+
+      let payload = null;
+      let lastErr = null;
+
+      for (const url of candidates) {
+        const { ok, status, json, text } = await safeFetch(url, { method: "GET", signal });
+        if (!ok) {
+          lastErr = (json && (json.message || json.error)) || text || `Failed (${status})`;
+          // if 404 on the first candidate try next (some deployments use the other path)
+          if (status === 404) continue;
+          // unauthorized: set message and abort
+          if (status === 401) throw new Error("Unauthorized — please login");
+          continue;
+        }
+        payload = json ?? {};
+        break;
+      }
+
+      if (!payload) throw new Error(lastErr || "Failed to fetch updates");
+
+      // support multiple shapes:
+      // { result: { items:[...], count, page, limit } }
+      // { count, items, page, limit }
+      // items may be under payload.result.items or payload.items
+      const resultRoot = payload.result ?? payload;
+      const items = resultRoot?.items ?? (Array.isArray(resultRoot) ? resultRoot : []);
+      const respPage = Number(resultRoot?.page ?? payload?.page ?? requestPage);
+      const respLimit = Number(resultRoot?.limit ?? payload?.limit ?? requestLimit);
+      const respCount = resultRoot?.count ?? payload?.count ?? null;
+
+      // ensure array
+      const list = Array.isArray(items) ? items : [];
+
+      if (mountedRef.current) {
+        setFamilyUpdates(list);
+        setUpdatesPage(Number(respPage ?? requestPage));
+        setUpdatesLimit(Number(respLimit ?? requestLimit));
+        setUpdatesTotal(respCount !== null ? Number(respCount) : null);
+      }
     } catch (err) {
-      console.error("member options load error", err);
-      if (mountedRef.current) setMemberOptionsError(err.message || "Failed to load member options");
-      return [];
+      console.error("loadFamilyUpdates", err);
+      if (mountedRef.current) setUpdatesError(err.message || "Failed to load updates");
+      if (mountedRef.current) setFamilyUpdates([]);
     } finally {
-      if (mountedRef.current) setMemberOptionsLoading(false);
+      if (mountedRef.current) setUpdatesLoading(false);
     }
   }
 
-  // ===== Robust normalizer and helpers (fixes stageId/position and member completed entries) =====
+  // member updates pagination (server-side if backend supports; otherwise we flatten and paginate client-side)
+  async function loadMemberUpdates(requestPage = 1, requestLimit = 15, signal = undefined) {
+    setMemberUpdatesLoading(true);
+    setMemberUpdatesError(null);
+    try {
+      // Try family member updates endpoint first (same as family updates in many backends)
+      const villageId = family?.villageId ?? (localStorage.getItem("villageId") || "");
+      const candidates = [
+        `${API_BASE}/families/${encodeURIComponent(familyId)}/member-updates?page=${encodeURIComponent(requestPage)}&limit=${encodeURIComponent(requestLimit)}`,
+        `${API_BASE}/families/${encodeURIComponent(familyId)}/updates?page=${encodeURIComponent(requestPage)}&limit=${encodeURIComponent(requestLimit)}`, // as fallback many backends put both lists together
+        `${API_BASE}/updates/${encodeURIComponent(villageId)}/${encodeURIComponent(familyId)}?page=${encodeURIComponent(requestPage)}&limit=${encodeURIComponent(requestLimit)}`,
+      ];
+
+      let payload = null;
+      for (const url of candidates) {
+        const { ok, status, json, text } = await safeFetch(url, { method: "GET", signal });
+        if (!ok) {
+          if (status === 404) continue;
+          if (status === 401) throw new Error("Unauthorized — please login");
+          continue;
+        }
+        payload = json ?? {};
+        break;
+      }
+
+      if (!payload) {
+        // fallback: if backend doesn't expose member updates separately, try to flatten members array from family data and paginate locally
+        const memberUpdatesFlattened = [];
+        if (Array.isArray(family?.members)) {
+          family.members.forEach((m) => {
+            const name = m.name ?? "—";
+            if (Array.isArray(m.updates)) {
+              m.updates.forEach((u) => memberUpdatesFlattened.push({ ...u, memberName: name }));
+            }
+          });
+        }
+        // client-side pagination
+        const total = memberUpdatesFlattened.length;
+        const start = (requestPage - 1) * requestLimit;
+        const pageItems = memberUpdatesFlattened.slice(start, start + requestLimit);
+        if (mountedRef.current) {
+          setMemberUpdates(pageItems);
+          setMemberUpdatesPage(requestPage);
+          setMemberUpdatesLimit(requestLimit);
+          setMemberUpdatesTotal(total);
+        }
+        return;
+      }
+
+      const resultRoot = payload.result ?? payload;
+      // many backends return member updates nested differently; try to find arrays
+      const items = resultRoot?.items ?? resultRoot?.memberUpdates ?? resultRoot?.updates ?? (Array.isArray(resultRoot) ? resultRoot : []);
+      const respPage = Number(resultRoot?.page ?? payload?.page ?? requestPage);
+      const respLimit = Number(resultRoot?.limit ?? payload?.limit ?? requestLimit);
+      const respCount = resultRoot?.count ?? payload?.count ?? null;
+
+      const list = Array.isArray(items) ? items : [];
+
+      if (mountedRef.current) {
+        setMemberUpdates(list);
+        setMemberUpdatesPage(Number(respPage ?? requestPage));
+        setMemberUpdatesLimit(Number(respLimit ?? requestLimit));
+        setMemberUpdatesTotal(respCount !== null ? Number(respCount) : null);
+      }
+    } catch (err) {
+      console.error("loadMemberUpdates", err);
+      if (mountedRef.current) setMemberUpdatesError(err.message || "Failed to load member updates");
+      if (mountedRef.current) setMemberUpdates([]);
+    } finally {
+      if (mountedRef.current) setMemberUpdatesLoading(false);
+    }
+  }
+
+  // refresh updates when page changes
+  useEffect(() => {
+    const ctrl = new AbortController();
+    loadFamilyUpdates(updatesPage, updatesLimit, ctrl.signal);
+    return () => ctrl.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [updatesPage, updatesLimit, familyId]);
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    loadMemberUpdates(memberUpdatesPage, memberUpdatesLimit, ctrl.signal);
+    return () => ctrl.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [memberUpdatesPage, memberUpdatesLimit, familyId, family]);
+
+  /* ------------------------------------------------------------------ */
+  // helpers for options / timeline (unchanged from your original)
   function normalizeStages(possible) {
     if (!possible) return [];
 
@@ -234,7 +414,6 @@ export default function FamilyDetailPage() {
         .filter((x) => !x.deleted);
     }
 
-    // object map style
     return Object.entries(possible)
       .map(([k, v], idx) => {
         if (v == null) return null;
@@ -250,17 +429,12 @@ export default function FamilyDetailPage() {
       .filter((x) => !x.deleted);
   }
 
-  // ---- Matching logic: MUST follow the rule user requested ----
-  // 1) If entity.currentStage is present and exactly equals an option's optionId, return that option.
-  // 2) Else try explicit keys like relocationOption/optionId/stageId for exact option match.
-  // 3) Else, search each option's normalized stages for a stage whose id or name matches entity.currentStage.
   function findOptionInListForEntity(list, entity) {
     if (!Array.isArray(list) || !list.length || !entity) return null;
 
     const currentStageRaw = entity.currentStage ?? "";
     const currentStage = String(currentStageRaw).trim();
 
-    // 1) currentStage may itself be an OPTION id (Option_10): match option.optionId first (case-insensitive)
     if (currentStage) {
       const byOptionId = list.find((o) => {
         const optId = String(o.optionId ?? o.id ?? o._id ?? "");
@@ -269,7 +443,6 @@ export default function FamilyDetailPage() {
       if (byOptionId) return byOptionId;
     }
 
-    // 2) explicit entity fields that typically carry option id (relocationOption etc)
     const candidateKeys = [
       entity.relocationOption,
       entity.relocation_option,
@@ -298,7 +471,6 @@ export default function FamilyDetailPage() {
       }
     }
 
-    // 3) fallback: currentStage might be a stage id that appears inside an option's stages.
     if (currentStage) {
       for (const o of list) {
         const normalized = normalizeStages(o.stages ?? o.stageList ?? o.stage_map ?? o.stageListMap ?? o.stagesMap ?? o.stage_list ?? []);
@@ -320,7 +492,6 @@ export default function FamilyDetailPage() {
         set.add(String(itm).toLowerCase());
         continue;
       }
-      // object with fields
       const id = itm.id ?? itm.stageId ?? itm.stage_id ?? itm.key ?? null;
       const name = itm.name ?? itm.label ?? itm.title ?? null;
       if (id) set.add(String(id).toLowerCase());
@@ -330,7 +501,7 @@ export default function FamilyDetailPage() {
     return set;
   }
 
-  // family timeline (uses global optionsList fetched on mount) - completed-first
+  // family timeline (uses global optionsList fetched on mount)
   const familyTimelineObj = useMemo(() => {
     const optionObj = findOptionInListForEntity(optionsList, family);
     const stages = optionObj ? normalizeStages(optionObj.stages ?? optionObj.stageList ?? optionObj.stage_list ?? []) : [];
@@ -373,14 +544,14 @@ export default function FamilyDetailPage() {
 
   // ---------- Updates / members helpers (kept) ----------
   const familyUpdatesSorted = useMemo(() => {
-    const arr = Array.isArray(updates?.familyUpdates) ? [...updates.familyUpdates] : [];
+    const arr = Array.isArray(familyUpdates) ? [...familyUpdates] : [];
     arr.sort((a, b) => {
       const ta = a.verifiedAt || (a.statusHistory && a.statusHistory.length ? a.statusHistory.slice(-1)[0]?.time : null) || "";
       const tb = b.verifiedAt || (b.statusHistory && b.statusHistory.length ? b.statusHistory.slice(-1)[0]?.time : null) || "";
       return String(tb).localeCompare(String(ta));
     });
     return arr;
-  }, [updates]);
+  }, [familyUpdates]);
 
   const filteredFamilyUpdates = useMemo(() => {
     const q = (searchUpdates || "").trim().toLowerCase();
@@ -393,15 +564,14 @@ export default function FamilyDetailPage() {
   }, [familyUpdatesSorted, searchUpdates, statusFilter]);
 
   const allMemberUpdatesFlat = useMemo(() => {
-    const arr = [];
-    if (Array.isArray(updates?.memberUpdates) && updates.memberUpdates.length) {
-      updates.memberUpdates.forEach((m) => {
-        const name = m.name ?? "—";
-        if (Array.isArray(m.updates)) {
-          m.updates.forEach((u) => arr.push({ ...u, memberName: name }));
-        }
-      });
+    // Prefer server-provided memberUpdates when available (memberUpdates state)
+    if (Array.isArray(memberUpdates) && memberUpdates.length) {
+      // if items have memberName set, keep; else try to infer
+      return memberUpdates.map((u) => ({ ...u }));
     }
+
+    // otherwise flatten from family.members and updates state
+    const arr = [];
     if (Array.isArray(family?.members)) {
       family.members.forEach((m) => {
         const name = m.name ?? "—";
@@ -410,33 +580,37 @@ export default function FamilyDetailPage() {
         }
       });
     }
+    if (Array.isArray(memberUpdates) && memberUpdates.length) {
+      memberUpdates.forEach((u) => arr.push({ ...u }));
+    }
     arr.sort((a, b) => {
       const ta = a.verifiedAt || (a.statusHistory && a.statusHistory.length ? a.statusHistory.slice(-1)[0]?.time : "") || "";
       const tb = b.verifiedAt || (b.statusHistory && b.statusHistory.length ? b.statusHistory.slice(-1)[0]?.time : "") || "";
       return String(tb).localeCompare(String(ta));
     });
     return arr;
-  }, [updates, family]);
+  }, [memberUpdates, family]);
 
   const memberNames = useMemo(() => {
     const names = new Set();
     if (Array.isArray(family?.members)) family.members.forEach((m) => m.name && names.add(m.name));
-    if (Array.isArray(updates?.memberUpdates)) updates.memberUpdates.forEach((m) => m.name && names.add(m.name));
+    if (Array.isArray(memberUpdates)) memberUpdates.forEach((m) => m.memberName && names.add(m.memberName));
     return Array.from(names);
-  }, [family, updates]);
+  }, [family, memberUpdates]);
 
   const filteredMemberUpdates = useMemo(() => {
     const q = (memberUpdatesSearch || "").trim().toLowerCase();
-    return allMemberUpdatesFlat.filter((u) => {
+    const arr = allMemberUpdatesFlat.filter((u) => {
       if (memberNameFilter && memberNameFilter !== "all" && String(u.memberName) !== String(memberNameFilter)) return false;
       if (memberStatusFilter !== "all" && String(u.status) !== String(memberStatusFilter)) return false;
       if (!q) return true;
       const hay = `${u.memberName ?? ""} ${u.name ?? ""} ${u.notes ?? ""} ${u.updateId ?? ""} ${u.insertedBy ?? ""}`.toLowerCase();
       return hay.includes(q);
     });
+    return arr;
   }, [allMemberUpdatesFlat, memberNameFilter, memberUpdatesSearch, memberStatusFilter]);
 
-  /* UI small components */
+  /* UI small components (same as before) */
   function StatusBadge({ status }) {
     const s = {
       1: { label: "forest Guard", color: "bg-yellow-50 text-yellow-800", dot: "bg-yellow-400" },
@@ -588,7 +762,7 @@ export default function FamilyDetailPage() {
     }
   }
 
-  // Overview rendering (uses familyTimeline computed earlier)
+  // Overview rendering
   function renderOverview() {
     if (familyLoading) return <div className="py-8 text-center">Loading family…</div>;
     if (familyError) return <div className="text-red-600">{familyError}</div>;
@@ -689,7 +863,7 @@ export default function FamilyDetailPage() {
             </div>
           </div>
 
-          {(!timeline || !timeline.length) ? (
+          {(!familyTimelineObj.timeline || !familyTimelineObj.timeline.length) ? (
             <div className="text-sm text-gray-600">No timeline available for family.</div>
           ) : (
             <div className="relative px-4 py-4">
@@ -704,13 +878,13 @@ export default function FamilyDetailPage() {
                 </div>
 
                 <div className="flex items-start justify-between relative z-10">
-                  {timeline.map((t, i) => {
+                  {familyTimelineObj.timeline.map((t, i) => {
                     const stageKey = t.id ?? `s-${i}`;
                     const isCompleted = !!t.isCompleted;
                     const isSelected = String(expandedStage) === String(stageKey) || String(expandedStage) === String(t.name);
 
                     return (
-                      <div key={String(stageKey)} className="flex flex-col items-center" style={{ width: `${100 / Math.max(1, timeline.length)}%`, maxWidth: 180 }}>
+                      <div key={String(stageKey)} className="flex flex-col items-center" style={{ width: `${100 / Math.max(1, familyTimelineObj.timeline.length)}%`, maxWidth: 180 }}>
                         <div className="h-12 flex items-center justify-center">
                           <button
                             onClick={() => setExpandedStage((prev) => (prev === stageKey ? null : stageKey))}
@@ -738,7 +912,7 @@ export default function FamilyDetailPage() {
               {expandedStage && (
                 <div className="mt-6">
                   {(() => {
-                    const t = timeline.find((x) => String(x.id) === String(expandedStage) || String(x.name) === String(expandedStage));
+                    const t = familyTimelineObj.timeline.find((x) => String(x.id) === String(expandedStage) || String(x.name) === String(expandedStage));
                     if (!t) return <div className="text-sm text-gray-600">No details for this stage.</div>;
                     return (
                       <div ref={(el) => (stageRefs.current[t.id ?? t.name] = el)} className="bg-gray-50 border rounded p-4">
@@ -771,9 +945,9 @@ export default function FamilyDetailPage() {
         {/* Photos + status history */}
         <div className="bg-white rounded-2xl shadow p-6">
           <h3 className="font-semibold mb-2">Photos (preview)</h3>
-          {photos.length ? (
+          {Array.isArray(family.photos) && family.photos.length ? (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {photos.slice(0, 8).map((p, i) => (
+              {family.photos.slice(0, 8).map((p, i) => (
                 <div key={i} className="rounded overflow-hidden border cursor-pointer" onClick={() => window.open(p, "_blank")}>
                   <img src={p} alt={`photo-${i}`} onError={(e) => (e.currentTarget.src = "/images/default-avatar.png")} className="object-cover w-full h-24" />
                 </div>
@@ -892,6 +1066,22 @@ export default function FamilyDetailPage() {
     );
   }
 
+  async function fetchOptionsForMember() {
+    setMemberOptionsLoading(true);
+    setMemberOptionsError(null);
+    setMemberOptionsList([]);
+    try {
+      const items = await fetchOptionsList(true);
+      if (mountedRef.current) setMemberOptionsList(items);
+      return items;
+    } catch (err) {
+      if (mountedRef.current) setMemberOptionsError(err.message || "Failed to load member options");
+      return [];
+    } finally {
+      if (mountedRef.current) setMemberOptionsLoading(false);
+    }
+  }
+
   function MemberTimelineModalBody({ member, memberOptionsList = [], memberOptionsLoading = false, memberOptionsError = null }) {
     const [expandedMemberStage, setExpandedMemberStage] = useState(null);
 
@@ -942,7 +1132,7 @@ export default function FamilyDetailPage() {
         return a.isCompleted ? -1 : 1;
       });
       return t;
-    }, [stages, memberCompletedArr]); // completedSet is derived from memberCompletedArr
+    }, [stages, memberCompletedArr]); // completedSet derived from memberCompletedArr
 
     const memberCompletedCount = memberTimeline.filter((x) => x.isCompleted).length;
     const memberPct = memberTimeline.length ? Math.round((memberCompletedCount / memberTimeline.length) * 100) : 0;
@@ -985,7 +1175,7 @@ export default function FamilyDetailPage() {
                           onClick={() => setExpandedMemberStage((prev) => (prev === stageKey ? null : stageKey))}
                           className={`relative z-20 flex items-center justify-center w-12 h-12 rounded-full focus:outline-none transition
                               ${isCompleted ? "bg-blue-700 text-white border-blue-700" : isSelected ? "bg-white text-blue-700 border-2 border-blue-700" : "bg-white text-gray-400 border border-gray-300"}`}
-                            aria-pressed={isSelected}
+                          aria-pressed={isSelected}
                           title={t.name}
                         >
                           {isCompleted ? "✓" : String(i + 1)}
@@ -1011,7 +1201,6 @@ export default function FamilyDetailPage() {
                         <div className="flex items-start justify-between gap-4">
                           <div>
                             <div className="text-lg font-semibold">{t.name}</div>
-                            {/* <div className="text-sm text-gray-500">Order: {t.order ?? "—"}</div> */}
                             {t.completionDate && <div className="text-sm text-gray-500 mt-1">Completed: {fmtDate(t.completionDate)}</div>}
                           </div>
                           <div className="text-sm">
@@ -1074,7 +1263,7 @@ export default function FamilyDetailPage() {
 
             <div className="flex items-center gap-2">
               <div className="text-xs text-gray-500 mr-2">Total</div>
-              <div className="px-2 py-1 rounded-md bg-gray-100 text-sm font-medium">{filteredFamilyUpdates.length}</div>
+              <div className="px-2 py-1 rounded-md bg-gray-100 text-sm font-medium">{updatesTotal ?? (Array.isArray(familyUpdates) ? familyUpdates.length : 0)}</div>
             </div>
           </div>
         </div>
@@ -1088,13 +1277,24 @@ export default function FamilyDetailPage() {
             </AnimatePresence>
           )}
         </div>
+
+        {/* pagination controls for updates */}
+        <div className="bg-white rounded-2xl p-4 shadow flex items-center justify-between">
+          <div className="text-sm text-gray-500">Showing page {updatesPage}</div>
+          <PaginationControls
+            page={updatesPage}
+            totalCount={updatesTotal}
+            pageSize={updatesLimit}
+            onPage={(p) => setUpdatesPage(p)}
+          />
+        </div>
       </div>
     );
   }
 
   function renderMemberUpdates() {
-    if (updatesLoading) return <div className="py-8 text-center">Loading member updates…</div>;
-    if (updatesError) return <div className="text-red-600">{updatesError}</div>;
+    if (memberUpdatesLoading) return <div className="py-8 text-center">Loading member updates…</div>;
+    if (memberUpdatesError) return <div className="text-red-600">{memberUpdatesError}</div>;
 
     return (
       <div className="space-y-6">
@@ -1136,7 +1336,6 @@ export default function FamilyDetailPage() {
             </div>
 
             <div className="flex items-center gap-2">
-              {/* <div className="text-xs text-gray-500 mr-2">Total</div> */}
               <div className="px-2 py-1 rounded-md bg-gray-100 text-sm font-medium min-w text-center">{filteredMemberUpdates.length}</div>
             </div>
           </div>
@@ -1150,6 +1349,17 @@ export default function FamilyDetailPage() {
               {filteredMemberUpdates.map((u, idx) => <UpdateCard key={u.updateId ?? idx} u={u} index={idx} />)}
             </AnimatePresence>
           )}
+        </div>
+
+        {/* pagination controls for member updates */}
+        <div className="bg-white rounded-2xl p-4 shadow flex items-center justify-between">
+          <div className="text-sm text-gray-500">Showing page {memberUpdatesPage}</div>
+          <PaginationControls
+            page={memberUpdatesPage}
+            totalCount={memberUpdatesTotal}
+            pageSize={memberUpdatesLimit}
+            onPage={(p) => setMemberUpdatesPage(p)}
+          />
         </div>
       </div>
     );

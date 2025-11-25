@@ -1,4 +1,5 @@
-﻿import React, { useState, useRef, useEffect, useContext } from "react";
+﻿// src/pages/Auth.jsx
+import React, { useState, useRef, useEffect, useContext } from "react";
 import { useNavigate } from "react-router-dom";
 import { AuthContext } from "../context/AuthContext";
 import { API_BASE } from "../config/Api";
@@ -26,7 +27,7 @@ export default function Auth() {
     sendOtp: `${API_BASE}/sendOtp`,
     verifyOtp: `${API_BASE}/verifyOtp`,
     register: `${API_BASE}/register`,
-    updatePassword: `${API_BASE}/updatePassword`, // backend you provided
+    updatePassword: `${API_BASE}/updatePassword`,
   };
 
   useEffect(() => {
@@ -58,13 +59,10 @@ export default function Auth() {
     }
   }
 
-  // helper to interpret your backend's make_response shape
+  // helper to interpret backend's "success" shape
   function isBackendSuccess({ ok, status, json, text }) {
-    // prefer HTTP 2xx
     if (ok && status >= 200 && status < 300) return true;
-    // some endpoints return JSON { error: false, message: "..." } on 200
     if (json && (json.error === false || json.error === "False" || json.error === 0)) return true;
-    // sometimes backend incorrectly sets error:true but uses 200 code and success message
     if (status === 200 && json && typeof json.message === "string" && /success|sent|verified|login/i.test(json.message)) return true;
     return false;
   }
@@ -91,7 +89,7 @@ export default function Auth() {
       const { ok, status, json, text } = await safeFetch(ENDPOINTS.login, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include", // important: allow server to set cookie token
+        credentials: "include", // allow server to set cookie token
         body: JSON.stringify(body),
       });
 
@@ -102,13 +100,35 @@ export default function Auth() {
         throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
       }
 
-      // backend returns either { token, user } (is_app true) or sets cookie & returns user
       const payload = json ?? {};
+
+      // store raw backend response exactly as received (no decoding)
+      try {
+        localStorage.setItem("auth_payload", JSON.stringify(payload));
+      } catch (e) {
+        // ignore localStorage errors
+      }
+
+      // Let provider normalize the payload into context
       const okLogin = await auth.login(payload);
       if (!okLogin) {
         setError("Login succeeded but client could not process server response.");
         return;
       }
+
+      // If backend didn't provide token or expiry, start a 2-hour session timer (cookie flows)
+      const providedToken = payload.token ?? payload.accessToken ?? payload.access_token ?? null;
+      const providedExpiry =
+        payload.expiresIn ?? payload.expires_in ?? payload.expiresAt ?? payload.expires_at ?? null;
+      if (!providedToken && !providedExpiry) {
+        try {
+          // setToken accepts expiresIn and will set an expiry even with null token
+          auth.setToken(null, { expiresIn: 2 * 3600 });
+        } catch {
+          // ignore
+        }
+      }
+
       navigate("/dashboard");
     } catch (err) {
       if (mountedRef.current) setError(err?.message || "Login failed.");
@@ -163,7 +183,6 @@ export default function Auth() {
         role,
         otp: otp.trim(),
       };
-      // your backend verifyOtp expects emp_id, mobile_number, role, otp (it uses purpose param server-side only in sendOtp)
       const { ok, status, json, text } = await safeFetch(ENDPOINTS.verifyOtp, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -203,7 +222,6 @@ export default function Auth() {
       });
 
       if (!mountedRef.current) return;
-      // backend in your file sometimes returns error=True even on 200 — treat HTTP 200 + success message as success
       if (!isBackendSuccess({ ok, status, json, text })) {
         const msg = (json && (json.message || json.error)) || text || `Registration failed (status ${status})`;
         throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
@@ -211,12 +229,13 @@ export default function Auth() {
 
       setInfo("Registration successful. Attempting to sign in...");
 
-      // many backends return user & token on register; otherwise fall back to login attempt
       if (json && (json.user || json.token)) {
+        try {
+          localStorage.setItem("auth_payload", JSON.stringify(json));
+        } catch {}
         await auth.login(json);
         navigate("/dashboard");
       } else {
-        // fallback to login attempt (user probably needs to login; we'll try auto-login)
         await handleAutoLoginAfterRegister(trimmedId, mobileNumber.trim(), role, password);
       }
     } catch (err) {
@@ -240,7 +259,23 @@ export default function Auth() {
         setMode("login");
         return;
       }
+
+      try {
+        localStorage.setItem("auth_payload", JSON.stringify(json ?? {}));
+      } catch {}
+
       await auth.login(json ?? {});
+      // if server didn't send token/expires, ensure 2-hour fallback
+      const payload = json ?? {};
+      const providedToken = payload.token ?? payload.accessToken ?? payload.access_token ?? null;
+      const providedExpiry =
+        payload.expiresIn ?? payload.expires_in ?? payload.expiresAt ?? payload.expires_at ?? null;
+      if (!providedToken && !providedExpiry) {
+        try {
+          auth.setToken(null, { expiresIn: 2 * 3600 });
+        } catch {}
+      }
+
       navigate("/dashboard");
     } catch (err) {
       setMode("login");
@@ -262,9 +297,7 @@ export default function Auth() {
     }
   }
 
-  // NOTE: your backend's updatePassword endpoint requires auth (it is decorated with @auth_required).
-  // We will still call it (credentials: 'include') so if your backend expects a cookie token it will be sent.
-  // If your auth middleware intentionally blocks unauthenticated calls, backend will return an error.
+  // NOTE: backend's updatePassword may be auth protected; we still attempt with credentials:include
   async function handleForgotResetPassword() {
     resetMessages();
     if (!password || password.length < 6) {
@@ -277,7 +310,7 @@ export default function Auth() {
       const { ok, status, json, text } = await safeFetch(ENDPOINTS.updatePassword, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include", // include cookie if backend expects JWT cookie
+        credentials: "include",
         body: JSON.stringify(body),
       });
 

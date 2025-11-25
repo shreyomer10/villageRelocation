@@ -876,7 +876,7 @@ export default function StagePage() {
   // ---------- UI ----------
   return (
     <div className="min-h-screen bg-[#f8f0dc] font-sans">
-      <MainNavbar />
+      <MainNavbar showVillageInNavbar={true} />
       <div className="max-w-6xl mx-auto px-4 py-4 sm:px-6 lg:px-8">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-3">
           <div>

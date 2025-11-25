@@ -10,19 +10,21 @@ import { API_BASE } from "../config/Api.js";
  *  - currentSubStage (string|number|null)
  *  - completedSubstages (array of strings)  // e.g. ["Stage_17_2", ...]
  *  - onStageSelect(stageObj, index)         // click callback (click does NOT change fill)
+ *  - showSubstages (boolean)                // when false, substage hover popup will NOT be shown
  *
  * Behavior:
  *  - Connector fills up to the current sub-stage (fractional).
  *  - Current stage: outlined blue circle (white interior).
  *  - Stages before current: filled blue circle with ✓.
  *  - If all stages completed: all circles filled blue with ✓.
- *  - Hover popup shows only sub-stage names; interactive and scrollable.
+ *  - Hover popup shows only sub-stage names; interactive and scrollable (only if showSubstages=true).
  */
 export default function TimelineOnly({
   currentStage = null,
   currentSubStage = null,
   completedSubstages = [],
   onStageSelect = () => {},
+  showSubstages = true, // <-- new prop (default true)
 }) {
   const [stages, setStages] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -189,10 +191,12 @@ export default function TimelineOnly({
     }
   }
   function handleCircleEnter(idx) {
+    if (!showSubstages) return; // don't show hover popup when disabled
     clearHideTimer();
     setHoveredIndex(idx);
   }
   function handleCircleLeave(idx) {
+    if (!showSubstages) return;
     clearHideTimer();
     hideTimerRef.current = setTimeout(() => {
       if (!popupHovered) setHoveredIndex((h) => (h === idx ? null : h));
@@ -200,10 +204,12 @@ export default function TimelineOnly({
     }, 180);
   }
   function handlePopupEnter() {
+    if (!showSubstages) return;
     clearHideTimer();
     setPopupHovered(true);
   }
   function handlePopupLeave() {
+    if (!showSubstages) return;
     clearHideTimer();
     hideTimerRef.current = setTimeout(() => {
       setPopupHovered(false);
@@ -290,7 +296,7 @@ export default function TimelineOnly({
                     </div>
 
                     {/* interactive substage popup */}
-                    {hoveredIndex === idx && Array.isArray(stage.subStages) && stage.subStages.length > 0 && (
+                    {hoveredIndex === idx && showSubstages && Array.isArray(stage.subStages) && stage.subStages.length > 0 && (
                       <div
                         className="absolute left-1/2 -translate-x-1/2 top-[84px] z-50 w-64 rounded-lg shadow-lg p-2 text-sm"
                         style={{ backgroundColor: "rgba(255,255,255,0.98)", border: "1px solid rgba(0,0,0,0.06)" }}

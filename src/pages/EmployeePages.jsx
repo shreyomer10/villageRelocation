@@ -146,6 +146,7 @@ function EmployeeForm({ initial = {}, onCancel, onSubmit }) {
         const res = await fetch(`${API_BASE}/villagesId`);
         if (!res.ok) throw new Error(`Failed to load villages (${res.status})`);
         const data = await res.json();
+        // backend may return { result: [...] } or array directly
         const list = Array.isArray(data) ? data : (data.result || []);
         if (!mounted) return;
         setVillages(list);
@@ -464,6 +465,11 @@ export default function EmployeesPage() {
   const [pendingDelete, setPendingDelete] = useState(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
 
+  // toggle modal state for activate/deactivate confirmation
+  const [pendingToggle, setPendingToggle] = useState(null); // { emp, action: 'activate'|'deactivate' }
+  const [toggleLoading, setToggleLoading] = useState(false);
+  const [toggleError, setToggleError] = useState(null);
+
   // update-specific error (render in modal instead of alert)
   const [updateError, setUpdateError] = useState(null);
 
@@ -524,7 +530,6 @@ export default function EmployeesPage() {
     let lastErr = null;
     let mounted = true;
 
-    // we use a mounted flag to prevent state updates after unmount
     try {
       while (attempt < LOAD_MAX_ATTEMPTS) {
         attempt += 1;
@@ -532,12 +537,26 @@ export default function EmployeesPage() {
           const res = await fetch(`${API_BASE}/employee/all`);
           const text = await res.text().catch(() => null);
           const json = (() => { try { return text ? JSON.parse(text) : null; } catch { return null; } })();
+
           if (!res.ok) {
             lastErr = new Error((json && (json.message || json.error)) || text || `Failed to load (${res.status})`);
             throw lastErr;
           }
-          const data = Array.isArray(json) ? json : (json?.result ?? json);
-          const list = Array.isArray(data) ? data : (Array.isArray(json) ? json : []);
+
+          // The backend may return either:
+          // 1) an array of employees (legacy)
+          // 2) an object like { result: { count: N, items: [ ... ] } }
+          // 3) an object like { count: N, items: [ ... ] }
+          let list = [];
+          if (Array.isArray(json)) list = json;
+          else if (json && Array.isArray(json.result)) list = json.result;
+          else if (json && json.result && Array.isArray(json.result.items)) list = json.result.items;
+          else if (json && Array.isArray(json.items)) list = json.items;
+          else if (json && json.result && Array.isArray(json.result.items)) list = json.result.items;
+          else if (json && typeof json === 'object' && json.result && typeof json.result === 'object' && Array.isArray(json.result.items)) list = json.result.items;
+          else if (json && typeof json === 'object' && json.result && Array.isArray(json.result)) list = json.result;
+          else list = [];
+
           const normalized = list.map((e) => {
             const vIDs = e.villageID ?? e.villageIds ?? (e.villageId ? (Array.isArray(e.villageId) ? e.villageId : [e.villageId]) : []);
             return {
@@ -545,6 +564,7 @@ export default function EmployeesPage() {
               role: getRoleCode(e.role ?? e.roleCode ?? e.role),
               villageIDs: Array.isArray(vIDs) ? vIDs : (vIDs ? [vIDs] : []),
               villageId: Array.isArray(vIDs) ? (vIDs[0] || "") : (vIDs || ""),
+              activated: e.activated === true || e.activated === "true" ? true : false,
             };
           });
           if (mounted) {
@@ -606,16 +626,57 @@ export default function EmployeesPage() {
     (filterLocation ? (e.district || e.tehsil || "").toLowerCase().includes(filterLocation.toLowerCase()) : true)
   );
 
+  /* ---------- helper: normalize villages tokens -> array of strings (deduped) ---------- */
+  // returns array of trimmed strings (never numbers)
+  const normalizeVillageTokensToIds = (raw) => {
+    if (raw === undefined || raw === null) return [];
+    const tokens = Array.isArray(raw)
+      ? raw.flatMap(r => (r === null || r === undefined ? [] : (typeof r === "string" ? r.split(/[;,]/) : [String(r)])))
+      : String(raw).split(/[;,]/);
+
+    const out = [];
+    const seen = new Set();
+    tokens.forEach((t) => {
+      const tok = String(t || "").trim();
+      if (!tok) return;
+      // try exact id (string)
+      if (villagesMap[tok]) {
+        if (!seen.has(tok)) { seen.add(tok); out.push(tok); }
+        return;
+      }
+      const lower = tok.toLowerCase();
+      if (villagesNameToId[lower]) {
+        const mapped = String(villagesNameToId[lower]);
+        if (!seen.has(mapped)) { seen.add(mapped); out.push(mapped); }
+        return;
+      }
+      // fuzzy
+      const matchKey = Object.keys(villagesNameToId).find(k => k.includes(lower) || lower.includes(k));
+      if (matchKey) {
+        const mapped = String(villagesNameToId[matchKey]);
+        if (!seen.has(mapped)) { seen.add(mapped); out.push(mapped); }
+        return;
+      }
+      // fallback push original token as string
+      if (!seen.has(tok)) { seen.add(tok); out.push(tok); }
+    });
+    return out;
+  };
+
   /* ---------- add single ---------- */
   const handleAdd = async (payload) => {
     setAddError(null);
     try {
+      // normalize village IDs to array of strings (not numbers)
+      const rawVill = Array.isArray(payload.villageID) ? payload.villageID : (payload.villageID ? [payload.villageID] : []);
+      const normalizedVillageIds = normalizeVillageTokensToIds(rawVill);
+
       const toSend = {
         name: payload.name,
         email: payload.email,
         mobile: payload.mobile,
         role: getRoleCode(payload.role),
-        villageID: Array.isArray(payload.villageID) ? payload.villageID : (payload.villageID ? [payload.villageID] : (Array.isArray(payload.villageIDs) ? payload.villageIDs : (payload.villageIDs ? payload.villageIDs : []))),
+        villageID: normalizedVillageIds,
       };
       const res = await fetch(`${API_BASE}/employee/add`, {
         method: "POST",
@@ -677,6 +738,60 @@ export default function EmployeesPage() {
     }
   };
 
+  /* ---------- activate/deactivate helpers (unchanged) ---------- */
+  // convert id to numeric if possible for URL only (we keep string when not strictly numeric)
+  const normalizeIdForUrl = (id) => {
+    if (!id && id !== 0) return id;
+    return (!isNaN(Number(id)) && String(Number(id)) === String(id)) ? Number(id) : String(id);
+  };
+
+  const activateEmployee = async (emp) => {
+    setUpdateError(null);
+    try {
+      const rawId = emp.userId ?? emp._id ?? emp.id;
+      if (!rawId) throw new Error("Missing user id");
+      const idForUrl = normalizeIdForUrl(rawId);
+      const res = await fetch(`${API_BASE}/employee/activate/${encodeURIComponent(String(idForUrl))}`, { method: "PUT" });
+      const text = await res.text().catch(() => null);
+      const json = (() => { try { return text ? JSON.parse(text) : null; } catch { return null; } })();
+      if (!res.ok) {
+        const msg = (json && (json.message || json.error)) || text || `Activate failed (${res.status})`;
+        throw new Error(msg);
+      }
+      await loadEmployees();
+      // if the currently selected employee was this one, refresh it
+      if (selectedEmployee && String(extractId(selectedEmployee)) === String(rawId)) {
+        setSelectedEmployee((s) => ({ ...(s || {}), activated: true }));
+      }
+    } catch (err) {
+      setUpdateError(err?.message || String(err) || "Activate failed");
+      throw err;
+    }
+  };
+
+  const deactivateEmployee = async (emp) => {
+    setUpdateError(null);
+    try {
+      const rawId = emp.userId ?? emp._id ?? emp.id;
+      if (!rawId) throw new Error("Missing user id");
+      const idForUrl = normalizeIdForUrl(rawId);
+      const res = await fetch(`${API_BASE}/employee/deactivate/${encodeURIComponent(String(idForUrl))}`, { method: "PUT" });
+      const text = await res.text().catch(() => null);
+      const json = (() => { try { return text ? JSON.parse(text) : null; } catch { return null; } })();
+      if (!res.ok) {
+        const msg = (json && (json.message || json.error)) || text || `Deactivate failed (${res.status})`;
+        throw new Error(msg);
+      }
+      await loadEmployees();
+      if (selectedEmployee && String(extractId(selectedEmployee)) === String(rawId)) {
+        setSelectedEmployee((s) => ({ ...(s || {}), activated: false }));
+      }
+    } catch (err) {
+      setUpdateError(err?.message || String(err) || "Deactivate failed");
+      throw err;
+    }
+  };
+
   /* ---------- update (DO NOT SEND userId in body) ---------- */
   // Normalize phone for submit
   const normalizeMobileForSubmit = (val) => {
@@ -687,28 +802,6 @@ export default function EmployeesPage() {
     if (keepPlus && s.length) s = "+" + s;
     if (/^\d+\.0+$/.test(s)) s = s.replace(/\.0+$/, "");
     return s;
-  };
-
-  // Convert village tokens/names -> village IDs using villagesMap / villagesNameToId (best-effort).
-  const normalizeVillageTokensToIds = (raw) => {
-    if (raw === undefined || raw === null) return [];
-    const tokens = Array.isArray(raw) ? raw.flatMap(r => (typeof r === "string" ? r.split(/[;,]/) : [r])) : String(raw).split(/[;,]/);
-    const out = [];
-    tokens.forEach(t => {
-      const tok = String(t || "").trim();
-      if (!tok) return;
-      // exact id match
-      if (villagesMap[tok]) { out.push(tok); return; }
-      // case-insensitive name/id match using nameToId map
-      const lower = tok.toLowerCase();
-      if (villagesNameToId[lower]) { out.push(villagesNameToId[lower]); return; }
-      // fuzzy: find any key that includes or is included
-      const matchKey = Object.keys(villagesNameToId).find(k => k.includes(lower) || lower.includes(k));
-      if (matchKey) { out.push(villagesNameToId[matchKey]); return; }
-      // fallback: push raw token (let backend validate)
-      out.push(tok);
-    });
-    return out;
   };
 
   const handleSaveUpdate = async (payload) => {
@@ -824,7 +917,9 @@ export default function EmployeesPage() {
       const rawId = pendingDelete.userId ?? pendingDelete._id ?? pendingDelete.id;
       if (!rawId) throw new Error("Missing user id for delete");
       const id = rawId;
-      const res = await fetch(`${API_BASE}/employee/delete/${encodeURIComponent(String(id))}`, { method: "DELETE" });
+      // ensure numeric if possible (backend stores numeric userId)
+      const idForUrl = (!isNaN(Number(id)) && String(Number(id)) === String(id)) ? Number(id) : String(id);
+      const res = await fetch(`${API_BASE}/employee/delete/${encodeURIComponent(String(idForUrl))}`, { method: "DELETE" });
       const text = await res.text().catch(() => null);
       let json = {};
       try { json = text ? JSON.parse(text) : {}; } catch { json = { raw: text }; }
@@ -1088,6 +1183,33 @@ export default function EmployeesPage() {
     });
   };
 
+  // NEW: show centered modal instead of alert for toggle
+  const handleToggleFromTable = (e, emp) => {
+    e.stopPropagation();
+    const action = emp.activated ? "deactivate" : "activate";
+    setPendingToggle({ emp, action });
+    setToggleError(null);
+  };
+
+  const performToggleConfirm = async () => {
+    if (!pendingToggle) return;
+    setToggleLoading(true);
+    setToggleError(null);
+    try {
+      if (pendingToggle.action === "activate") {
+        await activateEmployee(pendingToggle.emp);
+      } else {
+        await deactivateEmployee(pendingToggle.emp);
+      }
+      setPendingToggle(null);
+    } catch (err) {
+      setToggleError(err?.message || String(err) || "Toggle failed");
+    } finally {
+      setToggleLoading(false);
+    }
+  };
+
+  /* ---------- UI render ---------- */
   return (
     <div className="min-h-screen bg-[#f8f0dc]">
       <div><MainNavbar name={(localStorage.getItem("user") && JSON.parse(localStorage.getItem("user")).name) || "Shrey"} showWelcome /></div>
@@ -1095,13 +1217,11 @@ export default function EmployeesPage() {
       <div className="px-4 md:px-6 py-6">
         <div className="max-w-6xl mx-auto">
           <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 mb-4">
-            <h1 className="text-2xl font-semibold">Employees</h1>
-
-            <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
-              <div className="flex gap-2 items-center">
+            <div className="flex gap-2 items-center">
                 <button onClick={() => navigate("/dashboard")} className="px-3 py-2 border rounded-md bg-white text-sm">← Back</button>
               </div>
 
+            <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
               <div className="flex gap-2 items-center">
                 <button onClick={() => { setShowNewForm((s) => !s); setAddError(null); }} className="flex items-center gap-2 px-4 py-2 bg-white rounded shadow">
                   <PlusCircle className="w-4 h-4" /> <span className="hidden sm:inline">New Employee</span>
@@ -1204,6 +1324,7 @@ export default function EmployeesPage() {
                   <table className="w-full table-auto text-left">
                     <thead>
                       <tr className="text-gray-600 border-b">
+                        <th className="py-2">Status</th>
                         <th className="py-2">User ID</th>
                         <th className="py-2">Name</th>
                         <th className="py-2">Email</th>
@@ -1213,10 +1334,22 @@ export default function EmployeesPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {loading && (<tr><td colSpan={6} className="py-6 text-center">Loading…</td></tr>)}
-                      {error && (<tr><td colSpan={6} className="py-6 text-center text-red-600">{error}</td></tr>)}
+                      {loading && (<tr><td colSpan={7} className="py-6 text-center">Loading…</td></tr>)}
+                      {error && (<tr><td colSpan={7} className="py-6 text-center text-red-600">{error}</td></tr>)}
                       {!loading && !error && filtered.map((emp) => (
                         <tr key={emp.userId || emp._id || emp.id} className="hover:bg-gray-50 cursor-pointer">
+                          {/* single status button column (before UID). Clicking opens centered confirmation modal */}
+                          <td className="py-3 pr-4 text-sm" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              onClick={(e) => handleToggleFromTable(e, emp)}
+                              className={`px-3 py-1 text-sm rounded-full font-medium transition focus:outline-none ${emp.activated ? 'bg-green-100 text-green-800 border border-green-200' : 'bg-red-50 text-red-800 border border-red-100'}`}
+                              title={emp.activated ? 'Active' : 'Inactive'}
+                              aria-label={emp.activated ? `Deactivate ${emp.name || ''}` : `Activate ${emp.name || ''}`}
+                            >
+                              {emp.activated ? 'Active' : 'Inactive'}
+                            </button>
+                          </td>
+
                           <td className="py-3 pr-4 text-sm" onClick={() => handleOpenDetails(emp)}>{emp.userId ?? emp._id ?? emp.id}</td>
                           <td className="py-3 pr-4 text-sm" onClick={() => handleOpenDetails(emp)}>{emp.name}</td>
                           <td className="py-3 pr-4 text-sm" onClick={() => handleOpenDetails(emp)}>{emp.email}</td>
@@ -1228,7 +1361,7 @@ export default function EmployeesPage() {
                           </td>
                         </tr>
                       ))}
-                      {!loading && !error && filtered.length === 0 && (<tr><td colSpan={6} className="py-6 text-center text-gray-500">No employees</td></tr>)}
+                      {!loading && !error && filtered.length === 0 && (<tr><td colSpan={7} className="py-6 text-center text-gray-500">No employees</td></tr>)}
                     </tbody>
                   </table>
                 </div>
@@ -1243,7 +1376,17 @@ export default function EmployeesPage() {
                           <div className="flex-1 min-w-0">
                             <div className="font-semibold text-sm truncate">{emp.name}</div>
                             <div className="text-xs text-gray-500 truncate">{emp.email} • {emp.mobile}</div>
-                            <div className="text-xs text-gray-600 mt-1">{getRoleLabel(emp.role)}{emp.villageId ? ` • ${emp.villageId}` : ""}</div>
+                            <div className="text-xs text-gray-600 mt-1">
+                              {getRoleLabel(emp.role)}{emp.villageId ? ` • ${emp.villageId}` : ""}
+                            </div>
+                            <div className="mt-2">
+                              {/* mobile view: status badge only */}
+                              {emp.activated ? (
+                                <span className="inline-block px-2 py-1 text-xs rounded bg-green-100 text-green-800">Active</span>
+                              ) : (
+                                <span className="inline-block px-2 py-1 text-xs rounded bg-red-50 text-red-800">Inactive</span>
+                              )}
+                            </div>
                           </div>
                           <div className="flex items-start gap-2">
                             <button onClick={(e) => { e.stopPropagation(); handleStartEdit(emp); setUpdateError(null); }} className="p-2 bg-white rounded shadow"><Edit2 className="w-4 h-4" /></button>
@@ -1312,8 +1455,48 @@ export default function EmployeesPage() {
                         </div>
                       </div>
 
+                      <div>
+                        <div className="text-sm text-gray-500">Status</div>
+                        <div className="flex items-center gap-3">
+                          {/* status badge only here (toggle moved to table) */}
+                          {selectedEmployee.activated ? (
+                            <span className="inline-block px-2 py-1 text-xs rounded bg-green-100 text-green-800">Active</span>
+                          ) : (
+                            <span className="inline-block px-2 py-1 text-xs rounded bg-red-50 text-red-800">Inactive</span>
+                          )}
+                        </div>
+                        {updateError && <div className="text-sm text-red-600 mt-2">{updateError}</div>}
+                      </div>
+
                     </div>
                   )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* centered toggle confirmation modal */}
+          {pendingToggle && (
+            <div className="fixed inset-0 z-70 flex items-center justify-center p-4">
+              <div className="absolute inset-0 bg-black/40" onClick={() => { if (!toggleLoading) setPendingToggle(null); }} />
+              <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl p-6 z-80">
+                <h3 className="text-lg font-semibold mb-2">{pendingToggle.action === "activate" ? "Confirm activation" : "Confirm deactivation"}</h3>
+                <p className="text-sm text-gray-600 mb-4">
+                  Are you sure you want to <strong>{pendingToggle.action === "activate" ? "activate" : "deactivate"}</strong> <span className="font-medium">{pendingToggle.emp?.name || pendingToggle.emp?.email || pendingToggle.emp?.userId || "this employee"}</span>?
+                </p>
+
+                {toggleError && (
+                  <div className="mb-3 p-3 rounded bg-red-50 border border-red-100 text-red-700">
+                    <div className="font-medium">Action failed</div>
+                    <div className="text-sm mt-1">{toggleError}</div>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-end gap-3">
+                  <button onClick={() => { if (!toggleLoading) setPendingToggle(null); }} disabled={toggleLoading} className="px-4 py-2 bg-gray-100 rounded">Cancel</button>
+                  <button onClick={performToggleConfirm} disabled={toggleLoading} className={`px-4 py-2 rounded text-white ${toggleLoading ? "bg-indigo-300" : "bg-indigo-600"}`}>
+                    {toggleLoading ? (pendingToggle.action === "activate" ? "Activating..." : "Deactivating...") : (pendingToggle.action === "activate" ? "Yes, activate" : "Yes, deactivate")}
+                  </button>
                 </div>
               </div>
             </div>

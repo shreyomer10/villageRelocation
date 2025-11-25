@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useState, useRef } from 'react';
+﻿import React, { useEffect, useMemo, useState, useRef, useContext } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import MainNavbar from '../component/MainNavbar';
 import { API_BASE } from '../config/Api.js';
@@ -14,6 +14,7 @@ import {
   Legend,
   Bar
 } from 'recharts';
+import { AuthContext } from '../context/AuthContext';
 
 function fmtDate(iso) {
   try {
@@ -46,8 +47,119 @@ function ProgressBar({ pct }) {
 }
 
 export default function PlotStagesPage() {
-  const { villageId, plotId } = useParams();
+  // prefer route param, but if not present fall back to AuthContext.selected plot id or localStorage
+  const { villageId: routeVillageId, plotId: routePlotId } = useParams();
   const navigate = useNavigate();
+  const { plotId: contextPlotId, selectedPlot, villageId: contextVillageId } = useContext(AuthContext);
+
+  // helper to read legacy localStorage keys if context/route missing
+  const resolvePlotIdFromStorageDirect = () => {
+    try {
+      const byKey = localStorage.getItem('plotId');
+      if (byKey) return byKey;
+      const rawSel = localStorage.getItem('selectedPlot');
+      if (rawSel) {
+        try {
+          const parsed = JSON.parse(rawSel);
+          const normalized = Array.isArray(parsed) ? parsed[0] ?? null : parsed;
+          if (normalized) return normalized.plotId ?? normalized.id ?? null;
+        } catch {}
+      }
+    } catch {}
+    return null;
+  };
+
+  const resolveVillageIdFromStorageDirect = () => {
+    try {
+      const byKey = localStorage.getItem('villageId') || localStorage.getItem('villageID');
+      if (byKey) return byKey;
+      const rawSel = localStorage.getItem('selectedPlot');
+      if (rawSel) {
+        try {
+          const parsed = JSON.parse(rawSel);
+          const normalized = Array.isArray(parsed) ? parsed[0] ?? null : parsed;
+          if (normalized) return normalized.villageId ?? normalized.village ?? null;
+        } catch {}
+      }
+    } catch {}
+    return null;
+  };
+
+  // compute initial resolved ids (route > context > selectedPlot > localStorage)
+  const initialResolvedPlot = routePlotId || contextPlotId || (selectedPlot && (selectedPlot.plotId ?? selectedPlot.id)) || resolvePlotIdFromStorageDirect();
+  const [resolvedPlotId, setResolvedPlotId] = useState(initialResolvedPlot);
+
+  const initialResolvedVillage = routeVillageId || contextVillageId || (selectedPlot && (selectedPlot.villageId ?? selectedPlot.village)) || resolveVillageIdFromStorageDirect();
+  const [resolvedVillageId, setResolvedVillageId] = useState(initialResolvedVillage);
+
+  // sync when route param changes
+  useEffect(() => {
+    if (routePlotId) setResolvedPlotId(routePlotId);
+    else {
+      // if no route id, prefer context then localStorage
+      const idFromContext = contextPlotId || (selectedPlot && (selectedPlot.plotId ?? selectedPlot.id));
+      if (idFromContext) setResolvedPlotId(idFromContext);
+      else {
+        const fromStorage = resolvePlotIdFromStorageDirect();
+        if (fromStorage) setResolvedPlotId(fromStorage);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routePlotId]);
+
+  // sync village when route param changes
+  useEffect(() => {
+    if (routeVillageId) setResolvedVillageId(routeVillageId);
+    else {
+      const idFromContext = contextVillageId || (selectedPlot && (selectedPlot.villageId ?? selectedPlot.village));
+      if (idFromContext) setResolvedVillageId(idFromContext);
+      else {
+        const fromStorage = resolveVillageIdFromStorageDirect();
+        if (fromStorage) setResolvedVillageId(fromStorage);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeVillageId]);
+
+  // keep in sync if AuthContext selection changes (so selecting a plot elsewhere updates this page)
+  useEffect(() => {
+    const idFromContext = contextPlotId || (selectedPlot && (selectedPlot.plotId ?? selectedPlot.id));
+    if (idFromContext && idFromContext !== resolvedPlotId) {
+      setResolvedPlotId(String(idFromContext));
+    }
+    const vFromContext = contextVillageId || (selectedPlot && (selectedPlot.villageId ?? selectedPlot.village));
+    if (vFromContext && vFromContext !== resolvedVillageId) {
+      setResolvedVillageId(String(vFromContext));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contextPlotId, selectedPlot, contextVillageId]);
+
+  // also listen to storage events (keeps multi-tab selection in sync)
+  useEffect(() => {
+    function onStorage(e) {
+      if (!e.key) return;
+      if (e.key === 'plotId') {
+        setResolvedPlotId(e.newValue);
+      }
+      if (e.key === 'villageId' || e.key === 'villageID') {
+        setResolvedVillageId(e.newValue);
+      }
+      if (e.key === 'selectedPlot') {
+        try {
+          const parsed = e.newValue ? JSON.parse(e.newValue) : null;
+          const normalized = Array.isArray(parsed) ? parsed[0] ?? null : parsed;
+          if (normalized && (normalized.plotId || normalized.id)) {
+            setResolvedPlotId(String(normalized.plotId ?? normalized.id));
+          }
+          if (normalized && (normalized.villageId || normalized.village)) {
+            setResolvedVillageId(String(normalized.villageId ?? normalized.village));
+          }
+        } catch {}
+      }
+    }
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -71,9 +183,10 @@ export default function PlotStagesPage() {
   const stageRefs = useRef({});
 
   useEffect(() => {
+    // when resolvedPlotId or resolvedVillageId changes, load data
     loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [villageId, plotId]);
+  }, [resolvedVillageId, resolvedPlotId]);
 
   useEffect(() => {
     // whenever plot/building data changes, try to fetch analytics for the building type id
@@ -86,13 +199,38 @@ export default function PlotStagesPage() {
       setFilterOption('');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [villageId, buildings, plot]);
+  }, [resolvedVillageId, buildings, plot]);
+
+  // --- helper: fetch with credentials and safe JSON parsing ---
+  async function fetchWithCreds(url, opts = {}) {
+    try {
+      const res = await fetch(url, {
+        credentials: 'include', // << important: ensure cookies are sent
+        headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
+        ...opts
+      });
+
+      const text = await res.text().catch(() => '');
+      let json = null;
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch (e) {
+        json = null;
+      }
+
+      return { res, ok: res.ok, status: res.status, json, text };
+    } catch (err) {
+      return { res: null, ok: false, status: 0, json: null, text: String(err) };
+    }
+  }
+  // ------------------------------------------------------------
 
   async function loadAll() {
     setLoading(true);
     setError(null);
     try {
-      await Promise.all([fetchPlot(), fetchBuildings()]);
+      // require resolvedPlotId to fetch the plot; buildings can still be fetched by village
+      await Promise.all([fetchBuildings(), resolvedPlotId ? fetchPlot() : Promise.resolve()]);
     } catch (e) {
       console.error(e);
       setError(e.message || 'Error loading data');
@@ -103,26 +241,79 @@ export default function PlotStagesPage() {
 
   async function fetchPlot() {
     try {
-      const res = await fetch(`${API_BASE}/plots/${encodeURIComponent(villageId)}/${encodeURIComponent(plotId)}`);
-      if (!res.ok) {
-        if (res.status === 404) {
-          setPlot(null);
-          setError('Plot not found');
+      if (!resolvedPlotId) {
+        setPlot(null);
+        return;
+      }
+
+      const url = `${API_BASE}/plots/one/${encodeURIComponent(resolvedPlotId)}`;
+      const { ok, status, json, text } = await fetchWithCreds(url, { method: 'GET' });
+
+      if (!ok) {
+        if (status === 401) {
+          const msg = (json && (json.message || json.error)) || text || 'Unauthorized — please sign in';
+          setError(msg);
           return;
         }
-        const t = await res.text().catch(() => '');
-        throw new Error(`Failed to fetch plot: ${res.status} ${t}`);
+        const t = (json && (json.message || JSON.stringify(json))) || text || `Failed to fetch plot (status ${status})`;
+        throw new Error(t);
       }
-      const payload = await res.json();
-      const item = (payload?.result?.items && payload.result.items.length > 0) ? payload.result.items[0] : null;
+
+      const payload = json ?? {};
+
+      // Robust parsing for multiple payload shapes:
+      // - { result: { items: [...] } }
+      // - { result: { ...single object... } }
+      // - { items: [...] }
+      // - [...array...]
+      // - { ...single object... }
+      let item = null;
+
+      if (payload.result) {
+        // shape: result.items -> array
+        if (Array.isArray(payload.result.items) && payload.result.items.length > 0) {
+          item = payload.result.items[0];
+        } else if (typeof payload.result === 'object' && !Array.isArray(payload.result)) {
+          // shape: result is the object itself (your sample)
+          item = payload.result;
+        }
+      }
+
+      // fallback: payload.items
+      if (!item && Array.isArray(payload.items) && payload.items.length > 0) {
+        item = payload.items[0];
+      }
+
+      // fallback: payload is array
+      if (!item && Array.isArray(payload) && payload.length > 0) {
+        item = payload[0];
+      }
+
+      // fallback: payload itself may be the object
+      if (!item && payload && typeof payload === 'object' && !Array.isArray(payload)) {
+        // if payload looks like the object (has plotId or name etc), use it
+        if (payload.plotId || payload.plot_id || payload.name || payload.familyId) {
+          item = payload;
+        }
+      }
+
       if (!item) {
         setPlot(null);
         return;
       }
+
       const normalized = { ...item };
       normalized.docs = Array.isArray(item.docs) ? item.docs : [];
       normalized.stagesCompleted = Array.isArray(item.stagesCompleted) ? item.stagesCompleted : [];
       setPlot(normalized);
+
+      // If route doesn't include plotId param, update URL to canonical
+      try {
+        const currentRoutePlot = routePlotId;
+        if (!currentRoutePlot) {
+          navigate(`/plots/one/${encodeURIComponent(resolvedPlotId)}`, { replace: true });
+        }
+      } catch {}
     } catch (err) {
       console.error(err);
       setError(err.message || 'Error fetching plot');
@@ -130,15 +321,30 @@ export default function PlotStagesPage() {
     }
   }
 
+
   async function fetchBuildings() {
     try {
-      const res = await fetch(`${API_BASE}/buildings/${encodeURIComponent(villageId)}`);
-      if (!res.ok) {
+      if (!resolvedVillageId) {
         setBuildings([]);
         return;
       }
-      const payload = await res.json();
-      const items = payload?.result?.items ?? [];
+      const url = `${API_BASE}/buildings/${encodeURIComponent(resolvedVillageId)}`;
+      const { ok, status, json, text } = await fetchWithCreds(url, { method: 'GET' });
+
+      if (!ok) {
+        if (status === 401) {
+          const msg = (json && (json.message || json.error)) || text || 'Unauthorized — please sign in';
+          setError(msg);
+          return;
+        }
+        // non-critical: just clear buildings
+        console.warn('Failed to fetch buildings', status, text);
+        setBuildings([]);
+        return;
+      }
+
+      const payload = json ?? {};
+      const items = payload?.result?.items ?? (Array.isArray(payload) ? payload : []);
       setBuildings(items);
     } catch (e) {
       console.error(e);
@@ -151,13 +357,21 @@ export default function PlotStagesPage() {
     setChartLoading(true);
     setChartError(null);
     try {
-      const url = `${API_BASE}/analytics/building/${encodeURIComponent(villageId)}/${encodeURIComponent(typeId)}`;
-      const res = await fetch(url);
-      if (!res.ok) {
-        const t = await res.text().catch(() => '');
-        throw new Error(`Analytics API error: ${res.status} ${t}`);
+      const url = `${API_BASE}/analytics/building/${encodeURIComponent(resolvedVillageId)}/${encodeURIComponent(typeId)}`;
+      const { ok, status, json, text } = await fetchWithCreds(url, { method: 'GET' });
+
+      if (!ok) {
+        if (status === 401) {
+          const msg = (json && (json.message || json.error)) || text || 'Unauthorized — please sign in';
+          setChartError(msg);
+          setChartData([]);
+          return;
+        }
+        const t = (json && (json.message || JSON.stringify(json))) || text || `Analytics API error: ${status}`;
+        throw new Error(t);
       }
-      const payload = await res.json();
+
+      const payload = json ?? {};
       const result = payload?.result ?? {};
       const stages = result?.stages ?? [];
       const data = stages.map(s => ({ name: s.name ?? s.id ?? 'Unknown', count: Number(s.count ?? 0) }));
@@ -347,7 +561,7 @@ export default function PlotStagesPage() {
         <div className="flex items-center justify-between mb-4">
           <div>
             <h1 className="text-2xl font-semibold text-slate-800">{plot.name ?? plot.plotId}</h1>
-            <div className="text-sm text-slate-600">{typeName ? `Type: ${typeName}` : ''} <span className="mx-2">•</span> Village: <span className="font-medium">{villageId}</span></div>
+            <div className="text-sm text-slate-600">{typeName ? `Type: ${typeName}` : ''} <span className="mx-2">•</span> Village: <span className="font-medium">{resolvedVillageId}</span></div>
           </div>
 
           <div className="flex items-center gap-2">
@@ -371,69 +585,69 @@ export default function PlotStagesPage() {
           </div>
 
           {timeline.length === 0 ? (
-  <div className="text-sm text-slate-500">No stage map available</div>
-) : (
-  <div className="relative px-4 py-4">
-    {/* top row: fixed height equal to button (h-12 = 3rem = 48px) */}
-    {/* the absolute line sits inside this row so it is vertically centered with the buttons */}
-    <div className="relative">
-      {/* base connector line and colored completed portion — both centered vertically inside h-12 */}
-      <div className="absolute left-4 right-4 top-0 h-12 flex items-center pointer-events-none" aria-hidden="true">
-        <div className="w-full h-0.5 bg-slate-200 rounded relative">
-          <div
-            className="absolute left-0 top-1/2 transform -translate-y-1/2 h-0.5 rounded"
-            style={{ width: `${pct}%`, backgroundColor: '#1e40af', maxWidth: '100%' }}
-          />
+    <div className="text-sm text-slate-500">No stage map available</div>
+  ) : (
+    <div className="relative px-4 py-4">
+      {/* top row: fixed height equal to button (h-12 = 3rem = 48px) */}
+      {/* the absolute line sits inside this row so it is vertically centered with the buttons */}
+      <div className="relative">
+        {/* base connector line and colored completed portion — both centered vertically inside h-12 */}
+        <div className="absolute left-4 right-4 top-0 h-12 flex items-center pointer-events-none" aria-hidden="true">
+          <div className="w-full h-0.5 bg-slate-200 rounded relative">
+            <div
+              className="absolute left-0 top-1/2 transform -translate-y-1/2 h-0.5 rounded"
+              style={{ width: `${pct}%`, backgroundColor: '#1e40af', maxWidth: '100%' }}
+            />
+          </div>
+        </div>
+
+        {/* buttons row (z-10 so buttons are above the line) */}
+        <div className="flex items-start justify-between relative z-10">
+          {timeline.map((t, i) => {
+            const stageKey = t.id ?? `s-${i}`;
+            const isCompleted = !!t.isCompleted;
+            const isSelected = (() => {
+              if (!expandedStage || !plot?.docs) return false;
+              return plot.docs.some((d, idx) => {
+                const key = d.currentStage ?? d.stageId ?? `stage-${idx}`;
+                return String(key) === String(stageKey) || String(d.name) === String(t.name) || String(d.currentStage) === String(t.name);
+              });
+            })();
+
+            return (
+              <div
+                key={String(stageKey)}
+                className="flex flex-col items-center"
+                style={{ width: `${100 / Math.max(1, timeline.length)}%`, maxWidth: 180 }}
+              >
+                {/* button container fixed to h-12 so button is vertically centered with the line */}
+                <div className="h-12 flex items-center justify-center">
+                  <button
+                    onClick={() => openStageForTimeline(t)}
+                    className={`relative z-20 flex items-center justify-center w-12 h-12 rounded-full focus:outline-none transition
+                      ${isCompleted ? 'bg-blue-700 text-white border-blue-700' : isSelected ? 'bg-white text-blue-700 border-2 border-blue-700' : 'bg-white text-gray-400 border border-gray-300'}`}
+                    aria-pressed={isSelected}
+                    aria-label={`${t.name} ${isCompleted ? 'completed' : isSelected ? 'current' : 'upcoming'}`}
+                    title={t.name}
+                  >
+                    {isCompleted ? '✓' : String(i + 1)}
+                  </button>
+                </div>
+
+                <div className={`mt-2 text-center text-sm truncate ${isCompleted || isSelected ? 'text-slate-800' : 'text-gray-400'}`}>
+                  {t.name}
+                </div>
+
+                {t.completionDate && (
+                  <div className="text-xs text-slate-500 mt-1">{fmtDate(t.completionDate)}</div>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
-
-      {/* buttons row (z-10 so buttons are above the line) */}
-      <div className="flex items-start justify-between relative z-10">
-        {timeline.map((t, i) => {
-          const stageKey = t.id ?? `s-${i}`;
-          const isCompleted = !!t.isCompleted;
-          const isSelected = (() => {
-            if (!expandedStage || !plot?.docs) return false;
-            return plot.docs.some((d, idx) => {
-              const key = d.currentStage ?? d.stageId ?? `stage-${idx}`;
-              return String(key) === String(stageKey) || String(d.name) === String(t.name) || String(d.currentStage) === String(t.name);
-            });
-          })();
-
-          return (
-            <div
-              key={String(stageKey)}
-              className="flex flex-col items-center"
-              style={{ width: `${100 / Math.max(1, timeline.length)}%`, maxWidth: 180 }}
-            >
-              {/* button container fixed to h-12 so button is vertically centered with the line */}
-              <div className="h-12 flex items-center justify-center">
-                <button
-                  onClick={() => openStageForTimeline(t)}
-                  className={`relative z-20 flex items-center justify-center w-12 h-12 rounded-full focus:outline-none transition
-                    ${isCompleted ? 'bg-blue-700 text-white border-blue-700' : isSelected ? 'bg-white text-blue-700 border-2 border-blue-700' : 'bg-white text-gray-400 border border-gray-300'}`}
-                  aria-pressed={isSelected}
-                  aria-label={`${t.name} ${isCompleted ? 'completed' : isSelected ? 'current' : 'upcoming'}`}
-                  title={t.name}
-                >
-                  {isCompleted ? '✓' : String(i + 1)}
-                </button>
-              </div>
-
-              <div className={`mt-2 text-center text-sm truncate ${isCompleted || isSelected ? 'text-slate-800' : 'text-gray-400'}`}>
-                {t.name}
-              </div>
-
-              {t.completionDate && (
-                <div className="text-xs text-slate-500 mt-1">{fmtDate(t.completionDate)}</div>
-              )}
-            </div>
-          );
-        })}
-      </div>
     </div>
-  </div>
-)}
+  )}
 
         </div>
 
@@ -502,11 +716,10 @@ export default function PlotStagesPage() {
                     <div className="flex-1">
                       <div className="flex items-center gap-3">
                         <div className="text-sm font-semibold text-slate-800">{s.name ?? s.currentStage ?? `Stage ${idx + 1}`}</div>
-                        {/* <div className="text-xs text-slate-400">{s.currentStage ?? ''}</div> */}
                         <div className="ml-2"><StatusBadge status={s.status ?? 0} /></div>
                       </div>
                       <div className="mt-2 text-sm text-slate-600">Inserted by: {s.insertedBy ?? '—'}</div>
-                      
+
                     </div>
 {/* Status history moved below Details button as requested */}
                     <div className="flex flex-col items-end gap-2">
@@ -518,7 +731,7 @@ export default function PlotStagesPage() {
                     </div>
                   </div>
 
-                             
+
                   {expanded && (
                     <div className="mt-3 pt-3 border-t text-sm text-slate-700 grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[46vh] overflow-y-auto pr-2">
                       <div>

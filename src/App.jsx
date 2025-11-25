@@ -15,14 +15,22 @@ import OptionPage from "./pages/OptionPage.jsx";
 import PlotPage from "./pages/PlotPage.jsx";
 import Building from "./pages/Buildings.jsx";
 import PlotDetails from "./pages/PlotDetails.jsx";
-import FamilyDetails from "./pages/FamilyDetail.jsx";
+import FamilyDetails from "./pages/FamilyDetail.jsx"; // protected detailed view
 import Feedbacks from "./pages/Feedbacks.jsx";
+import Material from "./pages/Material.jsx";
+import Facilities from "./pages/Facilities.jsx";
 
 export default function App() {
   return (
     <Routes>
+      {/* Public landing */}
       <Route path="/" element={<LandingPage />} />
+
+      
+
+      {/* Authentication */}
       <Route path="/login" element={<Auth />} />
+
       {/* Protected routes */}
       <Route
         path="/dashboard"
@@ -48,7 +56,6 @@ export default function App() {
           </PrivateRoute>
         }
       />
-
       <Route
         path="/feedbacks"
         element={
@@ -57,12 +64,41 @@ export default function App() {
           </PrivateRoute>
         }
       />
+      <Route
+        path="/material"
+        element={
+          <PrivateRoute>
+            <Material />
+          </PrivateRoute>
+        }
+      />
+      <Route
+        path="/facilities"
+        element={
+          <PrivateRoute>
+            <Facilities />
+          </PrivateRoute>
+        }
+      />
 
-      // in your router
-<Route path="/families/:familyId" element={<PrivateRoute><FamilyDetails /></PrivateRoute>} />
+      {/* Protected family detail (admin/staff view) */}
+      <Route
+        path="/families/:familyId"
+        element={
+          <PrivateRoute>
+            <FamilyDetails />
+          </PrivateRoute>
+        }
+      />
 
-
-      <Route path="/plots/:villageId/:plotId" element={<PrivateRoute><PlotDetails /></PrivateRoute>} />
+      <Route
+        path="/plots/one/:plotId"
+        element={
+          <PrivateRoute>
+            <PlotDetails />
+          </PrivateRoute>
+        }
+      />
 
       <Route
         path="/stages"
@@ -73,7 +109,6 @@ export default function App() {
         }
       />
 
-      {/* Give Building a dedicated path instead of duplicating `/stages` */}
       <Route
         path="/buildings"
         element={
@@ -84,7 +119,7 @@ export default function App() {
       />
 
       <Route
-        path="/admin/employees"
+        path="/employees"
         element={
           <PrivateRoute>
             <EmployeesPage />
@@ -119,7 +154,7 @@ export default function App() {
         }
       />
 
-      {/* Fallback: show Auth (or replace with NotFound/Redirect) */}
+      {/* Fallback */}
       <Route path="*" element={<Auth />} />
     </Routes>
   );

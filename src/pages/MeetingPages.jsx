@@ -1,8 +1,9 @@
 ﻿// src/pages/MeetingsPage.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useRef, useContext, useCallback } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import MainNavbar from "../component/MainNavbar";
 import { API_BASE } from "../config/Api.js";
+import { AuthContext } from "../context/AuthContext";
 import {
   PieChart, Pie, Cell, Tooltip as ReTooltip, ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Legend
@@ -26,16 +27,60 @@ function formatDateTime(iso) {
 
 export default function MeetingsPage() {
   const navigate = useNavigate();
-  const { villageId: paramVillageId } = useParams(); // optional param
+  const { villageId: paramVillageId } = useParams(); // optional param from route
+  const auth = useContext(AuthContext);
+
+  // try to derive a village id from AuthContext in multiple likely shapes
+  const authVillageId =
+    auth?.villageId ??
+    auth?.village ??
+    auth?.user?.villageId ??
+    auth?.user?.village ??
+    null;
+
+  // localStorage fallback (kept for compatibility)
+  const lsVillageId = typeof window !== "undefined" ? localStorage.getItem("villageId") : null;
+
   const storedUserRaw = typeof window !== "undefined" ? localStorage.getItem("user") : null;
   const currentUser = (() => {
     try {
       return storedUserRaw ? JSON.parse(storedUserRaw) : null;
     } catch { return null; }
   })();
-  const currentUserName = currentUser?.name ?? currentUser?.username ?? "";
 
-  const [villageIdState, setVillageIdState] = useState(paramVillageId ?? null);
+  const currentUserName = currentUser?.name ?? currentUser?.username ?? "";
+  const currentUserId = currentUser?.userId ?? currentUser?.id ?? currentUser?._id ?? currentUser?.uid ?? null;
+
+  // priority: route param -> authContext -> localStorage -> null
+  const [villageIdState, setVillageIdState] = useState(paramVillageId ?? authVillageId ?? lsVillageId ?? null);
+
+  useEffect(() => {
+    if (paramVillageId) {
+      setVillageIdState(paramVillageId);
+      try { localStorage.setItem("villageId", paramVillageId); } catch {}
+      return;
+    }
+    if (authVillageId) {
+      setVillageIdState(authVillageId);
+      try { localStorage.setItem("villageId", authVillageId); } catch {}
+      return;
+    }
+    if (lsVillageId) {
+      setVillageIdState(lsVillageId);
+      return;
+    }
+    setVillageIdState(null);
+  }, [paramVillageId, authVillageId]); // intentionally not watching lsVillageId
+
+  // --- Pagination state ---
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(15);
+  const [totalCount, setTotalCount] = useState(0);
+
+  // reload trigger (create/update/delete)
+  const [refreshCounter, setRefreshCounter] = useState(0);
+
+  // data & UI state
   const [meetings, setMeetings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -44,29 +89,116 @@ export default function MeetingsPage() {
   const [showOnlyMine, setShowOnlyMine] = useState(false);
   const [query, setQuery] = useState("");
   const [expandedRow, setExpandedRow] = useState(null);
-  const [showFilters, setShowFilters] = useState(false); // mobile filter toggle
+  const [showFilters, setShowFilters] = useState(false);
 
   // Add/Edit modal state
   const [showModal, setShowModal] = useState(false);
-  const [editing, setEditing] = useState(null); // meeting object when editing
+  const [editing, setEditing] = useState(null);
 
   // upload previews & lightbox
   const [lightboxImage, setLightboxImage] = useState(null);
 
-  // refreshCounter used to trigger re-fetch after create/update/delete
-  const [refreshCounter, setRefreshCounter] = useState(0);
+  // token helper: tries many places (AuthContext or localStorage)
+  const readToken = useCallback(() => {
+    if (!auth) return null;
+    if (auth.token) return auth.token;
+    if (auth.authToken) return auth.authToken;
+    if (auth.user?.token) return auth.user.token;
+    if (auth.user?.accessToken) return auth.user.accessToken;
+    try {
+      if (typeof window === "undefined") return null;
+      const keys = ["token", "authToken", "accessToken", "maati_token", "maatiAuth", "id_token", "auth_token"];
+      for (const k of keys) {
+        const v = localStorage.getItem(k);
+        if (v) return v;
+      }
+    } catch {}
+    return null;
+  }, [auth]);
 
-  // try fallback for villageIdState from localStorage if param not provided
-  useEffect(() => {
-    if (!paramVillageId) {
-      const lsId = typeof window !== "undefined" ? localStorage.getItem("villageId") : null;
-      if (lsId) setVillageIdState(lsId);
+  // safe JSON parse
+  function safeParseJson(text, res) {
+    const ct = (res?.headers?.get?.("content-type") || "").toLowerCase();
+    const trimmed = String(text || "").trim();
+    if (!ct.includes("application/json") && !trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+      const snippet = trimmed.slice(0, 400);
+      throw new Error(`Expected JSON but got content-type="${ct}". Response starts with: ${snippet}`);
     }
-  }, [paramVillageId]);
+    try {
+      return JSON.parse(trimmed);
+    } catch (err) {
+      const snippet = trimmed.slice(0, 400);
+      throw new Error(`Invalid JSON: ${err.message}. Response (first 400 chars): ${snippet}`);
+    }
+  }
 
-  // fetch meetings (use ONLY GET /meetings/<villageId>)
+  // doProtectedFetch: token -> refresh -> cookie-only fallback
+  const doProtectedFetch = useCallback(
+    async (url, options = {}) => {
+      const opts = { method: options.method ?? "GET", headers: { ...(options.headers || {}) }, body: options.body, signal: options.signal };
+      const token = readToken();
+
+      async function attemptFetch(sendAuthHeader) {
+        const headers = { ...(opts.headers || {}) };
+        if (sendAuthHeader && token) headers["Authorization"] = `Bearer ${token}`;
+        if (!headers.Accept) headers.Accept = "application/json";
+        if (opts.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
+        const resp = await fetch(url, {
+          method: opts.method,
+          headers,
+          body: opts.body,
+          credentials: "include",
+          signal: opts.signal,
+        });
+        return resp;
+      }
+
+      if (token) {
+        try {
+          const r1 = await attemptFetch(true);
+          if (r1.status !== 401) return r1;
+
+          if (typeof auth?.forceRefresh === "function") {
+            try {
+              const refreshResult = await auth.forceRefresh();
+              if (refreshResult && refreshResult.ok) {
+                const r2 = await attemptFetch(true);
+                if (r2.status !== 401) return r2;
+              }
+            } catch {}
+          }
+        } catch (e) {
+          throw e;
+        }
+      }
+
+      // cookie-only fallback
+      try {
+        const rCookie = await attemptFetch(false);
+        return rCookie;
+      } catch (e) {
+        throw e;
+      }
+    },
+    [auth, readToken]
+  );
+
+  // parse backend list response -> { items, count, page, limit }
+  function parseListResponse(payload) {
+    if (!payload) return { items: [], count: 0, page: 1, limit: 15 };
+    const result = payload.result ?? payload;
+    const items = Array.isArray(result?.items) ? result.items : Array.isArray(result) ? result : [];
+    const count = Number(result?.count ?? result?.total ?? items.length) || 0;
+    const page = Number(result?.page ?? result?.pageno ?? 1) || 1;
+    const limit = Number(result?.limit ?? result?.pageSize ?? 15) || 15;
+    return { items, count, page, limit };
+  }
+
+  // Fetch meetings list with pagination
   useEffect(() => {
     let mounted = true;
+    const ctrl = new AbortController();
+
     async function load() {
       setLoading(true);
       setError(null);
@@ -74,31 +206,44 @@ export default function MeetingsPage() {
       try {
         if (!villageIdState) {
           setMeetings([]);
+          setTotalCount(0);
           setLoading(false);
           return;
         }
 
-        const token = localStorage.getItem("token");
-        const headers = token ? { Authorization: `Bearer ${token}` } : {};
-
-        const url = `${API_BASE}/meetings/${encodeURIComponent(villageIdState)}`;
-
-        const res = await fetch(url, { method: "GET", headers });
-        if (!res.ok) {
-          // If 404 return empty list (server example returns 404 with error true)
-          const bodyText = await res.text().catch(() => "");
-          throw new Error(`Failed to load meetings: ${res.status} ${res.statusText} ${bodyText}`);
+        const url = `${API_BASE}/meetings/${encodeURIComponent(villageIdState)}?limit=${encodeURIComponent(limit)}&page=${encodeURIComponent(page)}`;
+        const res = await doProtectedFetch(url, { method: "GET", signal: ctrl.signal });
+        const text = await res.text().catch(() => "");
+        if (res.status === 401) {
+          if (!mounted) return;
+          setError("Unauthorized — your session may have expired.");
+          setMeetings([]);
+          setTotalCount(0);
+          setLoading(false);
+          return;
         }
-        const payload = await res.json();
 
-        // API standard: { error: false, message: "...", result: [ ... ] }
-        const rawList = Array.isArray(payload) ? payload : (Array.isArray(payload.result) ? payload.result : []);
-        const list = Array.isArray(rawList) ? rawList : [];
+        if (res.status === 404) {
+          if (!mounted) return;
+          setMeetings([]);
+          setTotalCount(0);
+          setLoading(false);
+          return;
+        }
 
-        // Normalize meeting objects into the shape the UI expects
-        const normalized = (list || []).map((m) => {
+        if (!res.ok) {
+          const snippet = text.slice(0, 400);
+          throw new Error(`HTTP ${res.status} ${res.statusText} — ${snippet}`);
+        }
+
+        const payload = safeParseJson(text, res);
+        // backend returns result.items or result
+        const { items, count, page: serverPage, limit: serverLimit } = parseListResponse(payload);
+
+        if (!mounted) return;
+        // Normalize meeting objects into the shape the UI expects (same normalization you had)
+        const normalized = (items || []).map((m) => {
           const raw = m && m.raw ? m.raw : m;
-
           const id = raw.meetingId ?? raw.id ?? raw._id ?? Math.random().toString(36).slice(2,9);
           const heldBy = raw.heldBy ?? raw.held_by ?? raw.by ?? raw.organizer ?? "Unknown";
           const venue = raw.venue ?? raw.location ?? raw.site ?? "—";
@@ -108,9 +253,8 @@ export default function MeetingsPage() {
           const docs = Array.isArray(raw.docs) ? raw.docs : (raw.docs ? [raw.docs] : []);
           const photos = Array.isArray(raw.photos) ? raw.photos : (raw.photos ? [raw.photos] : []);
           const deleted = !!(raw.deleted || raw.isDeleted || raw.invalid || raw.removed);
-
           return {
-            id,
+            id: String(id),
             heldBy,
             venue,
             time,
@@ -133,20 +277,24 @@ export default function MeetingsPage() {
           return bt - at;
         });
 
-        if (!mounted) return;
         setMeetings(normalized);
+        setTotalCount(Number(count) || normalized.length);
+        // align client page/limit with server if different
+        if (serverPage && serverPage !== page) setPage(serverPage);
+        if (serverLimit && serverLimit !== limit) setLimit(serverLimit);
       } catch (err) {
         if (!mounted) return;
         setError(err.message || String(err));
         setMeetings([]);
+        setTotalCount(0);
       } finally {
         if (mounted) setLoading(false);
       }
     }
 
     load();
-    return () => { mounted = false; };
-  }, [villageIdState, refreshCounter]);
+    return () => { mounted = false; ctrl.abort(); };
+  }, [villageIdState, page, limit, refreshCounter, doProtectedFetch]);
 
   // Derived filtered list
   const filteredMeetings = useMemo(() => {
@@ -154,7 +302,6 @@ export default function MeetingsPage() {
     return meetings.filter((m) => {
       if (showOnlyMine && String(m.heldBy).toLowerCase() !== String(currentUserName).toLowerCase()) return false;
       if (!q) return true;
-      // search heldBy or attendees
       if ((m.heldBy || "").toString().toLowerCase().includes(q)) return true;
       if (Array.isArray(m.attendees) && m.attendees.some((a) => (a || "").toString().toLowerCase().includes(q))) return true;
       return false;
@@ -164,31 +311,24 @@ export default function MeetingsPage() {
   // Analytics: pie by heldBy, bar by month, stat avg attendees
   const analytics = useMemo(() => {
     const byHeldBy = {};
-    const byMonth = {}; // "YYYY-MM"
+    const byMonth = {};
     let totalAttendees = 0, meetingCount = 0;
     filteredMeetings.forEach((m) => {
       if (m.deleted) return;
       const h = m.heldBy || "Unknown";
       byHeldBy[h] = (byHeldBy[h] || 0) + 1;
-
       const d = m.time ? new Date(m.time) : null;
       const monthKey = d && !Number.isNaN(d.getTime()) ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2,"0")}` : "unknown";
       byMonth[monthKey] = (byMonth[monthKey] || 0) + 1;
-
       totalAttendees += (Array.isArray(m.attendees) ? m.attendees.length : (m.attendees ? 1 : 0));
       meetingCount += 1;
     });
-
     const pieData = Object.entries(byHeldBy).map(([key, value]) => ({ name: key, value }));
-    const barData = Object.entries(byMonth).map(([month, count]) => ({ month, count }))
-      .sort((a,b) => a.month.localeCompare(b.month));
-
+    const barData = Object.entries(byMonth).map(([month, count]) => ({ month, count })).sort((a,b) => a.month.localeCompare(b.month));
     const avgAttendees = meetingCount ? (totalAttendees / meetingCount) : 0;
-
     return { pieData, barData, avgAttendees, meetingCount };
   }, [filteredMeetings]);
 
-  // colors for pie (repeat palette)
   const COLORS = ["#60a5fa", "#34d399", "#f59e0b", "#ef4444", "#a78bfa", "#f472b6", "#60a5fa"];
 
   // --- Row actions: edit/delete (only for meetings held by current user) ---
@@ -196,27 +336,18 @@ export default function MeetingsPage() {
     if (!meetingId) return;
     if (!confirm("Delete this meeting? This cannot be undone.")) return;
     try {
-      const token = localStorage.getItem("token");
-      const headers = token ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } : { "Content-Type": "application/json" };
-
-      // optimistic UI: mark deleted
+      const headers = { "Content-Type": "application/json" };
       setMeetings((prev) => prev.map(m => m.id === meetingId ? { ...m, deleted: true } : m));
-
       const url = `${API_BASE}/meetings/${encodeURIComponent(meetingId)}`;
-
-      const body = { heldBy: currentUserName || "" };
-      const res = await fetch(url, { method: "DELETE", headers, body: JSON.stringify(body) });
-
+      const body = { heldBy: currentUserName || "", userId: currentUserId };
+      const res = await doProtectedFetch(url, { method: "DELETE", headers, body: JSON.stringify(body) });
       if (!res.ok) {
-        // revert optimistic by triggering a refresh
-        throw new Error(`Delete failed: ${res.status} ${res.statusText}`);
+        const txt = await res.text().catch(()=>"");
+        throw new Error(`Delete failed: ${res.status} ${res.statusText} ${txt}`);
       }
-
-      // on success, increment refreshCounter to refetch list
       setRefreshCounter((s) => s + 1);
     } catch (err) {
       alert("Delete failed: " + (err.message || String(err)));
-      // trigger refresh to revert optimistic UI
       setRefreshCounter((s) => s + 1);
     }
   }
@@ -231,14 +362,10 @@ export default function MeetingsPage() {
     setShowModal(true);
   }
 
-  // Create/Update form submit
+  // Create/Update form submit using doProtectedFetch
   async function saveMeeting(formData, files, photoPreviewsFromModal = []) {
-    // formData: { venue, time, heldBy, notes, attendees: [] }
-    // files: { photos: [File], docs: [File] } - BUT API expects photos/docs as URL strings.
     try {
-      const token = localStorage.getItem("token");
-      const headers = token ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } : { "Content-Type": "application/json" };
-
+      const headers = { "Content-Type": "application/json" };
       const payload = {
         villageId: villageIdState || "",
         venue: formData.venue || "",
@@ -246,17 +373,17 @@ export default function MeetingsPage() {
         heldBy: formData.heldBy || "",
         notes: formData.notes || "",
         attendees: Array.isArray(formData.attendees) ? formData.attendees : [],
+        userId: currentUserId,
       };
 
       const photos = (photoPreviewsFromModal || []).filter(p => typeof p === "string");
       if (photos.length) payload.photos = photos;
-
       const docUrls = (formData.docs || []).filter(d => typeof d === "string" && /^https?:\/\//i.test(d));
       if (docUrls.length) payload.docs = docUrls;
 
       if (editing && editing.id) {
         const url = `${API_BASE}/meetings/${encodeURIComponent(editing.id)}`;
-        const res = await fetch(url, { method: "PUT", headers, body: JSON.stringify({ heldBy: payload.heldBy, venue: payload.venue, time: payload.time, notes: payload.notes, attendees: payload.attendees, photos: payload.photos, docs: payload.docs }) });
+        const res = await doProtectedFetch(url, { method: "PUT", headers, body: JSON.stringify({ ...payload, heldBy: payload.heldBy, venue: payload.venue, time: payload.time, notes: payload.notes, attendees: payload.attendees, photos: payload.photos, docs: payload.docs }) });
         if (!res.ok) {
           const txt = await res.text().catch(()=>"");
           throw new Error(`Update failed: ${res.status} ${res.statusText} ${txt}`);
@@ -267,7 +394,8 @@ export default function MeetingsPage() {
         return;
       } else {
         const url = `${API_BASE}/meetings/insert`;
-        const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(payload) });
+        const res = await doProtectedFetch(url, { method: "POST", headers, body: JSON.stringify(payload) });
+        // backend returned 201 on success earlier; accept any ok or 201
         if (res.status !== 201 && !res.ok) {
           const txt = await res.text().catch(()=>"");
           throw new Error(`Insert failed: ${res.status} ${res.statusText} ${txt}`);
@@ -283,7 +411,7 @@ export default function MeetingsPage() {
     }
   }
 
-  // --- Add/Edit Modal component (embedded) ---
+  // Modal component (embedded) — same as prior with small adjustments to use saveMeeting
   function MeetingModal({ onClose, initial }) {
     const init = initial || {
       venue: "",
@@ -300,10 +428,10 @@ export default function MeetingsPage() {
     const [heldBy, setHeldBy] = useState(init.heldBy || (currentUserName || ""));
     const [notes, setNotes] = useState(init.notes || "");
     const [attendees, setAttendees] = useState(Array.isArray(init.attendees) ? [...init.attendees] : []);
-    const [photoFiles, setPhotoFiles] = useState([]); // local File objects (not uploadable by current API)
-    const [photoPreviews, setPhotoPreviews] = useState(init.photos ? [...init.photos] : []); // strings (URLs) or object URLs for preview
-    const [docFiles, setDocFiles] = useState([]); // local files (not uploadable by API)
-    const [docUrlsOrNames, setDocUrlsOrNames] = useState(init.docs ? [...init.docs] : []); // store initial docs which may be URLs
+    const [photoFiles, setPhotoFiles] = useState([]);
+    const [photoPreviews, setPhotoPreviews] = useState(init.photos ? [...init.photos] : []);
+    const [docFiles, setDocFiles] = useState([]);
+    const [docUrlsOrNames, setDocUrlsOrNames] = useState(init.docs ? [...init.docs] : []);
 
     function addAttendee(name) {
       if (!name) return;
@@ -316,14 +444,12 @@ export default function MeetingsPage() {
     function onPhotoChange(e) {
       const files = Array.from(e.target.files || []);
       setPhotoFiles((s) => [...s, ...files]);
-      // local preview URLs for UI
       const urls = files.map((f) => URL.createObjectURL(f));
       setPhotoPreviews((s) => [...s, ...urls]);
     }
     function onDocChange(e) {
       const files = Array.from(e.target.files || []);
       setDocFiles((s) => [...s, ...files]);
-      // For docs we store file names; if user wants server upload, implement it separately
       setDocUrlsOrNames((s) => [...s, ...files.map((f) => f.name)]);
     }
 
@@ -338,23 +464,17 @@ export default function MeetingsPage() {
 
     async function submit(e) {
       e.preventDefault();
-
-      // prepare object
       const sendData = {
         venue,
         time: time ? new Date(time).toISOString().slice(0,16) : "",
         heldBy,
         notes,
         attendees,
-        // docs we will pass only those that look like URLs; local file names won't be sent because API expects URLs
         docs: (docUrlsOrNames || []).filter(d => typeof d === "string" && /^https?:\/\//i.test(d)),
       };
-
       try {
         await saveMeeting(sendData, { photos: photoFiles, docs: docFiles }, photoPreviews);
-      } catch (err) {
-        // saveMeeting already shows alert
-      }
+      } catch (err) {}
     }
 
     return (
@@ -391,22 +511,10 @@ export default function MeetingsPage() {
               <div className="mt-1">
                 <div className="flex gap-2">
                   <input id="attendeeInput" placeholder="Name" className="flex-1 p-2 border rounded" />
-                  <button type="button" onClick={()=>{
-                    const el = document.getElementById("attendeeInput");
-                    if (!el) return;
-                    const value = el.value.trim();
-                    if (!value) return;
-                    addAttendee(value);
-                    el.value = "";
-                  }} className="px-3 py-2 bg-gray-100 rounded">+ Add</button>
+                  <button type="button" onClick={()=>{ const el = document.getElementById("attendeeInput"); if (!el) return; const value = el.value.trim(); if (!value) return; addAttendee(value); el.value = ""; }} className="px-3 py-2 bg-gray-100 rounded">+ Add</button>
                 </div>
                 <div className="mt-2 flex flex-wrap gap-2">
-                  {attendees.map((a,i)=>(
-                    <div key={i} className="px-2 py-1 bg-gray-50 border rounded text-sm flex items-center gap-2">
-                      <span>{a}</span>
-                      <button type="button" onClick={()=>removeAttendee(i)} className="text-xs text-red-500">✕</button>
-                    </div>
-                  ))}
+                  {attendees.map((a,i)=>(<div key={i} className="px-2 py-1 bg-gray-50 border rounded text-sm flex items-center gap-2"><span>{a}</span><button type="button" onClick={()=>removeAttendee(i)} className="text-xs text-red-500">✕</button></div>))}
                 </div>
               </div>
             </div>
@@ -448,36 +556,60 @@ export default function MeetingsPage() {
     );
   }
 
+  // Pagination helpers
+  const totalPages = Math.max(1, Math.ceil((totalCount || 0) / (limit || 1)));
+  function gotoPage(p) {
+    const np = Math.max(1, Math.min(totalPages, Number(p) || 1));
+    if (np === page) return;
+    setPage(np);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+  function renderPageButtons() {
+    const maxButtons = 7;
+    const pages = [];
+    if (totalPages <= maxButtons) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i);
+    } else {
+      const left = Math.max(2, page - 1);
+      const right = Math.min(totalPages - 1, page + 1);
+      pages.push(1);
+      if (left > 2) pages.push("left-ellipsis");
+      for (let i = left; i <= right; i++) pages.push(i);
+      if (right < totalPages - 1) pages.push("right-ellipsis");
+      pages.push(totalPages);
+    }
+    return pages.map((p, idx) => {
+      if (p === "left-ellipsis" || p === "right-ellipsis") return <span key={`e-${idx}`} className="px-3 py-1">…</span>;
+      return (
+        <button key={p} onClick={() => gotoPage(p)} className={`px-3 py-1 rounded ${p === page ? "bg-indigo-600 text-white" : "bg-white border hover:bg-gray-50"}`}>
+          {p}
+        </button>
+      );
+    });
+  }
+
   return (
     <div className="min-h-screen bg-[#f8f0dc] font-sans">
-      <MainNavbar village={villageIdState} showVillageInNavbar={true} />
+      <MainNavbar  showVillageInNavbar={true} />
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-6">
         {/* Header */}
         <div className="flex items-center justify-between mb-4">
+          <button onClick={() => navigate("/home")} className="inline-flex items-center gap-1 bg-white border border-gray-200 px-3 py-1 rounded-lg shadow-sm text-sm hover:shadow-md">
+              <IconBack /> Back
+            </button>
           <div>
-            <div className="text-xs text-gray-500">Village ID</div>
-            <div className="text-2xl font-bold text-gray-800">{villageIdState ?? "—"}</div>
-            <div className="text-sm text-gray-600 mt-1">Meetings</div>
+            
+            <div className="text-2xl font-bold text-gray-800">Meetings</div>
           </div>
 
           <div className="flex items-center gap-3">
-            <button
-              onClick={() => navigate("/home")}
-              className="inline-flex items-center gap-2 bg-white border border-gray-200 px-3 py-2 rounded-lg shadow-sm text-sm hover:shadow-md"
-            >
-              <IconBack /> Back
-            </button>
+            
 
-            <button
-              onClick={openAdd}
-              className="inline-flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-2xl shadow hover:bg-blue-700"
-              title="Add meeting"
-            >
+            <button onClick={openAdd} className="inline-flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-2xl shadow hover:bg-blue-700" title="Add meeting">
               <IconAdd /> Add Meeting
             </button>
 
-            {/* mobile-only filter toggle */}
             <button onClick={()=>setShowFilters(s=>!s)} className="ml-2 inline-flex items-center gap-2 bg-white border border-gray-200 px-3 py-2 rounded-lg shadow-sm text-sm md:hidden">
               <IconFilter /> Filters
             </button>
@@ -503,15 +635,15 @@ export default function MeetingsPage() {
                   <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by attendee or heldBy" className="w-full p-2 border rounded" />
                 </div>
 
-                {/* quick actions */}
                 <div className="flex gap-2 pt-1">
                   <button onClick={()=>{ setQuery(""); setShowOnlyMine(false); }} className="px-3 py-2 bg-gray-100 rounded">Clear</button>
                   <button onClick={()=>{ setQuery(""); setShowOnlyMine(true); }} className="px-3 py-2 bg-blue-50 text-blue-700 rounded">My meetings</button>
                 </div>
+
+                
               </div>
             </div>
 
-            {/* Analytics stat card */}
             <div className="mt-4 bg-white rounded-2xl p-4 shadow border border-gray-100">
               <div className="text-sm text-gray-500">Avg attendees</div>
               <div className="text-2xl font-semibold">{analytics.avgAttendees.toFixed(1)}</div>
@@ -565,9 +697,10 @@ export default function MeetingsPage() {
                     </ResponsiveContainer>
                   </div>
                 </div>
+                
               </div>
+              
 
-              {/* unified legend area under both charts for clarity */}
               <div className="mt-3 px-1 flex items-center justify-center text-xs text-gray-600">
                 <div className="flex items-center gap-4 flex-wrap justify-center">
                   {analytics.pieData.slice(0,6).map((p, i) => (
@@ -582,7 +715,61 @@ export default function MeetingsPage() {
                   </div>
                 </div>
               </div>
+              
             </div>
+
+            
+
+            <div className="mt-6 flex items-center justify-between w-full">
+
+  {/* Page size dropdown */}
+  <div className="flex items-center gap-2">
+    <span className="text-xs text-gray-500">Page size:</span>
+    <select
+      value={limit}
+      onChange={(e) => {
+        setLimit(Number(e.target.value));
+        setPage(1);
+      }}
+      className="p-2 border rounded"
+    >
+      {[5, 10, 15, 25, 50].map(n => (
+        <option key={n} value={n}>{n}</option>
+      ))}
+    </select>
+  </div>
+
+  {/* Pagination buttons */}
+  <div className="flex items-center gap-2">
+    <button
+      onClick={() => gotoPage(page - 1)}
+      disabled={page <= 1}
+      className={`px-3 py-1 rounded ${
+        page <= 1
+          ? "bg-gray-100 text-gray-400"
+          : "bg-white border hover:bg-gray-50"
+      }`}
+    >
+      Prev
+    </button>
+
+    <div className="flex items-center gap-1">{renderPageButtons()}</div>
+
+    <button
+      onClick={() => gotoPage(page + 1)}
+      disabled={page >= totalPages}
+      className={`px-3 py-1 rounded ${
+        page >= totalPages
+          ? "bg-gray-100 text-gray-400"
+          : "bg-white border hover:bg-gray-50"
+      }`}
+    >
+      Next
+    </button>
+  </div>
+
+</div>
+
           </div>
         </div>
 
@@ -590,7 +777,7 @@ export default function MeetingsPage() {
         <div className="mt-6 bg-white rounded-2xl p-4 shadow border border-gray-100">
           <div className="flex items-center justify-between mb-4">
             <div className="text-lg font-semibold">Meeting list</div>
-            <div className="text-sm text-gray-500">{loading ? "Loading..." : `${filteredMeetings.length} meetings`}</div>
+            <div className="text-sm text-gray-500">{loading ? "Loading..." : `${filteredMeetings.length} meetings (showing ${Math.min(totalCount, (page-1)*limit+1)}–${Math.min(totalCount, page*limit)})`}</div>
           </div>
 
           {error && <div className="text-sm text-red-500 mb-2">Error: {error}</div>}
@@ -609,6 +796,7 @@ export default function MeetingsPage() {
                       <div className="text-sm text-gray-600 max-w-xs truncate">{m.notes || "—"}</div>
                       <div className="text-sm text-gray-600">Attendees: {Array.isArray(m.attendees) ? m.attendees.length : 0}</div>
                     </div>
+                    
 
                     <div className="flex items-center gap-2 mt-3 md:mt-0">
                       {m.photos && m.photos.length > 0 && (
@@ -674,6 +862,9 @@ export default function MeetingsPage() {
               <div className="text-center text-gray-500 py-8">No meetings found. Click "Add Meeting" to create one.</div>
             )}
           </div>
+
+          {/* Pagination controls */}
+          
         </div>
       </div>
 

@@ -3,7 +3,6 @@ import React, { useEffect, useState, useContext } from "react";
 import { useNavigate } from "react-router-dom";
 import FamilyPieChart from "../component/FamilyPieChart";
 import MainNavbar from "../component/MainNavbar";
-import { stageDefs } from "../config/stages";
 import { AuthContext } from "../context/AuthContext";
 import { API_BASE } from "../config/Api.js";
 import Timeline from "../component/Timeline";
@@ -43,7 +42,6 @@ export default function VillageDashboard() {
 
   // metadata
   const [district, setDistrict] = useState(null);
-  const [docs, setDocs] = useState([]); // normalized: {name, url}
   const [familyMasterList, setFamilyMasterList] = useState(null);
   const [fd, setFd] = useState(null);
   const [gramPanchayat, setGramPanchayat] = useState(null);
@@ -62,10 +60,6 @@ export default function VillageDashboard() {
   const [loadingCounts, setLoadingCounts] = useState(true);
   const [loadingVillage, setLoadingVillage] = useState(true);
   const [error, setError] = useState(null);
-  const [showDocsModal, setShowDocsModal] = useState(false);
-  const [docViewerUrl, setDocViewerUrl] = useState(null);
-  const [docViewerName, setDocViewerName] = useState(null);
-  const [showDocViewer, setShowDocViewer] = useState(false);
 
   // timeline selection state (only used to highlight a circle)
   const [selectedStageKey, setSelectedStageKey] = useState(null);
@@ -160,7 +154,6 @@ export default function VillageDashboard() {
           setImageUrl(null);
           setAreaDiverted(null);
           setDistrict(null);
-          setDocs([]);
           setFamilyMasterList(null);
           setFd(null);
           setGramPanchayat(null);
@@ -212,26 +205,6 @@ export default function VillageDashboard() {
         setAreaDiverted(result.areaDiverted ?? result.area_diverted ?? result.area ?? null);
         setDistrict(result.district ?? result?.District ?? null);
 
-        // normalize docs -> {name, url}
-        let normalizedDocs = [];
-        if (Array.isArray(result.docs)) {
-          normalizedDocs = result.docs
-            .map((d) => {
-              if (!d) return null;
-              if (typeof d === "string") return { name: null, url: d };
-              const name = d.name ?? d.title ?? null;
-              const url = d.url ?? d.link ?? d.path ?? null;
-              return { name, url };
-            })
-            .filter(Boolean);
-        } else if (result.docs && typeof result.docs === "object") {
-          const d = result.docs;
-          const name = d.name ?? d.title ?? null;
-          const url = d.url ?? d.link ?? null;
-          normalizedDocs = [{ name, url }];
-        }
-        setDocs(normalizedDocs);
-
         setFamilyMasterList(result.familyMasterList ?? result.family_master_list ?? null);
         setFd(result.fd ?? result.forestDivision ?? null);
         setGramPanchayat(result.gramPanchayat ?? result.gram_panchayat ?? null);
@@ -239,7 +212,7 @@ export default function VillageDashboard() {
         setKme(result.kme ?? null);
         setRangeField(result.range ?? result.rangeField ?? null);
         setSd1(result.sd ?? null);
-        setTehsil(result.tehsil ?? null);
+        setTehsil(result.tehsil ?? result.tehsil ?? null);
         setVillageIdState(result.villageId ?? result.village_id ?? result.id ?? null);
 
         setBeat(result.beat ?? null);
@@ -292,95 +265,6 @@ export default function VillageDashboard() {
     setCurrentSubStage(null);
   }
 
-  function getCurrentStageName(stage, subStage) {
-    if (!Array.isArray(stageDefs) || stageDefs.length === 0) return stage ?? "Unknown Stage";
-    const stageStr = stage === null || stage === undefined ? "" : String(stage);
-    const subStr = subStage === null || subStage === undefined ? "" : String(subStage);
-    const stageNumMatch = stageStr.match(/(\d+)/);
-    let stageObj =
-      stageDefs.find((s) => {
-        const id = s?.stage_id ?? s?.id ?? s?.stageId;
-        return String(id) === stageStr || (stageNumMatch && String(id) === stageNumMatch[1]);
-      }) ||
-      stageDefs.find((s) => String(s?.name ?? "").toLowerCase().includes(stageStr.toLowerCase()));
-    if (!stageObj && stageNumMatch) {
-      const idx = Number(stageNumMatch[1]);
-      stageObj = stageDefs.find((s) => {
-        const id = s?.stage_id ?? s?.id ?? s?.stageId;
-        return Number(id) === idx || String(id) === String(idx);
-      });
-    }
-    if (!stageObj) return stageStr || "Unknown Stage";
-    const subStages = stageObj.subStages ?? stageObj.sub_stages ?? stageObj.subStage ?? [];
-    if (!subStage || !Array.isArray(subStages) || subStages.length === 0) return stageObj.name ?? stageStr;
-    let subName = null;
-    if (typeof subStages[0] === "object" && subStages[0] !== null) {
-      subName =
-        subStages.find((ss) => String(ss?.id ?? ss?.sub_id ?? ss?.subId ?? ss?.name) === subStr || String(ss?.name ?? "").toLowerCase().includes(subStr.toLowerCase()))?.name ??
-        null;
-      if (!subName) {
-        const idx = Number(subStr.match(/(\d+)/)?.[1]);
-        if (!Number.isNaN(idx) && idx >= 1 && idx <= subStages.length) subName = subStages[idx - 1]?.name ?? null;
-      }
-    } else {
-      const idx = Number(subStr.match(/(\d+)/)?.[1]);
-      if (!Number.isNaN(idx) && idx >= 1 && idx <= subStages.length) subName = subStages[idx - 1];
-      else {
-        const found = subStages.find((ss) => String(ss) === subStr);
-        if (found) subName = found;
-      }
-    }
-    if (subName) return `${stageObj.name} - ${subName}`;
-    return stageObj.name ?? stageStr;
-  }
-
-  function DetailRow({ label, value, href }) {
-    return (
-      <div className="flex items-start gap-3">
-        <div className="w-36 text-xs text-gray-500">{label}</div>
-        <div className="text-sm text-gray-800 break-words">
-          {value ? (href ? <a href={href} target="_blank" rel="noreferrer" className="text-blue-600 underline">{value}</a> : <span>{value}</span>) : <span className="text-gray-400">—</span>}
-        </div>
-      </div>
-    );
-  }
-
-  function findFileFor(stageObj, subName) {
-    const tokens = [];
-    if (stageObj?.name) tokens.push(String(stageObj.name).toLowerCase());
-    if (stageObj?.stageId) tokens.push(String(stageObj.stageId).toLowerCase());
-    if (subName) tokens.push(String(subName).toLowerCase());
-
-    if (Array.isArray(docs) && docs.length > 0) {
-      for (const d of docs) {
-        try {
-          const lowerUrl = String(d.url ?? "").toLowerCase();
-          const lowerName = String(d.name ?? "").toLowerCase();
-          if (tokens.some((t) => (t && (lowerUrl.includes(t.replace(/\s+/g, "-") ) || lowerUrl.includes(t) || lowerName.includes(t))))) {
-            return d;
-          }
-        } catch {}
-      }
-      return docs[0];
-    }
-    if (familyMasterList) return { name: "Family Master List", url: familyMasterList };
-    return null;
-  }
-
-  function openDocInViewer(docObj, name) {
-    if (!docObj) return;
-    const url = typeof docObj === "string" ? docObj : docObj.url ?? null;
-    if (!url) return;
-    setDocViewerUrl(url);
-    setDocViewerName(name ?? docObj.name ?? "Document");
-    setShowDocViewer(true);
-  }
-  function closeDocViewer() {
-    setShowDocViewer(false);
-    setDocViewerUrl(null);
-    setDocViewerName(null);
-  }
-
   const googleMapsLink = (() => {
     const lat = locationText?.split?.(",")?.[0]?.trim();
     const lon = locationText?.split?.(",")?.[1]?.trim();
@@ -397,18 +281,17 @@ export default function VillageDashboard() {
       <div className="max-w-7xl mx-auto px-6 mt-6">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h1 className="text-2xl font-bold text-gray-800">{district ?? "—"}</h1>
-            <div className="text-sm text-gray-500">{villageName}</div>
+            <button onClick={() => navigate("/dashboard")} className="inline-flex items-center gap-2 bg-gray-100 hover:bg-gray-200 px-3 py-2 rounded-lg shadow-sm text-sm">← Back</button>
           </div>
 
           <div className="flex items-center gap-3">
-            <button onClick={() => navigate("/dashboard")} className="inline-flex items-center gap-2 bg-gray-100 hover:bg-gray-200 px-3 py-2 rounded-lg shadow-sm text-sm">← Back</button>
-            <button onClick={() => navigate("/family")} className="bg-green-200 hover:bg-green-300 px-4 py-2 rounded-lg shadow text-sm font-medium">All Beneficiaries</button>
-            <button onClick={() => setShowDocsModal(true)} className="bg-indigo-50 hover:bg-indigo-100 px-6 py-2 rounded-2xl shadow text-sm font-medium" title="Open stage documents">Docs</button>
+            <button onClick={() => navigate("/family")} className="bg-green-200 hover:bg-green-300 px-4 py-2 rounded-2xl shadow text-sm font-medium">All Beneficiaries</button>
             <button onClick={() => navigate(`/plots`)} className="bg-yellow-50 hover:bg-yellow-100 px-4 py-2 rounded-2xl shadow text-sm font-medium" title="Open plots for this village">Plots</button>
             <button onClick={() => navigate(`/meetings`)} className="bg-yellow-50 hover:bg-yellow-100 px-4 py-2 rounded-2xl shadow text-sm font-medium" title="Open meetings for this village">Meetings</button>
             <button onClick={() => navigate(`/buildings`)} className="bg-yellow-50 hover:bg-yellow-100 px-4 py-2 rounded-2xl shadow text-sm font-medium" title="Open buildings for this village">Buildings</button>
             <button onClick={() => navigate(`/feedbacks`)} className="bg-yellow-50 hover:bg-yellow-100 px-4 py-2 rounded-2xl shadow text-sm font-medium" title="Open buildings for this village">feedbacks</button>
+            <button onClick={() => navigate(`/material`)} className="bg-yellow-50 hover:bg-yellow-100 px-4 py-2 rounded-2xl shadow text-sm font-medium" title="Open buildings for this village">material</button>
+            <button onClick={() => navigate(`/facilities`)} className="bg-yellow-50 hover:bg-yellow-100 px-4 py-2 rounded-2xl shadow text-sm font-medium" title="Open buildings for this village">facilities</button>
           </div>
         </div>
 
@@ -426,7 +309,7 @@ export default function VillageDashboard() {
             <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-100">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-semibold text-gray-700">Stages Of Relocation</h3>
-                <div className="text-sm text-gray-500">Current: <span className="font-medium text-gray-800">{getCurrentStageName(currentStage, currentSubStage)}</span></div>
+                <div className="text-sm text-gray-500">Current: <span className="font-medium text-gray-800">{currentStage ? ` ${currentStage}${currentSubStage ? ` - ${currentSubStage}` : ""}` : "—"}</span></div>
               </div>
 
               <Timeline
@@ -580,88 +463,17 @@ export default function VillageDashboard() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
 
-      {/* Docs Modal */}
-      {showDocsModal && (
-        <div className="fixed inset-0 z-40 flex items-start justify-center pt-12 bg-black bg-opacity-40">
-          <div className="w-full max-w-3xl bg-white rounded-lg shadow-lg overflow-auto max-h-[80vh]">
-            <div className="flex items-center justify-between p-4 border-b">
-              <h3 className="text-lg font-semibold">Stage documents</h3>
-              <div className="flex items-center gap-2">
-                <button onClick={() => { if (docs.length > 0) { window.open(docs[0].url, "_blank", "noopener"); } else if (familyMasterList) { window.open(familyMasterList, "_blank", "noopener"); } else { setShowDocsModal(false); }}} className="text-sm px-3 py-1 rounded bg-gray-100 hover:bg-gray-200">Open Village doc</button>
-                <button onClick={() => setShowDocsModal(false)} className="px-3 py-1 rounded bg-red-50 hover:bg-red-100 text-sm">Close</button>
-              </div>
-            </div>
-
-            <div className="p-4 space-y-3">
-              {Array.isArray(stageDefs) && stageDefs.length > 0 ? (
-                stageDefs.map((s, idx) => {
-                  const sid = s?.stage_id ?? s?.id ?? s?.stageId ?? idx;
-                  const subStages = s?.subStages ?? s?.sub_stages ?? s?.stages ?? [];
-                  return (
-                    <div key={String(sid)} className="border rounded-md">
-                      <div className="w-full text-left px-4 py-3 flex items-center justify-between bg-gray-50">
-                        <div>
-                          <div className="font-medium">{s?.name ?? s?.title ?? `Stage ${sid}`}</div>
-                          {s?.description && <div className="text-xs text-gray-500">{s.description}</div>}
-                        </div>
-                      </div>
-
-                      <div className="p-3 bg-white">
-                        {Array.isArray(subStages) && subStages.length > 0 ? (
-                          <div className="space-y-2">
-                            {subStages.map((ss, sidx) => {
-                              const subName = typeof ss === "object" ? ss?.name ?? ss?.title ?? String(ss?.subStageId ?? sidx + 1) : String(ss);
-                              const matched = findFileFor(s, subName);
-                              return (
-                                <div key={sidx} className="flex items-center justify-between gap-3 px-2 py-2 border rounded">
-                                  <div className="text-sm">{subName}</div>
-                                  <div className="flex items-center gap-2">
-                                    {matched ? (
-                                      <>
-                                        <button onClick={() => openDocInViewer(matched, `${s?.name ?? "Stage"} - ${subName}`)} className="text-sm px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700">View file</button>
-                                        <a href={matched.url} target="_blank" rel="noreferrer" className="text-sm px-2 py-1 rounded bg-gray-50 hover:bg-gray-100 underline">Open in new tab</a>
-                                      </>
-                                    ) : (
-                                      <div className="text-sm text-gray-400">No file</div>
-                                    )}
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        ) : (
-                          <div className="text-sm text-gray-500">No sub-stages defined for this stage.</div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })
-              ) : (
-                <div className="text-gray-500">No stages configured.</div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Doc Viewer */}
-      {showDocViewer && docViewerUrl && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-80 p-4">
-          <div className="w-full max-w-5xl bg-white rounded-lg shadow-lg overflow-hidden">
-            <div className="flex items-center justify-between p-3 border-b">
-              <div className="text-sm font-medium">{docViewerName}</div>
-              <div className="flex items-center gap-2">
-                <a href={docViewerUrl} target="_blank" rel="noreferrer" className="text-sm px-3 py-1 rounded bg-gray-100 hover:bg-gray-200">Open in new tab</a>
-                <button onClick={closeDocViewer} className="px-3 py-1 rounded bg-red-50 hover:bg-red-100 text-sm">Close</button>
-              </div>
-            </div>
-            <div className="h-[80vh] bg-gray-50 flex items-center justify-center">
-              <iframe src={docViewerUrl} title={docViewerName} className="w-full h-full" style={{ border: "none", minHeight: "60vh" }} />
-            </div>
-          </div>
-        </div>
-      )}
+function DetailRow({ label, value, href }) {
+  return (
+    <div className="flex items-start gap-3 ">
+      <div className="w-36 text-xs text-gray-500">{label}</div>
+      <div className="text-sm text-gray-800 break-words">
+        {value ? (href ? <a href={href} target="_blank" rel="noreferrer" className="text-blue-600 underline">{value}</a> : <span>{value}</span>) : <span className="text-gray-400">—</span>}
+      </div>
     </div>
   );
 }
