@@ -1,12 +1,18 @@
-﻿// src/pages/PlotsPage.jsx
-import React, { useEffect, useState, useRef } from "react";
+// Updated PlotsPage.jsx — stores selected plot into AuthContext when available
+// Falls back to localStorage if AuthContext is not available or doesn't expose expected setters
+// Also includes a short example AuthContext implementation (below) showing the expected API.
+
+import React, { useEffect, useState, useRef, useContext } from "react";
 import { useNavigate } from "react-router-dom";
 import MainNavbar from "../component/MainNavbar";
 import { API_BASE } from "../config/Api.js";
+import { AuthContext } from "../context/AuthContext"; // expected to exist in your project
 
 export default function PlotsPage() {
   const navigate = useNavigate();
   const villageId = localStorage.getItem("villageId") || "";
+
+  const authCtx = useContext(AuthContext);
 
   const [plots, setPlots] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -17,33 +23,36 @@ export default function PlotsPage() {
   const [pageSize, setPageSize] = useState(15); // default page size
   const [totalCount, setTotalCount] = useState(null);
 
-  // building types used as "typeId" for plots (fetched from /buildings/<villageId>)
+  // types (buildings) fetched from API — kept because cards rely on this
   const [types, setTypes] = useState([]);
   const [typesLoading, setTypesLoading] = useState(false);
 
-  // filters / search
-  const [filterTypeId, setFilterTypeId] = useState("");
+  // filters / search (single combined field for mukhiyaName OR familyId)
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const searchTimer = useRef(null);
 
+  // numberOfHome filter (optional)
+  const [numberOfHomeFilter, setNumberOfHomeFilter] = useState(""); // expects "1","2","3" or empty
+
   // deleted view toggle (server-side)
   const [showDeleted, setShowDeleted] = useState(false);
 
-  // helper for auth headers (keeps support for Authorization if you ever use header-based token)
+  // helper for auth headers
   function authHeaders() {
     const token = localStorage.getItem("token");
     return token
-      ? { "Content-Type": "application/json", Authorization: `Bearer ${token}` }
-      : { "Content-Type": "application/json" };
+      ? { "Content-Type": "application/json", Accept: "application/json", Authorization: `Bearer ${token}` }
+      : { "Content-Type": "application/json", Accept: "application/json" };
   }
 
-  // --- helper: fetch that always sends cookies and safely parses responses ---
+  // fetch wrapper
   async function fetchWithCreds(url, opts = {}) {
     try {
+      const headers = { ...(authHeaders() || {}), ...(opts.headers || {}) };
       const res = await fetch(url, {
         credentials: "include",
-        headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
+        headers,
         ...opts,
       });
 
@@ -62,7 +71,7 @@ export default function PlotsPage() {
   }
   // -------------------------------------------------------------------------
 
-  // load types (buildings) for dropdown
+  // load types (buildings) for internal use in cards (kept — cards use these details)
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -90,7 +99,7 @@ export default function PlotsPage() {
         }
 
         const payload = json ?? {};
-        const items = payload?.result?.items ?? (Array.isArray(payload) ? payload : []);
+        const items = payload?.result?.items ?? (Array.isArray(payload) ? payload : (payload.items ?? []));
         if (!mounted) return;
         setTypes(items);
       } catch (err) {
@@ -111,18 +120,18 @@ export default function PlotsPage() {
     setPage(1);
   }, [villageId]);
 
-  // reset page to 1 when any filter changes (so new filters start from first page)
+  // reset page to 1 when any filter changes
   useEffect(() => {
     setPage(1);
-  }, [filterTypeId, debouncedQuery, showDeleted, pageSize]);
+  }, [debouncedQuery, showDeleted, pageSize, numberOfHomeFilter]);
 
-  // fetch when page, pageSize or villageId changes OR when filters change (they also cause page reset)
+  // fetch when page, pageSize or villageId changes OR when filters change
   useEffect(() => {
     fetchPlots(page);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [villageId, page, pageSize, filterTypeId, debouncedQuery, showDeleted]);
+  }, [villageId, page, pageSize, debouncedQuery, showDeleted, numberOfHomeFilter]);
 
-  // debounced search for server-side name filter
+  // debounced search for server-side name/family filter
   useEffect(() => {
     if (searchTimer.current) clearTimeout(searchTimer.current);
     searchTimer.current = setTimeout(
@@ -148,23 +157,39 @@ export default function PlotsPage() {
       params.append("page", String(requestPage));
       params.append("limit", String(pageSize));
 
-      // server-side filters
+      // Combined filter behavior:
+      // - if debouncedQuery contains whitespace -> treat as mukhiyaName (regex search)
+      // - if debouncedQuery is a single token (alphanumeric/underscore/hyphen) -> treat as familyId
       if (debouncedQuery) {
-        // backend expects 'name' for name search
-        params.append("name", debouncedQuery);
+        const q = debouncedQuery;
+        const hasSpace = /\s/.test(q);
+        const singleTokenIdLike = /^[A-Za-z0-9_\-]+$/.test(q);
+
+        if (hasSpace) {
+          // likely a name (multiple words) -> send as mukhiyaName (regex)
+          params.append("mukhiyaName", q);
+        } else if (singleTokenIdLike) {
+          // single token (no spaces) -> treat as familyId
+          params.append("familyId", q);
+        } else {
+          // fallback to name search
+          params.append("mukhiyaName", q);
+        }
       }
-      if (filterTypeId) {
-        params.append("typeId", String(filterTypeId));
+
+      // numberOfHome filter (backend expects 'numberOfHome' values 1/2/3)
+      if (numberOfHomeFilter) {
+        params.append("numberOfHome", numberOfHomeFilter);
       }
-      // deleted: server expects 0 or 1; default we will request active (0) when not showing deleted
+
+      // deleted must be "1" or "0"
       params.append("deleted", showDeleted ? "1" : "0");
 
-      const url = `${API_BASE}/plots/${encodeURIComponent(villageId)}?${params.toString()}`;
+      const url = `${API_BASE}/house/${encodeURIComponent(villageId)}?${params.toString()}`;
       const { ok, status, json, text } = await fetchWithCreds(url, { method: "GET" });
 
       if (!ok) {
         if (status === 404) {
-          // No plots for this filter/page
           setPlots([]);
           setTotalCount(0);
           setLoading(false);
@@ -176,12 +201,11 @@ export default function PlotsPage() {
           setLoading(false);
           return;
         }
-        throw new Error((json && (json.message || JSON.stringify(json))) || text || `Failed to fetch plots: ${status}`);
+        throw new Error((json && (json.message || JSON.stringify(json))) || text || `Failed to fetch houses: ${status}`);
       }
 
       const payload = json ?? {};
 
-      // robust parsing for different payload shapes:
       let items = [];
       let respPage = requestPage;
       let respLimit = pageSize;
@@ -194,38 +218,42 @@ export default function PlotsPage() {
         respLimit = r.limit ?? payload.limit ?? pageSize;
         respCount = r.count ?? payload.count ?? null;
       } else {
-        items = payload?.result?.items ?? payload.items ?? (Array.isArray(payload) ? payload : []);
+        items = payload.items ?? (Array.isArray(payload) ? payload : []);
         respPage = payload.page ?? requestPage;
         respLimit = payload.limit ?? pageSize;
         respCount = payload.count ?? null;
       }
 
-      setPlots(items);
+      setPlots(items || []);
       setPage(Number(respPage ?? requestPage));
       setPageSize(Number(respLimit ?? pageSize));
       setTotalCount(respCount !== null ? Number(respCount) : null);
     } catch (err) {
       console.error(err);
-      setError(err.message || "Error fetching plots");
+      setError(err.message || "Error fetching houses");
       setPlots([]);
     } finally {
       setLoading(false);
     }
   }
 
-  // toggle deleted view (requests deleted items from server when true)
+  // toggle deleted view
   function toggleDeletedView() {
     setShowDeleted((s) => !s);
-    setPage(1); // ensure we go back to first page when toggling
+    setPage(1);
   }
 
-  function typeNameFor(typeId) {
+  // type name renderer uses fetched `types` first (if available), then falls back to server-provided fields
+  function typeNameFor(typeId, plot = null) {
     const t = (types || []).find(
       (x) =>
         (x.typeId ?? x.type_id ?? x.id ?? x.optionId) === typeId ||
         String(x.typeId) === String(typeId)
     );
-    return t?.name ?? typeId;
+    if (t && (t.name || t.label)) return t.name ?? t.label;
+    // prefer directly provided name from plot if server included it
+    if (plot && (plot.typeName || plot.type)) return plot.typeName || plot.type;
+    return typeId ?? "-";
   }
 
   // pagination helpers
@@ -236,7 +264,6 @@ export default function PlotsPage() {
     setPage(n);
   }
 
-  // render page number buttons (small window)
   function renderPageButtons() {
     if (!totalPages) return (
       <div className="text-sm">Page {page}</div>
@@ -299,138 +326,81 @@ export default function PlotsPage() {
     );
   }
 
-  /* ------------------------------------------------------------------ */
-  /* Fancy custom dropdown component (replaces native <select>)        */
-  function SelectDropdown({ value, onChange, items = [], placeholder = "All types" }) {
-    const [open, setOpen] = useState(false);
-    const [hovered, setHovered] = useState(null);
-    const ref = useRef(null);
-
-    useEffect(() => {
-      function onDoc(e) {
-        if (!ref.current) return;
-        if (!ref.current.contains(e.target)) setOpen(false);
+  // store selection in AuthContext if available, otherwise fallback to localStorage
+  function persistSelectedPlotToAuthContext(pid, preview) {
+    try {
+      if (authCtx) {
+        // try common setter names (use whichever your AuthContext provides)
+        if (typeof authCtx.setSelectedPlot === "function") {
+          authCtx.setSelectedPlot(preview);
+          return true;
+        }
+        if (typeof authCtx.setPlotId === "function") {
+          authCtx.setPlotId(pid);
+          // also store preview if context supports it
+          if (typeof authCtx.setSelectedPlot === "function") authCtx.setSelectedPlot(preview);
+          return true;
+        }
+        if (typeof authCtx.update === "function") {
+          // generic update method: merge an object
+          authCtx.update({ selectedPlot: preview, plotId: pid });
+          return true;
+        }
       }
-      document.addEventListener("mousedown", onDoc);
-      return () => document.removeEventListener("mousedown", onDoc);
-    }, []);
 
-    const selected = items.find(
-      (it) => String(it.typeId ?? it.type_id ?? it.id ?? it.optionId) === String(value)
-    );
-
-    const selectedName = selected ? selected.name || `#${selected.typeId ?? selected.id}` : placeholder;
-
-    return (
-      <div className="relative" ref={ref}>
-        <button
-          type="button"
-          onClick={() => setOpen((s) => !s)}
-          className="flex items-center gap-2 bg-white p-2 rounded-lg shadow-sm border border-gray-200 hover:shadow-md transition-all duration-150 focus:outline-none w-64"
-          aria-haspopup="listbox"
-          aria-expanded={open}
-        >
-          <div className="flex-1 text-left truncate text-sm">
-            <span className={selected ? "font-medium text-gray-900" : "text-gray-500"}>{selectedName}</span>
-          </div>
-
-          <div className="flex items-center gap-2">
-            {selected && (
-              <button
-                onClick={(e) => { e.stopPropagation(); onChange(""); setOpen(false); }}
-                className="text-xs px-2 py-1 bg-gray-100 rounded-full hover:bg-gray-200"
-                aria-label="Clear selection"
-              >
-                Clear
-              </button>
-            )}
-
-            <svg className={`w-4 h-4 transform ${open ? "rotate-180" : "rotate-0"} transition-transform`} viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M6 8l4 4 4-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </div>
-        </button>
-
-        {open && (
-          <div className="absolute z-50 mt-2 w-64 bg-white rounded-xl shadow-lg ring-1 ring-black ring-opacity-5 overflow-hidden">
-            <div className="max-h-64 overflow-auto">
-              {items.length === 0 ? (
-                <div className="px-3 py-2 text-sm text-gray-500">No types available</div>
-              ) : (
-                items.map((it) => {
-                  const id = it.typeId ?? it.type_id ?? it.id ?? it.optionId;
-                  return (
-                    <div
-                      key={String(id)}
-                      onMouseEnter={() => setHovered(it)}
-                      onMouseLeave={() => setHovered(null)}
-                      onClick={() => { onChange(String(id)); setOpen(false); }}
-                      role="option"
-                      aria-selected={String(id) === String(value)}
-                      className={`px-3 py-3 cursor-pointer hover:bg-gray-50 flex items-start justify-between transition-colors ${String(id) === String(value) ? "bg-gray-50" : ""}`}
-                    >
-                      <div className="min-w-0">
-                        <div className="font-medium text-sm truncate">{it.name ?? `Type ${String(id)}`}</div>
-                      </div>
-                      <div className="ml-3 flex-shrink-0">
-                        {String(id) === String(value) && (
-                          <div className="text-blue-600 font-semibold">✓</div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-    );
+      // fallback to localStorage
+      localStorage.setItem("plotId", String(pid));
+      localStorage.setItem("selectedPlot", JSON.stringify(preview));
+      return true;
+    } catch (e) {
+      console.warn("persistSelectedPlotToAuthContext failed, falling back to localStorage", e);
+      try { localStorage.setItem("plotId", String(pid)); localStorage.setItem("selectedPlot", JSON.stringify(preview)); } catch (_) {}
+      return false;
+    }
   }
-  /* ------------------------------------------------------------------ */
 
-  // --- helper to store selected plot in localStorage and navigate ---
   function selectPlot(plot) {
     try {
       const pid = plot.plotId ?? plot.id ?? plot._id ?? "";
-      if (!pid) {
-        console.warn("selectPlot: no plot id found on selected plot", plot);
-        return;
-      }
-
-      // ensure villageId stored as well so the details page can resolve village
-      try { if (villageId) localStorage.setItem("villageId", villageId); } catch (e) {}
-
-      localStorage.setItem("plotId", String(pid));
-
       const preview = {
         plotId: pid,
         name: plot.name ?? null,
-        familyId: plot.familyId ?? plot.family_id ?? null,
-        typeId: plot.typeId ?? plot.type_id ?? null,
-        villageId: villageId || null
+        familyId: plot.familyId ?? null,
+        typeId: plot.typeId ?? null,
+        villageId: plot.villageId ?? plot.village ?? null,
       };
-      localStorage.setItem("selectedPlot", JSON.stringify(preview));
 
-      // navigate using the computed pid (always). Also pass the preview in location.state for immediate consumption.
-      try {
-        navigate(`/plots/one/${encodeURIComponent(String(pid))}`, { state: { selectedPlot: preview } });
-      } catch (e) {
-        // fallback: still attempt a simple path
-        try { navigate(`/plots/one/${String(pid)}`); } catch (e2) { console.warn("Navigation failed", e2); }
-      }
+      persistSelectedPlotToAuthContext(pid, preview);
+
+      // navigate using route only — HomeDetailsPage will resolve id from AuthContext/localStorage
+      navigate(`/house/one/${encodeURIComponent(pid)}`);
     } catch (e) {
-      console.warn("Failed to save selected plot to localStorage or navigate", e);
+      console.warn("Failed to save selected house to AuthContext/localStorage", e);
+      navigate(`/house/one/${encodeURIComponent(plot.plotId ?? plot.id ?? plot._id ?? "")}`);
     }
+  }
+
+  function goToHouse(houseId, plot = null) {
+    if (!houseId) return;
+    try {
+      const pid = plot?.plotId ?? plot?.id ?? plot?._id ?? null;
+      if (pid) {
+        const sp = { plotId: pid, name: plot?.name ?? null };
+        persistSelectedPlotToAuthContext(pid, sp);
+      }
+      localStorage.setItem("houseId", String(houseId));
+    } catch (e) {
+      // ignore storage errors
+    }
+    navigate(`/house/one/${encodeURIComponent(houseId)}`);
   }
 
   const displayedPlots = plots || [];
 
-  // helper to nicely compute shown range
-  const startIndex = totalCount === 0 ? 0 : ((page - 1) * pageSize) + 1;
-  const endIndex = totalCount === 0 ? 0 : Math.min(totalCount ?? page * pageSize, page * pageSize);
+  function getHomeId(h) {
+    return h.houseId ?? h.homeId ?? h.id ?? h._id ?? h.house_id ?? null;
+  }
 
-  // render
   return (
     <div className="min-h-screen bg-[#f8f0dc] font-sans">
       <MainNavbar showVillageInNavbar={true} />
@@ -460,7 +430,7 @@ export default function PlotsPage() {
               <input
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search plots by name"
+                placeholder="Search by mukhiya name OR familyId"
                 className="p-2 outline-none w-56"
               />
               {searchQuery && (
@@ -475,20 +445,34 @@ export default function PlotsPage() {
                 </button>
               )}
             </div>
-            <div className="bg-white rounded-lg shadow-sm">
-              <SelectDropdown
-                items={types}
-                value={filterTypeId}
-                onChange={(v) => setFilterTypeId(v)}
-                placeholder={typesLoading ? "Loading types…" : "All types"}
-              />
+
+            {/* numberOfHome select (optional) */}
+            <div className="bg-white rounded-lg shadow-sm p-2 flex items-center">
+              <select
+                value={numberOfHomeFilter}
+                onChange={(e) => setNumberOfHomeFilter(e.target.value)}
+                className="p-1 text-sm outline-none"
+              >
+                <option value="">All homes</option>
+                <option value="1">1 home</option>
+                <option value="2">2 homes</option>
+                <option value="3">3 homes</option>
+              </select>
+              {numberOfHomeFilter && (
+                <button
+                  onClick={() => setNumberOfHomeFilter("")}
+                  className="ml-2 text-xs px-2 py-1 bg-gray-100 rounded-full hover:bg-gray-200"
+                >
+                  Clear
+                </button>
+              )}
             </div>
 
             <div className="ml-2">
               <button
                 onClick={toggleDeletedView}
                 className={`px-3 py-2 rounded-md text-sm ${showDeleted ? "bg-red-100 text-red-700" : "bg-blue-100 text-blue-600"}`}
-                title="Toggle deleted plots (server-side)"
+                title="Toggle deleted houses"
               >
                 {showDeleted ? "Showing deleted" : "Showing active"}
               </button>
@@ -501,18 +485,20 @@ export default function PlotsPage() {
         {/* pagination info & controls */}
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-4">
-            {/* Showing range */}
             <div className="text-sm text-gray-600">
               {totalCount !== null ? (
-                <>
-                  Showing {startIndex}–{endIndex} of {totalCount}
-                </>
+                totalCount === 0 ? (
+                  <>No houses</>
+                ) : (
+                  <>
+                    Showing {(Math.min(totalCount, (page - 1) * pageSize + 1))}–{Math.min(totalCount, page * pageSize)} of {totalCount}
+                  </>
+                )
               ) : (
                 <>Page {page}</>
               )}
             </div>
 
-            {/* page size selector */}
             <div className="flex items-center gap-2 text-sm">
               <div className="text-xs text-gray-500">Page size</div>
               <select
@@ -529,44 +515,40 @@ export default function PlotsPage() {
         </div>
 
         {loading ? (
-          <div className="text-center py-8">Loading plots…</div>
+          <div className="text-center py-8">Loading houses....</div>
         ) : error ? (
           <div className="text-red-600 py-6 whitespace-pre-wrap">{error}</div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             {displayedPlots.length === 0 ? (
-              <div className="text-sm text-gray-500">No plots found</div>
+              <div className="text-sm text-gray-500">No houses found</div>
             ) : (
               displayedPlots.map((p) => {
-                const pid = String(p.plotId ?? p.id ?? p._id ?? "");
+                const key = String(p.plotId ?? p.id ?? p._id ?? Math.random());
+                const houseId = p.houseId ?? p.homeId ?? p._id ?? p.plotId ?? null;
                 const isDeleted = Boolean(p.deleted);
                 return (
                   <div
-                    key={pid}
-                    role="button"
-                    tabIndex={0}
+                    key={key}
+                    role={isDeleted ? "button" : "link"}
+                    tabIndex={isDeleted ? -1 : 0}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && !isDeleted) {
                         selectPlot(p);
                       }
                     }}
-                    onClick={() => {
-                      if (!isDeleted) selectPlot(p);
-                    }}
-                    title={isDeleted ? "This plot is deleted" : "Open plot details"}
+                    onClick={() => { if (!isDeleted) selectPlot(p); }}
+                    className={` rounded-xl shadow hover:shadow-lg p-4 border transition transform ${isDeleted ? "bg-red-100 ring-0 cursor-not-allowed opacity-70" : "bg-blue-100 cursor-pointer"}`}
                     aria-disabled={isDeleted}
-                    className={`relative rounded-xl shadow p-4 border transition 
-                      ${isDeleted ? "bg-red-200 ring-0 cursor-not-allowed opacity-85" : "bg-blue-100 hover:shadow-lg cursor-pointer"} 
-                    `}
                   >
                     <div className="flex items-start gap-3">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between">
-                          <div className={`text-lg font-semibold truncate ${isDeleted ? "text-gray-600" : "text-gray-800"}`}>
-                            {p.name}
+                          <div className={`text-lg font-semibold truncate ${isDeleted ? "text-gray-400" : "text-gray-800"}`}>
+                            {p.name ?? (p.homeDetails?.[0]?.mukhiyaName ?? p.plotId ?? "Unnamed")}
                           </div>
                           <div className="text-xs text-gray-500">
-                            {typeNameFor(p.typeId)}
+                            {typeNameFor(p.typeId, p)}
                           </div>
                         </div>
                       </div>
@@ -578,15 +560,16 @@ export default function PlotsPage() {
           </div>
         )}
 
-        {/* If showing deleted items, render a small note */}
         {showDeleted && (
           <div className="mt-6 text-sm text-gray-600">
-            Showing deleted plots. Use the toggle to switch back to active plots.
+            Showing deleted houses. Use the toggle to switch back to active houses.
           </div>
         )}
 
         <div className="h-24" />
       </div>
+
     </div>
   );
 }
+

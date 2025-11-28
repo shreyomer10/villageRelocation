@@ -19,6 +19,8 @@ import FamilyDetails from "./pages/FamilyDetail.jsx"; // protected detailed view
 import Feedbacks from "./pages/Feedbacks.jsx";
 import Material from "./pages/Material.jsx";
 import Facilities from "./pages/Facilities.jsx";
+import House from "./pages/Housepage.jsx";
+import HouseDetails from "./pages/HouseDetails.jsx";
 
 export default function App() {
   return (
@@ -53,6 +55,15 @@ export default function App() {
         element={
           <PrivateRoute>
             <PlotPage />
+          </PrivateRoute>
+        }
+      />
+
+      <Route
+        path="/house"
+        element={
+          <PrivateRoute>
+            <House />
           </PrivateRoute>
         }
       />
@@ -96,6 +107,15 @@ export default function App() {
         element={
           <PrivateRoute>
             <PlotDetails />
+          </PrivateRoute>
+        }
+      />
+
+      <Route
+        path="/house/one/:homeId"
+        element={
+          <PrivateRoute>
+            <HouseDetails />
           </PrivateRoute>
         }
       />

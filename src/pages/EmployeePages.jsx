@@ -257,7 +257,7 @@ function EmployeeForm({ initial = {}, onCancel, onSubmit }) {
         };
         onSubmit(payload);
       }}
-      className="bg-white rounded-2xl shadow-2xl p-5 space-y-4"
+      className="bg-[#f8f0dc] rounded-2xl shadow-2xl p-5 space-y-4"
     >
       {/* NOTE: User ID is auto-assigned by backend so we DON'T show a userId input */}
 
