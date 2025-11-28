@@ -19,7 +19,7 @@ import FamilyDetails from "./pages/FamilyDetail.jsx"; // protected detailed view
 import Feedbacks from "./pages/Feedbacks.jsx";
 import Material from "./pages/Material.jsx";
 import Facilities from "./pages/Facilities.jsx";
-import House from "./pages/Housepage.jsx";
+import House from "./pages/HousePage.jsx";
 import HouseDetails from "./pages/HouseDetails.jsx";
 
 export default function App() {
