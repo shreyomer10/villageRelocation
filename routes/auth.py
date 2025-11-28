@@ -49,8 +49,10 @@ def register():
             #return jsonify({"error": "Employee not verified yet. Please verify first."}), 400
         otp_doc = emp_doc.get("otp")
         now = nowIST()
+        now_dt = str_to_ist_datetime(nowIST())
+        expires_dt = str_to_ist_datetime(otp_doc["expiresAt"])
 
-        if not otp_doc or not otp_doc.get("used") or not otp_doc.get("passed") or now> otp_doc.get("expiresAt"):
+        if not otp_doc or not otp_doc.get("used") or not otp_doc.get("passed") or now_dt>expires_dt:
             return make_response(error=True,message="OTP verification required",status=403)
 
            # return jsonify({"error": "OTP verification required"}), 403

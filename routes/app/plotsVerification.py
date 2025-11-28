@@ -376,7 +376,7 @@ def delete_verification(decoded_data,plotId, verificationId):
 
 @plots_verification_BP.route("/field_verification/one/<verificationId>", methods=["GET"])
 @auth_required
-def get_verification(verificationId):
+def get_verification(decoded_data,verificationId):
     try:
         verification = updates.find_one({"verificationId": verificationId}, {"_id": 0})
 
