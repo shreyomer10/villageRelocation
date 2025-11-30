@@ -310,6 +310,26 @@ def get_all_employees():
         return make_response(True, "Unexpected error", message=str(e), result={"count": 0, "items": []},status=500)
 
 
+
+@emp_bp.route("/employee/ids", methods=["GET"])
+def get_emp_ids():
+    try:
+        employees = list(users.find(
+            {},
+            {"_id": 0,
+            "userId": 1, 
+            "name": 1,
+            }
+        ))
+        return make_response(False, "Employees fetched successfully", result={"count": len(employees), "items": employees},status=200)
+
+    except mongo_errors.PyMongoError as me:
+        return make_response(True, "Database error", message=str(me),  result={"count": 0, "items": []},status=500)
+
+    except Exception as e:
+        return make_response(True, "Unexpected error", message=str(e), result={"count": 0, "items": []},status=500)
+
+
 # @emp_bp.route("/employee/<emp_id>", methods=["GET"])
 # def get_employee_details(emp_id):
 #     try:

@@ -92,6 +92,21 @@ def authorization(decoded_data, userId: str = None):
     return None
 
 
+def authorizationDD(decoded_data):
+
+    user_id = decoded_data.get("userId")
+    user_role = decoded_data.get("role")
+
+    if not user_id or not user_role:
+        return {"error": True, "message": "Invalid token: missing userId or role", "status": 400}
+    
+    if user_role != "dd":
+        return {"error": True, "message": "Unauthorized access", "status": 403}
+
+    # All checks passed
+    return None
+
+
 def nowIST():
     """
     Returns the current time in IST as a string "YYYY-MM-DD HH:MM:SS"

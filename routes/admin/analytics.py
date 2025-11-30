@@ -4,14 +4,16 @@ import logging
 
 from flask import Blueprint, logging,request, jsonify
 from pydantic import ValidationError
+from utils.tokenAuth import auth_required
 from models.village import FamilyCount
-from utils.helpers import make_response
+from utils.helpers import authorizationDD, make_response
 from config import  db
 
 from pymongo import errors  
 buildings = db.buildings
 villages = db.villages
 plots = db.plots
+houses=db.house
 families = db.testing
 options = db.options
 
@@ -19,123 +21,159 @@ analytics_BP = Blueprint("analytics",__name__)
 
 
 @analytics_BP.route("/analytics/options/<option_id>", methods=["GET"])
-def get_option_analytics(option_id):
+@auth_required
+def get_option_analytics(decoded_data, option_id):
     try:
-        if not option_id or not isinstance(option_id, str):
+        if not option_id:
             return make_response(True, "Invalid or missing option_id", status=400)
 
-        village_id = request.args.get("villageId")
+        error = authorizationDD(decoded_data)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
 
-        # -------- Fetch Option -------- #
-        try:
-            option_doc = options.find_one(
-                {"optionId": option_id, "deleted": False},
-                {"_id": 0, "stages": 1, "name": 1}
-            )
-        except Exception as e:
-            return make_response(True, f"Database error fetching option: {str(e)}", status=500)
-
+        # Fetch option stages
+        option_doc = options.find_one(
+            {"optionId": option_id, "deleted": False},
+            {"_id": 0, "stages": 1, "name": 1}
+        )
         if not option_doc:
             return make_response(True, "Option not found", status=404)
 
-        option_name = option_doc.get("name", "Unknown Option")
-        stages = option_doc.get("stages", [])
-        if not stages:
-            return make_response(True, "No stages found for this option", status=404)
+        stages = option_doc["stages"]
+        stage_map = {s["stageId"]: {"id": s["stageId"], "name": s["name"], "count": 0} for s in stages}
 
-        # -------- Initialize stage counters -------- #
-        stage_counters = [{"id": stage.get("stageId"), "name": stage.get("name"), "count": 0} for stage in stages]
-
-        # -------- Prepare Family Query -------- #
-        query = {}
+        # Build match query
+        village_id = request.args.get("villageId")
+        match_q = {}
         if village_id:
-            query["villageId"] = village_id
+            match_q["villageId"] = village_id
 
-        # -------- Fetch Families -------- #
-        try:
-            family_cursor = families.find(query, {"_id": 0, "currentStage": 1})
-        except Exception as e:
-            return make_response(True, f"Database error fetching families: {str(e)}", status=500)
+        # Aggregation pipeline
+        pipeline = [
+            {"$match": match_q},
+            {"$group": {"_id": "$currentStage", "count": {"$sum": 1}}}
+        ]
 
-        # -------- Increment stage counters -------- #
-        for fam in family_cursor:
-            fam_stage = fam.get("currentStage")
-            for stage in stage_counters:
-                if stage["id"] == fam_stage:  # increment only if currentStage matches stage name
-                    stage["count"] += 1
+        agg = families.aggregate(pipeline)
 
-        # -------- Response -------- #
-        result = {
-            "optionId": option_id,
-            "optionName": option_name,
-            "stages": stage_counters
-        }
+        for item in agg:
+            sid = item["_id"]
+            if sid in stage_map:
+                stage_map[sid]["count"] = item["count"]
 
-        return make_response(False, "Analytics fetched successfully", result=result, status=200)
+        return make_response(False, "Analytics fetched", 
+            result={
+                "optionId": option_id,
+                "optionName": option_doc["name"],
+                "stages": list(stage_map.values())
+            },
+            status=200
+        )
 
     except Exception as e:
         return make_response(True, f"Internal server error: {str(e)}", status=500)
 
 
 @analytics_BP.route("/analytics/building/<villageId>/<type_id>", methods=["GET"])
-def get_building_analytics(villageId,type_id):
+@auth_required
+def get_building_analytics(decoded_data, villageId, type_id):
     try:
-        if not villageId or not type_id or not isinstance(type_id, str):
-            return make_response(True, "Invalid or missing villageId or missing type_id ", status=400)
+        mode = request.args.get("mode", "plot").lower()
 
+        error = authorizationDD(decoded_data)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
 
-        try:
-            buildings_doc = buildings.find_one(
-                {"typeId": type_id, "villageId":villageId,"deleted": False},
-                {"_id": 0, "stages": 1, "name": 1}
-            )
-        except Exception as e:
-            return make_response(True, f"Database error fetching buildings: {str(e)}", status=500)
+        # Load building type info
+        building_doc = buildings.find_one(
+            {"villageId": villageId, "typeId": type_id, "deleted": False},
+            {"_id": 0, "stages": 1, "name": 1}
+        )
+        if not building_doc:
+            return make_response(True, "Building type not found", status=404)
 
-        if not buildings_doc:
-            return make_response(True, "building not found", status=404)
+        stages = building_doc["stages"]
+        stage_map = {s["stageId"]: {"id": s["stageId"], "name": s["name"], "count": 0} for s in stages}
 
-        building_name = buildings_doc.get("name", "Unknown plot")
-        stages = buildings_doc.get("stages", [])
-        if not stages:
-            return make_response(True, "No stages found for this plot", status=404)
+        # Choose pipeline
+        if mode in ["0", "plot"]:
+            pipeline = [
+                {"$match": {"villageId": villageId, "typeId": type_id, "deleted": False}},
+                {"$group": {"_id": "$currentStage", "count": {"$sum": 1}}}
+            ]
 
-        stage_counters = [{"id": stage.get("stageId"), "name": stage.get("name"), "count": 0} for stage in stages]
+        elif mode in ["1", "house"]:
+            pipeline = [
+                {"$match": {"villageId": villageId, "typeId": type_id, "deleted": False}},
+                {"$unwind": "$homeDetails"},
+                {"$group": {"_id": "$homeDetails.currentStage", "count": {"$sum": 1}}}
+            ]
 
-        # -------- Prepare Family Query -------- #
-        query = {"villageId":villageId,"typeId":type_id}
+        else:
+            return make_response(True, "Invalid mode (plot/house)", status=400)
 
+        agg = list((plots if mode=="plot" else houses).aggregate(pipeline))
 
-        # -------- Fetch Families -------- #
-        try:
-            plot_cursor = plots.find(query, {"_id": 0, "stagesCompleted": 1})
-        except Exception as e:
-            return make_response(True, f"Database error fetching families: {str(e)}", status=500)
+        # Fill counts
+        for x in agg:
+            sid = x["_id"]
+            if sid in stage_map:
+                stage_map[sid]["count"] = x["count"]
 
-        for plot in plot_cursor:
-            
-            stages_completed = plot.get("stagesCompleted", [])
-            if stages_completed:  # Checks if the list is not empty
-                plot_stage = stages_completed[-1]
-            else:
-                plot_stage = None  # Or some other default value
-            for stage in stage_counters:
-                if stage["id"] == plot_stage:  
-                    stage["count"] += 1
-
-        # -------- Response -------- #
-        result = {
-            "typeId": type_id,
-            "buildingName": building_name,
-            "stages": stage_counters
-        }
-
-        return make_response(False, "Analytics fetched successfully", result=result, status=200)
+        return make_response(False, "Analytics fetched",
+            result={
+                "typeId": type_id,
+                "buildingName": building_doc["name"],
+                "mode": mode,
+                "stages": list(stage_map.values())
+            },
+            status=200
+        )
 
     except Exception as e:
         return make_response(True, f"Internal server error: {str(e)}", status=500)
+ 
+@analytics_BP.route("/analytics/house/<villageId>/home-count", methods=["GET"])
+@auth_required
+def numberOfHomes(decoded_data, villageId):
+    try:
+        error = authorizationDD(decoded_data)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
 
+        if not villageId:
+            return make_response(True, "Missing villageId", status=400)
 
+        # -------- AGGREGATION PIPELINE -------- #
+        pipeline = [
+            {"$match": {"villageId": villageId, "deleted": False}},
+            {"$group": {"_id": "$numberOfHome", "count": {"$sum": 1}}}
+        ]
+
+        try:
+            agg_result = list(houses.aggregate(pipeline))
+        except Exception as e:
+            return make_response(True, f"DB error: {str(e)}", status=500)
+
+        # Initialize only 1,2,3
+        stats = {"1": 0, "2": 0, "3": 0}
+
+        # Map aggregation result
+        for item in agg_result:
+            n = item["_id"]
+            c = item["count"]
+            if n in [1, 2, 3]:
+                stats[str(n)] = c
+
+        result = {
+            "villageId": villageId,
+            "homeCountStats": stats
+        }
+
+        return make_response(False, "Home count analytics fetched", result=result, status=200)
+
+    except Exception as e:
+        return make_response(True, f"Internal server error: {str(e)}", status=500)
 
 @analytics_BP.route("/villages/family-count", defaults={"village_id": None}, methods=["GET"])
 @analytics_BP.route("/villages/<village_id>/family-count", methods=["GET"])

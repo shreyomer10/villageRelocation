@@ -331,7 +331,7 @@ def verify_update(decoded_data):
 
 @option_verification_BP.route("/updates/one/<updateId>", methods=["GET"])
 @auth_required
-def get_update(updateId):
+def get_update(decoded_data,updateId):
 
     try:
 
