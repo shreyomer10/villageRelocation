@@ -222,7 +222,7 @@ def update_verification(decoded_data,plotId, verificationId):
 
 @plots_verification_BP.route("/field_verification/verify", methods=["POST"])
 @auth_required
-def verify_verification(decoded_data,plotId, verificationId):
+def verify_verification(decoded_data):
     try:
     
         payload = request.get_json(force=True)

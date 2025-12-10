@@ -189,7 +189,7 @@ def refresh_token(decoded_data):
             return make_response(True, "Invalid token: missing subject", status=400)
 
         # -------- Fetch latest user -------- #
-        user_doc = users.find_one({"userId": user_id,"deleted":False}, {"_id": 0,"otp":0,})
+        user_doc = users.find_one({"userId": user_id,"deleted":False}, {"_id": 0,"otp":0,"userCounters":0})
         if not user_doc:
             return make_response(True, "User not found", status=404)
 
