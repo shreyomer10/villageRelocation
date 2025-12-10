@@ -19,9 +19,17 @@ families = db.families
 village_bp = Blueprint("village",__name__)
 
 
-
-
-
+def validate_user_ids(user_ids: list):
+    if not user_ids:
+        return True, []
+    
+    # Fetch all valid village IDs from villages collection
+    valid_users = set(v["userId"] for v in users.find({}, {"userId": 1, "_id": 0}))
+    
+    # Find invalid IDs
+    invalid_ids = [vid for vid in user_ids if vid not in valid_users]
+    
+    return len(invalid_ids) == 0, invalid_ids
 
 @village_bp.route("/villages", methods=["GET"])
 def get_all_villages():
@@ -123,6 +131,9 @@ def add_village():
 
         try:
             validated = VillageDocInsert(**payload)
+            is_valid, invalid_ids = validate_user_ids(validated.emp)
+            if not is_valid:
+                return make_response(True, f"Invalid UserIDs: {invalid_ids}", status=400)
         except ValidationError as ve:
             return validation_error_response(ve)
 
@@ -166,6 +177,7 @@ def update_village(village_id):
         # ✅ validate partial update payload
         try:
             validated = VillageDocUpdate(**payload)
+
         except ValidationError as ve:
             return validation_error_response(ve)
 
@@ -174,7 +186,10 @@ def update_village(village_id):
 
         if not update_fields:
             return make_response(True, "No valid fields to update", status=400)
-
+        if "emp" in update_fields:
+            is_valid, invalid_ids = validate_user_ids(validated.emp)
+            if not is_valid:
+                return make_response(True, f"Invalid UserIDs: {invalid_ids}", status=400)
         # append log entry
         now = nowIST()
         log_entry = VillageLog(

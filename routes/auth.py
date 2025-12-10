@@ -7,7 +7,7 @@ import bcrypt
 from bson import ObjectId
 from flask import Flask, Blueprint,request, jsonify
 from pydantic import ValidationError
-from models.emp import Users
+from models.emp import Users, UsersForApp
 from config import JWT_EXPIRE_MIN, db,OTP_EXPIRE_MIN,RECIEVER_EMAIL,SENDER_EMAIL,APP_PASSWORD
 from utils.helpers import hash_password, is_time_past, make_response, nowIST, str_to_ist_datetime, verify_password
 from utils.tokenAuth import auth_required,make_jwt
@@ -108,7 +108,7 @@ def login():
         # -------- Fetch User from Mongo -------- #
         emp_doc = users.find_one(
             {"userId": emp_id, "mobile": mobile_number, "role": role,"deleted":False},
-            {"_id": 0,"otp":0}
+            {"_id": 0,"otp":0,"userCounters":0}
         )
         if not emp_doc:
             return make_response(error=True,message="Employee not found. Please contact admin.",status=404)
@@ -126,7 +126,7 @@ def login():
         # -------- Pydantic Validation -------- #
         #emp_doc.pop("password", None)  # remove before validation
         try:
-            user = Users.from_mongo(emp_doc)
+            user = UsersForApp.from_mongo(emp_doc)
         except ValidationError as ve:
             return make_response(True, f"User data validation error: {ve.errors()}", status=500)
 
@@ -198,7 +198,7 @@ def refresh_token(decoded_data):
 
         # -------- Pydantic Validation -------- #
         try:
-            user = Users.from_mongo(user_doc)
+            user = UsersForApp.from_mongo(user_doc)
         except ValidationError as ve:
             return make_response(True, f"User data validation error: {ve.errors()}", status=500)
         is_app = decoded_data.get("is_app", False)

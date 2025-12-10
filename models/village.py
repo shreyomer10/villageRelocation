@@ -180,7 +180,7 @@ class Village(BaseModel):
     lat: float
     long: float
     kml: str
-    
+    emp: List[str] = Field(default_factory=list)
     # fdUpdated: str
     # sdUpdated:str
     # rangeUpdated:Optional[str]
@@ -234,7 +234,7 @@ class VillageDocInsert(BaseModel):
     lat: float
     long: float
     kml: str
-    
+
     fdUpdated: str
     sdUpdated:str
     rangeUpdated:Optional[str]
@@ -250,7 +250,8 @@ class VillageDocInsert(BaseModel):
     photos: List[str] =  Field(default_factory=list)
     familyMasterList:str
     
-    
+    emp: List[str] = Field(default_factory=list)
+
     
     class Config:
         extra = "forbid"   # ❌ reject unknown fields
@@ -304,7 +305,8 @@ class VillageDocUpdate(BaseModel):
     photos:Optional[ List[str]] =  None
     familyMasterList:Optional[str]=None
     
-    
+    emp: List[str] = Field(default_factory=list)
+
     
     class Config:
         extra = "forbid"   # ❌ reject unknown fields

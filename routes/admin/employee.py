@@ -5,7 +5,7 @@ from pydantic import ValidationError
 from pymongo import  ASCENDING, DESCENDING, ReturnDocument,errors as mongo_errors
 from utils.helpers import hash_password, make_response, validation_error_response
 from models.counters import get_next_user_id
-from models.emp import UserInsert, UserUpdate, Users
+from models.emp import UserCounters, UserInsert, UserUpdate, Users
 from config import JWT_EXPIRE_MIN, db
 from pymongo.errors import DuplicateKeyError
 
@@ -57,6 +57,7 @@ def add_employee():
             activated=True,
             verified=False,
             password="",
+            userCounters = {v: UserCounters().model_dump() for v in emp.villageID},
              **emp_dict
                     
         )
@@ -135,6 +136,7 @@ def bulk_add_employees():
                     verified=False,
 
                     password="",
+                    userCounters = {v: UserCounters().model_dump() for v in emp.villageID},
                     **emp_dict
                 )
 
@@ -185,13 +187,29 @@ def update_employee(emp_id):
             update_data = UserUpdate(**payload).model_dump(exclude_none=True)
         except ValidationError as ve:
             return validation_error_response(ve)
+        emp = users.find_one({"userId": emp_id,"deleted":False},{"_id": 0,"userCounters":1})
+        if not emp:
+            return make_response(True, "Employee not found", status=404)
         if "villageID" in update_data:
             is_valid, invalid_ids = validate_village_ids(update_data["villageID"])
             if not is_valid:
                 return make_response(True, f"Invalid villageIDs: {invalid_ids}", status=400)
+            new_villages = update_data["villageID"]
+            current_counters = emp.get("userCounters", {})
+
+            # Add counters only for newly added villages
+            for v in new_villages:
+                if v not in current_counters:
+                    current_counters[v] = UserCounters().model_dump()
+
+            # IMPORTANT: do NOT delete counters for removed villages
+
+            # Reassign updated counters back
+            update_data["userCounters"] = current_counters
 
         if not update_data:
             return make_response(True, "No valid fields to update", status=400)
+
 
         result = users.update_one(
             {"userId": emp_id},

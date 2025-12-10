@@ -4,6 +4,7 @@ import logging
 
 from flask import Blueprint, logging,request, jsonify
 from pydantic import ValidationError
+from models.emp import UserCounters
 from utils.tokenAuth import auth_required
 from models.village import FamilyCount
 from utils.helpers import authorizationDD, make_response
@@ -16,7 +17,7 @@ plots = db.plots
 houses=db.house
 families = db.testing
 options = db.options
-
+users= db.users
 analytics_BP = Blueprint("analytics",__name__)
 
 
@@ -177,8 +178,12 @@ def numberOfHomes(decoded_data, villageId):
 
 @analytics_BP.route("/villages/family-count", defaults={"village_id": None}, methods=["GET"])
 @analytics_BP.route("/villages/<village_id>/family-count", methods=["GET"])
-def get_family_count(village_id):
+@auth_required
+def get_family_count(decoded_data,village_id):
     try:
+        error = authorizationDD(decoded_data)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
         pipeline = []
 
         # Only match villageId if a specific village_id is passed
@@ -216,3 +221,119 @@ def get_family_count(village_id):
             "message": str(e),
             "result": None
         }), 500
+
+
+
+@analytics_BP.route("/analytics/performance", methods=["GET"])
+@auth_required
+def employee_performance(decoded_data):
+    try:
+        error = authorizationDD(decoded_data)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
+        userId = request.args.get("userId")
+        villageId = request.args.get("villageId")
+
+        # -----------------------
+        #  MUST HAVE at least 1
+        # -----------------------
+        if not userId and not villageId:
+            return make_response(True, "Provide at least userId or villageId", status=400)
+
+        # ======================================================
+        #  CASE 1: userId + villageId (fetch specific village counters)
+        # ======================================================
+        if userId and villageId:
+            emp_doc = users.find_one(
+                {"userId": userId, "deleted": False},
+                {"_id": 0, "name": 1, "role": 1, "userCounters": 1}
+            )
+            if not emp_doc:
+                return make_response(True, "Employee not found", status=404)
+
+            counters = emp_doc.get("userCounters", {})
+            village_counter = counters.get(villageId, UserCounters().model_dump())
+
+            return make_response(
+                False,
+                "User village performance fetched",
+                result={
+                    "userId": userId,
+                    "villageId": villageId,
+                    "name": emp_doc["name"],
+                    "role": emp_doc["role"],
+                    "counters": village_counter
+                },
+                status=200
+            )
+
+        # ======================================================
+        #  CASE 2: userId ONLY → return all village counters
+        # ======================================================
+        if userId and not villageId:
+            emp_doc = users.find_one(
+                {"userId": userId, "deleted": False},
+                {"_id": 0, "name": 1, "role": 1, "villageID": 1, "userCounters": 1}
+            )
+            if not emp_doc:
+                return make_response(True, "Employee not found", status=404)
+
+            return make_response(
+                False,
+                "User full performance fetched",
+                result={
+                    "userId": userId,
+                    "name": emp_doc["name"],
+                    "role": emp_doc["role"],
+                    "villages": emp_doc["villageID"],
+                    "counters": emp_doc.get("userCounters", {})
+                },
+                status=200
+            )
+
+        # ======================================================
+        #  CASE 3: villageId ONLY → return performance for ALL employees
+        # ======================================================
+        if villageId and not userId:
+
+            village_doc = villages.find_one(
+                {"villageId": villageId, "deleted": False},
+                {"_id": 0, "emp": 1}
+            )
+            if not village_doc:
+                return make_response(True, "Village not found", status=404)
+
+            emp_ids = village_doc.get("emp", [])
+            results = []
+
+            for uid in emp_ids:
+                emp_doc = users.find_one(
+                    {"userId": uid, "deleted": False},
+                    {"_id": 0, "name": 1, "role": 1, "userCounters": 1}
+                )
+                if not emp_doc:
+                    continue
+
+                counters = emp_doc.get("userCounters", {})
+                vc = counters.get(villageId, UserCounters().model_dump())
+
+                results.append({
+                    "userId": uid,
+                    "name": emp_doc["name"],
+                    "role": emp_doc["role"],
+                    "villageId": villageId,
+                    "counters": vc
+                })
+
+            return make_response(
+                False,
+                "Village-wide performance fetched",
+                result={
+                    "villageId": villageId,
+                    "performance": results
+                },
+                status=200
+            )
+
+    except Exception as e:
+        return make_response(True, f"Internal server error: {str(e)}", status=500)
