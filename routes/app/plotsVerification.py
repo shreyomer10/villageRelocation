@@ -275,7 +275,7 @@ def verify_verification(decoded_data):
 
         )
 
-        return make_response(False, "Verification status updated successfully", result=new_history)
+        return make_response(False, "Verification status updated successfully", result=new_history.model_dump())
 
     except Exception as e:
         return make_response(True, f"Error verifying verification: {str(e)}", status=500)
