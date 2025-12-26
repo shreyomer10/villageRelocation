@@ -1,569 +1,588 @@
-// src/pages/MaterialsPage.jsx
-import React, { useEffect, useMemo, useState, useContext } from "react";
+import React, { useEffect, useState, useContext } from "react";
 import { useNavigate } from "react-router-dom";
 import MainNavbar from "../component/MainNavbar";
+import { API_BASE } from "../config/Api";
 import { AuthContext } from "../context/AuthContext";
-import { API_BASE } from "../config/Api.js";
-import {
-  ArrowLeft,
-  Search,
-  PlusCircle,
-  Edit2,
-  Trash2,
-  X,
-  Save,
-  FileText,
-} from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
 
 /**
- * Materials page
- * - GET /materials
- * - POST /materials
- * - PUT /materials/:materialId
- * - DELETE /materials/:materialId
+ * MaterialsPage.jsx (updated)
+ * - clicking a card will store the selected material id in AuthContext (preferred)
+ *   or localStorage (fallback) and navigate to /material/one/:materialId
+ * - edit/delete button clicks stop propagation so they don't trigger card navigation
+ * - key-accessible: Enter / Space on focused card will also navigate
+ *
+ * Fixes to updating material issue:
+ * - When editing, the PUT payload now sends a clear, consistent set of fields (name and desc)
+ *   so the backend receives the expected shapes and doesn't raise validation errors.
+ * - The code derives the correct materialId key from multiple possible fields before calling the API.
+ * - Small defensive improvements around JSON parsing and merging updated item into state.
  */
+
+function EditIcon({ className = "w-4 h-4" }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden>
+      <path d="M3 21v-3.75L14.06 6.19l3.75 3.75L6.75 21H3z" />
+      <path d="M20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0L15 3.25l3.75 3.75 1.96-.01z" />
+    </svg>
+  );
+}
+
+function TrashIcon({ className = "w-4 h-4" }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden>
+      <path d="M3 6h18" />
+      <path d="M8 6v14a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V6" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+      <path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" />
+    </svg>
+  );
+}
 
 export default function MaterialsPage() {
   const navigate = useNavigate();
-  const auth = useContext(AuthContext) || {};
-  const { selectedVillageId } = auth;
+  const authCtx = useContext(AuthContext);
 
-  const [localVillageId] = useState(() => {
-    try {
-      return typeof window !== "undefined" ? localStorage.getItem("villageId") : null;
-    } catch {
-      return null;
-    }
-  });
-  const villageId = selectedVillageId ?? localVillageId;
-
-  // attempt to read token from common places
-  function getAuthToken() {
-    if (auth?.token) return auth.token;
-    if (auth?.authToken) return auth.authToken;
-    if (auth?.user?.token) return auth.user.token;
-    if (auth?.user?.accessToken) return auth.user.accessToken;
-    if (typeof window !== "undefined") {
-      return (
-        localStorage.getItem("token") ||
-        localStorage.getItem("authToken") ||
-        localStorage.getItem("accessToken") ||
-        null
-      );
-    }
-    return null;
-  }
-  const token = getAuthToken();
-  const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
-
-  // state
   const [materials, setMaterials] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(true);
+  // page-level error (visible on the main page as a banner)
+  const [pageError, setPageError] = useState(null);
+  // form-level error (visible inside the add/edit modal)
+  const [formError, setFormError] = useState(null);
 
-  const [search, setSearch] = useState("");
+  // modal + form
+  const [showForm, setShowForm] = useState(false);
+  const [editingMaterial, setEditingMaterial] = useState(null); // full object when editing
+  const [form, setForm] = useState({ name: "", desc: "" });
+  const [submitLoading, setSubmitLoading] = useState(false);
 
-  // modal (create / edit)
-  const [modalOpen, setModalOpen] = useState(false);
-  const [modalLoading, setModalLoading] = useState(false);
-  const [modalError, setModalError] = useState(null);
-  const [editing, setEditing] = useState(false); // false => create, true => edit
-  const [form, setForm] = useState({
-    materialId: "",
-    name: "",
-    unit: "",
-    price: "",
-    description: "",
-  });
+  // delete confirmation modal
+  const [toDelete, setToDelete] = useState(null); // material object to delete
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
-  // helper: safe parse
-  function safeParseJson(text, res) {
-    const ct = (res?.headers?.get?.("content-type") || "").toLowerCase();
-    const trimmed = String(text || "").trim();
+  // search
+  const [query, setQuery] = useState("");
 
-    if (!ct.includes("application/json") && !trimmed.startsWith("{") && !trimmed.startsWith("[")) {
-      const snippet = trimmed.slice(0, 400);
-      throw new Error(`Expected JSON but got content-type="${ct}". Response starts with: ${snippet}`);
-    }
-
-    try {
-      return JSON.parse(trimmed);
-    } catch (err) {
-      const snippet = trimmed.slice(0, 400);
-      throw new Error(`Invalid JSON: ${err.message}. Response (first 400 chars): ${snippet}`);
-    }
-  }
-
-  // small wrapper to unify API behavior
-  async function apiFetch(path, opts = {}) {
-    const url = path.startsWith("http") ? path : `${API_BASE}${path}`;
-    const headers = { Accept: "application/json", ...authHeaders, ...(opts.headers || {}) };
-    const merged = { ...opts, headers };
-
-    const res = await fetch(url, merged);
-    const text = await res.text();
-
-    // If unauthorized, redirect to login
-    if (res.status === 401) {
-      // optional: clear stored token if you want
-      try {
-        localStorage.removeItem("token");
-        localStorage.removeItem("authToken");
-        localStorage.removeItem("accessToken");
-      } catch {}
-      navigate("/login");
-      throw new Error("Unauthorized - please login");
-    }
-
-    // If no JSON (or not ok) attempt to construct helpful error
-    if (!res.ok) {
-      // try to parse JSON to extract message
-      try {
-        const payload = safeParseJson(text, res);
-        // backend uses { error: true, message: "..." }
-        if (payload && payload.message) {
-          throw new Error(payload.message);
-        }
-      } catch (e) {
-        // fallback to raw snippet
-        const snippet = (text || "").slice(0, 400);
-        throw new Error(`HTTP ${res.status} ${res.statusText} — ${snippet}`);
-      }
-    }
-
-    // parse JSON body
-    const payload = safeParseJson(text, res);
-
-    // backend may return error flag inside 200 - handle that
-    if (payload && payload.error) {
-      throw new Error(payload.message || "API error");
-    }
-
-    return payload;
-  }
-
-  // normalized extractor (backend returns result.items etc.)
-  function extractListFromPayload(payload) {
-    if (!payload) return [];
-    if (Array.isArray(payload?.result?.items)) return payload.result.items;
-    if (Array.isArray(payload?.result?.data)) return payload.result.data;
-    if (Array.isArray(payload?.result)) return payload.result;
-    if (Array.isArray(payload?.data)) return payload.data;
-    if (Array.isArray(payload)) return payload;
-    const possible = payload?.result?.items ?? payload?.result?.rows ?? payload?.items;
-    return Array.isArray(possible) ? possible : [];
-  }
-
-  // initial load
-  useEffect(() => {
-    let mounted = true;
-    const ctrl = new AbortController();
-
-    async function load() {
-      if (!mounted) return;
-      setLoading(true);
-      setError(null);
-      try {
-        const payload = await apiFetch("/materials", { method: "GET", signal: ctrl.signal });
-        const list = extractListFromPayload(payload);
-        if (!mounted) return;
-        setMaterials(Array.isArray(list) ? list : []);
-      } catch (err) {
-        if (!mounted) return;
-        // If backend returned 404 via make_response (no materials) it might have status 404 handled earlier
-        setError(err.message || "Failed to fetch materials");
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    }
-
-    load();
-    return () => {
-      mounted = false;
-      ctrl.abort();
+  function authHeaders() {
+    const token = localStorage.getItem("token");
+    return {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
-
-  // search filter
-  const filtered = useMemo(() => {
-    if (!search) return materials.slice();
-    const q = search.toLowerCase();
-    return materials.filter((m) => {
-      return (
-        String(m.materialId ?? "").toLowerCase().includes(q) ||
-        String(m.name ?? "").toLowerCase().includes(q) ||
-        String(m.unit ?? "").toLowerCase().includes(q) ||
-        String(m.description ?? "").toLowerCase().includes(q)
-      );
-    });
-  }, [materials, search]);
-
-  // modal helpers
-  function openCreateModal() {
-    setEditing(false);
-    setForm({ materialId: "", name: "", unit: "", price: "", description: "" });
-    setModalError(null);
-    setModalOpen(true);
   }
 
-  function openEditModal(material) {
-    setEditing(true);
-    setForm({
-      materialId: material.materialId ?? "",
-      name: material.name ?? "",
-      unit: material.unit ?? "",
-      // keep price as string for controlled input
-      price: material.price !== undefined && material.price !== null ? String(material.price) : "",
-      description: material.description ?? "",
-    });
-    setModalError(null);
-    setModalOpen(true);
-  }
-
-  function closeModal() {
-    setModalOpen(false);
-    setModalError(null);
-    setModalLoading(false);
-  }
-
-  // create
-  async function createMaterial() {
-    if (!form.name || !form.unit) {
-      setModalError("Please provide name and unit.");
-      return;
-    }
-
-    if (form.price && isNaN(Number(form.price))) {
-      setModalError("Price must be a number.");
-      return;
-    }
-
-    setModalLoading(true);
-    setModalError(null);
-
+  // ---------------- FETCH ----------------
+  async function fetchMaterials() {
+    setLoading(true);
+    setPageError(null);
     try {
-      const payload = {
-        name: form.name,
-        unit: form.unit,
-        price: form.price ? Number(form.price) : undefined,
-        description: form.description || undefined,
-      };
-
-      const payloadRes = await apiFetch("/materials", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+      const res = await fetch(`${API_BASE}/materials`, {
+        headers: authHeaders(),
       });
 
-      // backend returns { result: <createdDoc> } in your Flask code
-      const created = payloadRes?.result ?? payloadRes ?? null;
-
-      if (created && created.materialId) {
-        setMaterials((prev) => [created, ...prev]);
-      } else {
-        // fallback full refresh
-        await reloadMaterials();
+      let data = null;
+      try {
+        data = await res.json();
+      } catch (e) {
+        data = null;
       }
 
-      closeModal();
+      if (!res.ok) {
+        const msg = (data && data.message) || `Failed to fetch materials: ${res.status}`;
+        throw new Error(msg);
+      }
+      if (data && data.error) {
+        throw new Error(data.message || "Server error");
+      }
+
+      // Support multiple response shapes
+      let items = [];
+      if (data && data.result && Array.isArray(data.result.items)) {
+        items = data.result.items;
+      } else if (data && Array.isArray(data.result)) {
+        items = data.result;
+      } else if (data && Array.isArray(data.items)) {
+        items = data.items;
+      } else if (data && data.result && data.result.item && Array.isArray(data.result.item)) {
+        items = data.result.item;
+      } else if (data && Array.isArray(data)) {
+        items = data;
+      }
+
+      setMaterials(items || []);
     } catch (err) {
-      setModalError(err.message || "Failed to create material");
-    } finally {
-      setModalLoading(false);
-    }
-  }
-
-  // update
-  async function updateMaterial() {
-    if (!form.materialId) {
-      setModalError("Missing materialId for update");
-      return;
-    }
-    if (!form.name || !form.unit) {
-      setModalError("Please provide name and unit.");
-      return;
-    }
-    if (form.price && isNaN(Number(form.price))) {
-      setModalError("Price must be a number.");
-      return;
-    }
-
-    setModalLoading(true);
-    setModalError(null);
-
-    try {
-      const payload = {
-        name: form.name,
-        unit: form.unit,
-        price: form.price ? Number(form.price) : undefined,
-        description: form.description || undefined,
-      };
-
-      const path = `/materials/${encodeURIComponent(String(form.materialId))}`;
-      const payloadRes = await apiFetch(path, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      const updated = payloadRes?.result ?? payloadRes ?? payload;
-      // ensure materialId stays present in the merged object (backend returns only updated fields)
-      const updatedWithId = { ...updated, materialId: form.materialId };
-
-      // optimistic update: merge into materials array
-      setMaterials((prev) =>
-        prev.map((m) => (String(m.materialId) === String(form.materialId) ? { ...m, ...updatedWithId } : m))
-      );
-
-      closeModal();
-    } catch (err) {
-      setModalError(err.message || "Failed to update material");
-    } finally {
-      setModalLoading(false);
-    }
-  }
-
-  // delete
-  async function deleteMaterial(materialId) {
-    const ok = window.confirm(`Delete material ${materialId}? This action cannot be undone.`);
-    if (!ok) return;
-
-    try {
-      const path = `/materials/${encodeURIComponent(String(materialId))}`;
-      await apiFetch(path, {
-        method: "DELETE",
-        headers: { Accept: "application/json" },
-      });
-
-      // remove locally
-      setMaterials((prev) => prev.filter((m) => String(m.materialId) !== String(materialId)));
-    } catch (err) {
-      alert(err.message || "Failed to delete material");
-    }
-  }
-
-  // reload helper
-  async function reloadMaterials() {
-    setLoading(true);
-    setError(null);
-    try {
-      const payload = await apiFetch("/materials", { method: "GET" });
-      const list = extractListFromPayload(payload);
-      setMaterials(Array.isArray(list) ? list : []);
-    } catch (err) {
-      setError(err.message || "Failed to reload materials");
+      console.error("fetchMaterials:", err);
+      setPageError(err.message || "Failed to fetch materials");
+      setMaterials([]);
     } finally {
       setLoading(false);
     }
   }
 
-  // small Material card
-  function MaterialCard({ m }) {
-    return (
-      <div className="w-full bg-white rounded-2xl p-4 shadow-md border mb-4">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex-1">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <div className="text-lg font-semibold text-slate-800">{m.name ?? "—"}</div>
-                <div className="text-sm text-gray-500 mt-1">{m.description ?? "-"}</div>
-              </div>
+  useEffect(() => {
+    fetchMaterials();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-              <div className="text-right">
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => openEditModal(m)}
-                    className="inline-flex items-center gap-2 px-3 py-2 rounded-md border hover:bg-blue-100"
-                  >
-                    <Edit2 size={14} />
-                  </button>
-
-                  <button
-                    onClick={() => deleteMaterial(m.materialId)}
-                    className="inline-flex items-center gap-2 px-3 py-2 rounded-md border hover:bg-red-50 text-red-600"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-
-                <div className="text-xs text-gray-400 mt-1">
-                  {m.unit ?? "-"} · {m.price !== undefined ? String(m.price) : "-"}
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-3 flex items-center gap-2">
-              {/* optional preview link if there is an attached doc */}
-              {Array.isArray(m.docs) && m.docs.length > 0 && (
-                <a href={m.docs[0]} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 px-3 py-2 rounded-md border hover:bg-gray-50">
-                  <FileText size={14} /> View
-                </a>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-    );
+  // ---------------- HELPERS ----------------
+  function resetForm() {
+    setForm({ name: "", desc: "" });
+    setEditingMaterial(null);
+    setFormError(null);
   }
 
-  function Modal() {
-    return (
-      <AnimatePresence>
-        {modalOpen && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40"
-            onClick={closeModal}
-          >
-            <motion.div
-              initial={{ y: 20, scale: 0.98 }}
-              animate={{ y: 0, scale: 1 }}
-              exit={{ y: 10, scale: 0.98 }}
-              transition={{ type: "spring", stiffness: 320, damping: 28 }}
-              className="max-w-2xl w-full bg-[#f8f0dc] rounded-2xl shadow-2xl border overflow-hidden"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center justify-between p-4 border-b">
-                <div>
-                  <div className="text-xs text-gray-500">{editing ? "Edit material" : "New material"}</div>
-                  <div className="text-lg font-semibold">{editing ? form.materialId : "Create material"}</div>
-                </div>
+  function openCreate() {
+    resetForm();
+    setShowForm(true);
+  }
 
-                <div className="flex items-center gap-2">
-                  <button onClick={closeModal} className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-indigo-600 text-white hover:bg-indigo-700">
-                    <X size={16} />
+  function openEdit(material) {
+    setEditingMaterial(material);
+    setForm({ name: material.name || "", desc: material.desc || "" });
+    setFormError(null);
+    setShowForm(true);
+  }
+
+  // Save selected material id to AuthContext if available, otherwise fallback to localStorage
+  function saveSelectedMaterialId(id) {
+    if (id === undefined || id === null) return;
+    const idStr = String(id);
+    try {
+      if (authCtx && typeof authCtx.setSelectedMaterial === "function") {
+        try {
+          authCtx.setSelectedMaterial({ materialId: idStr });
+        } catch {
+          authCtx.setSelectedMaterial(idStr);
+        }
+        return;
+      }
+
+      if (authCtx && typeof authCtx.setMaterialId === "function") {
+        authCtx.setMaterialId(idStr);
+        return;
+      }
+
+      if (authCtx && typeof authCtx.selectMaterial === "function") {
+        try {
+          authCtx.selectMaterial({ materialId: idStr });
+        } catch {
+          authCtx.selectMaterial({ id: idStr });
+        }
+        return;
+      }
+
+      try {
+        localStorage.setItem("materialId", idStr);
+        localStorage.setItem("selectedMaterial", JSON.stringify({ materialId: idStr }));
+      } catch (e) {
+        try {
+          localStorage.setItem("MATERIAL_ID", idStr);
+          localStorage.setItem("SELECTED_MATERIAL", JSON.stringify({ materialId: idStr }));
+        } catch {}
+      }
+    } catch (e) {
+      console.warn("Failed to save selected material to AuthContext, falling back to localStorage", e);
+      try {
+        localStorage.setItem("materialId", idStr);
+        localStorage.setItem("selectedMaterial", JSON.stringify({ materialId: idStr }));
+      } catch {}
+    }
+  }
+
+  // handle navigation when a card is clicked
+  function handleCardClick(material) {
+    const id = material?.materialId ?? material?.id ?? material?._id ?? material?.material_id;
+    if (id === undefined || id === null) {
+      setPageError("This material has no id and cannot be opened.");
+      return;
+    }
+
+    saveSelectedMaterialId(id);
+    navigate(`/material/one/${encodeURIComponent(String(id))}`);
+  }
+
+  function handleCardKeyDown(e, material) {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      handleCardClick(material);
+    }
+  }
+
+  // ---------------- CREATE / UPDATE ----------------
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setPageError(null);
+    setFormError(null);
+
+    const nameTrim = (form.name || "").trim();
+    const descRaw = form.desc ?? "";
+    const descTrim = String(descRaw).trim();
+
+    const isEdit = Boolean(editingMaterial);
+    if (!isEdit && !nameTrim) {
+      setFormError("Name is required");
+      return;
+    }
+
+    // Build payload.
+    // NOTE: For PUT (update) we send a consistent shape: include name and desc fields so the backend
+    // receives predictable payloads and Pydantic validation won't fail due to missing keys.
+    const payload = {};
+
+    if (!isEdit) {
+      // create requires a name; only include desc if provided (allow empty string on create if user typed it)
+      payload.name = nameTrim;
+      if (descTrim !== "") payload.desc = descTrim;
+    } else {
+      // For update: derive the canonical id and send both fields (name + desc). This avoids intermittent
+      // validation errors on backends that expect at least a name field or consistent types.
+      // If the user intentionally cleared desc, we include an empty string so backend can treat it as "clear".
+      const originalName = (editingMaterial?.name ?? "").toString();
+      // ensure name is never accidentally blank on edit (input has required attribute)
+      payload.name = nameTrim !== "" ? nameTrim : originalName;
+      // include desc always for updates (could be empty string if user cleared it)
+      payload.desc = descTrim;
+    }
+
+    const materialIdForUrl =
+      editingMaterial?.materialId ?? editingMaterial?.id ?? editingMaterial?._id ?? editingMaterial?.material_id;
+
+    if (isEdit && !materialIdForUrl) {
+      setFormError("Cannot update: material id is missing on the item.");
+      return;
+    }
+
+    const url = isEdit ? `${API_BASE}/materials/${encodeURIComponent(String(materialIdForUrl))}` : `${API_BASE}/materials`;
+    const method = isEdit ? "PUT" : "POST";
+
+    setSubmitLoading(true);
+    try {
+      const res = await fetch(url, {
+        method,
+        headers: authHeaders(),
+        body: JSON.stringify(payload),
+      });
+
+      let data = null;
+      try {
+        data = await res.json();
+      } catch (e) {
+        data = null;
+      }
+
+      if (!res.ok) {
+        let msg = `Save failed: ${res.status}`;
+        if (data) {
+          if (data.message) msg = data.message;
+          else if (data.errors) {
+            try {
+              msg = Array.isArray(data.errors)
+                ? data.errors
+                    .map((err) =>
+                      `${err.get && typeof err.get === 'function' ? err.get('loc') : err.loc ? err.loc.join('.') : ''}: ${err.msg || JSON.stringify(err)}`
+                    )
+                    .join('; ')
+                : JSON.stringify(data.errors);
+            } catch (e) {
+              msg = JSON.stringify(data.errors);
+            }
+          } else {
+            msg = JSON.stringify(data);
+          }
+        }
+        throw new Error(msg);
+      }
+      if (data && data.error) {
+        const backendMsg = data.message || JSON.stringify(data);
+        throw new Error(backendMsg);
+      }
+
+      if (!isEdit) {
+        // Prefer newly created item from backend (various shapes)
+        const created = data?.result ?? data ?? null;
+        if (created && (created.materialId || created.id || created._id)) {
+          setMaterials((prev) => [created, ...prev]);
+        } else {
+          await fetchMaterials();
+        }
+      } else {
+        const updatedFields = data?.result ?? data ?? null;
+        if (updatedFields && Object.keys(updatedFields).length > 0) {
+          setMaterials((prev) =>
+            prev.map((m) =>
+              String(m.materialId ?? m.id ?? m._id) === String(materialIdForUrl)
+                ? { ...m, ...updatedFields }
+                : m
+            )
+          );
+        } else {
+          // if backend didn't return changed fields, re-fetch to be safe
+          await fetchMaterials();
+        }
+      }
+
+      setShowForm(false);
+      resetForm();
+    } catch (err) {
+      console.error("handleSubmit:", err);
+      const msg = err.message || "Save failed";
+      setFormError(msg);
+      setPageError(msg);
+    } finally {
+      setSubmitLoading(false);
+    }
+  }
+
+  // ---------------- DELETE (modal) ----------------
+  function confirmDelete(material) {
+    setToDelete(material);
+    setPageError(null);
+  }
+
+  async function handleDeleteConfirmed() {
+    if (!toDelete) return;
+    setDeleteLoading(true);
+    setPageError(null);
+    try {
+      const id = toDelete?.materialId ?? toDelete?.id ?? toDelete?._id ?? toDelete?.material_id;
+      const res = await fetch(`${API_BASE}/materials/${encodeURIComponent(String(id))}`, {
+        method: "DELETE",
+        headers: authHeaders(),
+      });
+
+      let data = null;
+      try {
+        data = await res.json();
+      } catch (e) {
+        data = null;
+      }
+
+      if (!res.ok) {
+        const msg = (data && data.message) || `Delete failed: ${res.status}`;
+        throw new Error(msg);
+      }
+      if (data && data.error) {
+        throw new Error(data.message || "Server error");
+      }
+
+      setMaterials((prev) => prev.filter((m) => String(m.materialId ?? m.id ?? m._id) !== String(id)));
+      setToDelete(null);
+    } catch (err) {
+      console.error("handleDeleteConfirmed:", err);
+      setPageError(err.message || "Delete failed");
+    } finally {
+      setDeleteLoading(false);
+    }
+  }
+
+  function cancelDelete() {
+    setToDelete(null);
+  }
+
+  // ---------------- SEARCH FILTER ----------------
+  const filtered = materials.filter((m) => {
+    if (!query) return true;
+    const q = query.toLowerCase();
+    return (
+      (String(m.name || "") || "").toLowerCase().includes(q) ||
+      (String(m.desc || "") || "").toLowerCase().includes(q) ||
+      (String(m.materialId || m.id || "") || "").toLowerCase().includes(q)
+    );
+  });
+
+  // ---------------- RENDER ----------------
+  return (
+    <div className="min-h-screen bg-[#f8f0dc] font-sans">
+      <MainNavbar showVillageInNavbar={true} />
+
+      <div className="max-w-6xl mx-auto px-4 py-6 sm:px-6 lg:px-8">
+        {pageError && (
+          <div className="mb-4 p-3 rounded bg-red-50 border border-red-200 text-red-700">{pageError}</div>
+        )}
+
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-6">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => navigate("/home")}
+              className="px-3 py-2 border rounded-md bg-white text-sm shadow-sm hover:shadow"
+            >
+              ← Back
+            </button>
+          </div>
+          <div>
+            <h1 className="text-2xl font-semibold">Materials</h1>
+          </div>
+
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search by id, name or description"
+              className="p-2 border rounded w-full sm:w-64"
+            />
+            <button onClick={openCreate} className="px-4 py-2 bg-blue-600 text-white rounded text-sm">
+              + Add
+            </button>
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="text-center py-8">Loading materials…</div>
+        ) : filtered.length === 0 ? (
+          <div className="text-sm text-gray-500">No materials found.</div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filtered.map((m) => (
+              <div
+                key={String(m.materialId ?? m.id ?? m._id)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => handleCardKeyDown(e, m)}
+                onClick={() => handleCardClick(m)}
+                className="relative bg-blue-100 rounded-2xl shadow p-4 hover:shadow-lg transition-shadow cursor-pointer"
+                aria-label={`Open material ${m.name || m.materialId}`}
+              >
+                <div className="absolute top-3 right-3 flex items-center gap-2">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openEdit(m);
+                    }}
+                    className="p-1 rounded-md hover:bg-gray-100"
+                    aria-label={`Edit material ${m.name}`}
+                    title="Edit"
+                    type="button"
+                  >
+                    <EditIcon className="w-4 h-4 text-indigo-600" />
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      confirmDelete(m);
+                    }}
+                    className="p-1 rounded-md hover:bg-gray-100"
+                    aria-label={`Delete material ${m.name}`}
+                    title="Delete"
+                    type="button"
+                  >
+                    <TrashIcon className="w-4 h-4 text-red-600" />
                   </button>
                 </div>
+
+                <div className="mt-1">
+                  <div className="text-lg font-semibold text-gray-900 truncate">{m.name || "-"}</div>
+                  <div className="text-sm text-gray-700">{m.desc || "-"}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="h-24" />
+      </div>
+
+      {/* MODAL FORM */}
+      {showForm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40 p-4">
+          <form onSubmit={handleSubmit} className="bg-[#f8f0dc] rounded-lg shadow-lg p-6 w-full max-w-md">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">{editingMaterial ? "Edit Material" : "Add Material"}</h3>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowForm(false);
+                  resetForm();
+                }}
+                className="text-gray-500"
+                aria-label="Close form"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm text-gray-700">Name</label>
+                <input
+                  required
+                  value={form.name}
+                  onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
+                  className="w-full p-2 border rounded"
+                />
               </div>
 
-              <div className="p-6 grid grid-cols-1 gap-4">
-                {modalError && <div className="text-sm text-red-600">{modalError}</div>}
+              <div>
+                <label className="block text-sm text-gray-700">Description</label>
+                <textarea
+                  value={form.desc}
+                  onChange={(e) => setForm((p) => ({ ...p, desc: e.target.value }))}
+                  rows={3}
+                  className="w-full p-2 border rounded"
+                />
+              </div>
 
-                <div>
-                  <label className="text-xs text-gray-500">Name</label>
-                  <input
-                    value={form.name}
-                    onChange={(e) => setForm((s) => ({ ...s, name: e.target.value }))}
-                    className="w-full mt-1 px-3 py-2 border rounded-md text-sm"
-                    placeholder="e.g. Bricks"
-                  />
-                </div>
+              {formError && <div className="text-sm text-red-600">{formError}</div>}
 
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs text-gray-500">Unit</label>
-                    <input
-                      value={form.unit}
-                      onChange={(e) => setForm((s) => ({ ...s, unit: e.target.value }))}
-                      className="w-full mt-1 px-3 py-2 border rounded-md text-sm"
-                      placeholder="e.g. Nos / Kg"
-                    />
-                  </div>
+              <div className="flex justify-end gap-2 mt-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowForm(false);
+                    resetForm();
+                  }}
+                  className="px-4 py-2 border rounded"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submitLoading}
+                  className={`px-4 py-2 text-white rounded ${submitLoading ? "bg-gray-400" : "bg-blue-600"}`}
+                >
+                  {submitLoading ? (editingMaterial ? "Saving…" : "Creating…") : editingMaterial ? "Save" : "Create"}
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+      )}
 
-                  <div>
-                    <label className="text-xs text-gray-500">Price</label>
-                    <input
-                      value={form.price}
-                      onChange={(e) => setForm((s) => ({ ...s, price: e.target.value }))}
-                      className="w-full mt-1 px-3 py-2 border rounded-md text-sm"
-                      placeholder="numeric (optional)"
-                    />
-                  </div>
-                </div>
+      {/* DELETE CONFIRMATION MODAL */}
+      {toDelete && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-black bg-opacity-40 p-4">
+          <div className="bg-white rounded-xl shadow-lg p-6 w-lg max-w-lg">
+            <div className="flex items-start gap-4">
+              <div className="flex-1">
+                <h3 className="text-lg font-semibold">Delete material</h3>
+                <p className="text-m text-gray-600 mt-1">
+                  Are you sure you want to delete <strong>{toDelete.name || `ID ${toDelete.materialId}`}</strong>?
+                </p>
 
-                <div>
-                  <label className="text-xs text-gray-500">Description</label>
-                  <textarea
-                    value={form.description}
-                    onChange={(e) => setForm((s) => ({ ...s, description: e.target.value }))}
-                    className="w-full mt-1 px-3 py-2 border rounded-md text-sm"
-                    rows={3}
-                    placeholder="Optional description"
-                  />
-                </div>
+                {pageError && <div className="text-sm text-red-600 mt-2">{pageError}</div>}
 
-                <div className="flex items-center justify-end gap-2">
+                <div className="mt-4 flex justify-center gap-2">
                   <button
-                    onClick={closeModal}
-                    className="px-4 py-2 rounded-md bg-white border hover:bg-gray-50"
-                    disabled={modalLoading}
+                    onClick={cancelDelete}
+                    className="px-4 py-2 border rounded"
+                    type="button"
+                    disabled={deleteLoading}
                   >
                     Cancel
                   </button>
-
                   <button
-                    onClick={editing ? updateMaterial : createMaterial}
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-indigo-600 text-white hover:bg-indigo-700"
-                    disabled={modalLoading}
+                    onClick={handleDeleteConfirmed}
+                    className={`px-4 py-2 text-white rounded ${deleteLoading ? "bg-gray-400" : "bg-red-600"}`}
+                    type="button"
+                    disabled={deleteLoading}
                   >
-                    <Save size={14} /> {modalLoading ? "Saving…" : editing ? "Update" : "Create"}
+                    {deleteLoading ? "Deleting…" : "Delete"}
                   </button>
                 </div>
               </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    );
-  }
-
-  return (
-    <div className="min-h-screen bg-[#f8f0dc] font-sans">
-      <MainNavbar showVillageInNavbar={true}/>
-
-      <main className="max-w-6xl mx-auto px-6 py-8">
-        <div className="flex items-center justify-between mb-6 gap-4">
-          <div className="flex items-center gap-4">
-            <button onClick={() => navigate(`/home`)} className="inline-flex items-center gap-2 px-3 py-2 bg-white border rounded-lg shadow-sm hover:bg-gray-50">
-              <ArrowLeft size={16} /> Back
-            </button>
-
-            <div>
-              <h1 className="text-2xl font-bold">Materials</h1>
             </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-3 border rounded-lg px-3 py-2 bg-white">
-              <Search size={18} />
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search id / name / unit / description"
-                className="bg-transparent outline-none text-sm w-64"
-              />
-              <button onClick={() => setSearch("")} className="text-sm px-3 py-1 rounded-md bg-gray-50">Clear</button>
-            </div>
-
-            <button onClick={openCreateModal} className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-indigo-600 text-white hover:bg-indigo-700">
-              <PlusCircle size={16} /> New Material
-            </button>
           </div>
         </div>
-
-        {/* list */}
-        <section>
-          {loading ? (
-            <div className="text-sm text-gray-500">Loading…</div>
-          ) : error ? (
-            <div className="text-sm text-red-600">{error}</div>
-          ) : filtered.length === 0 ? (
-            <div className="text-sm text-gray-500">No materials found.</div>
-          ) : (
-            <div>
-              {filtered.map((m) => (
-                <MaterialCard key={m.materialId ?? `${m.name}_${m.unit}`} m={m} />
-              ))}
-            </div>
-          )}
-        </section>
-
-        <Modal />
-      </main>
+      )}
     </div>
   );
 }

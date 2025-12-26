@@ -163,7 +163,7 @@ export default function LandingPage() {
         </div>
 
         <nav className="hidden md:flex gap-6 items-center mr-6">
-          <button onClick={() => navigate('/login')} className="text-sm">Login</button>
+          <button onClick={() => navigate('/')} className="text-sm">Login</button>
           <a href="#" onClick={(e) => e.preventDefault()} className="text-sm">Guidelines</a>
           <a href="#" onClick={(e) => e.preventDefault()} className="text-sm">About</a>
           <a href="#" onClick={(e) => e.preventDefault()} className="text-sm">FAQs</a>

@@ -1,3 +1,4 @@
+// src/pages/HomeDetailsPage.jsx
 import React, { useEffect, useMemo, useState, useRef, useContext } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import MainNavbar from '../component/MainNavbar';
@@ -5,15 +6,6 @@ import { API_BASE } from '../config/Api.js';
 import { motion } from 'framer-motion';
 import { FileText, RefreshCw, ArrowLeft, Search } from 'lucide-react';
 import { AuthContext } from '../context/AuthContext';
-
-/*
-  Behavior summary (unchanged except for source of plotId/village):
-  - All server fetches include page & limit (and homeId when provided).
-  - currentStage is never sent to the server (stage filtering is client-side).
-  - Abort previous requests to avoid stale responses.
-  - Cache policy: previous cache cleared before every API call; when API returns and call included homeId, cache that page.
-  - Single verification fetch now uses /fieldverification/one/:id as requested.
-*/
 
 function fmtDate(iso) {
   if (!iso) return '—';
@@ -24,9 +16,9 @@ function StatusBadge({ status }) {
   const map = {
     '-1': { label: 'Deleted', cls: 'bg-gray-100 text-gray-700' },
     '1': { label: 'Forest Guard', cls: 'bg-yellow-200 text-yellow-800' },
-    '2': { label: 'Range Assitant', cls: 'bg-blue-300 text-blue-800' },
+    '2': { label: 'Range Assistant', cls: 'bg-blue-300 text-blue-800' },
     '3': { label: 'Range Officer', cls: 'bg-indigo-300 text-indigo-800' },
-    '4': { label: 'Assitant Director', cls: 'bg-green-300 text-green-800' }
+    '4': { label: 'Assistant Director', cls: 'bg-green-300 text-green-800' }
   };
   const e = map[String(status)] || { label: `Status ${status}`, cls: 'bg-gray-100 text-gray-800' };
   return <span className={`text-xs px-2 py-1 rounded ${e.cls}`}>{e.label}</span>;
@@ -59,11 +51,6 @@ export default function HomeDetailsPage() {
     } catch { return null; }
   };
 
-  // Prefer (in order):
-  // 1) route param
-  // 2) AuthContext.plotId
-  // 3) AuthContext.selectedPlot
-  // 4) localStorage.plotId / selectedPlot
   const initialPlot = routePlotId
     || ctxPlotId
     || (selectedPlot && (selectedPlot.plotId ?? selectedPlot.id))
@@ -120,19 +107,23 @@ export default function HomeDetailsPage() {
   const [buildings, setBuildings] = useState([]);
   const [search, setSearch] = useState('');
 
-  // verifications: latest fetched page
+  // verifications: fetched from server (no caching)
   const [verifications, setVerifications] = useState([]);
-  const cachedHomeVerificationsRef = useRef(null);
-  const [cachedMeta, setCachedMeta] = useState(null);
-
   const [verifLoading, setVerifLoading] = useState(false);
   const [totalCount, setTotalCount] = useState(0);
 
   // filters + pagination
   const [selectedHome, setSelectedHome] = useState(null);
-  const [filteredStage, setFilteredStage] = useState(null);
+  const [filteredStage, setFilteredStage] = useState(null); // server-side currentStage
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(15);
+
+  // server-side filters exposed in UI
+  const [statusFilter, setStatusFilter] = useState('');
+  const [fromDateFilter, setFromDateFilter] = useState('');
+  const [toDateFilter, setToDateFilter] = useState('');
+  // optional homeId filter (keeps compatibility if you want it)
+  const [homeIdFilter, setHomeIdFilter] = useState('');
 
   // modal
   const [modalOpen, setModalOpen] = useState(false);
@@ -165,7 +156,7 @@ export default function HomeDetailsPage() {
   async function fetchHouse() {
     try {
       if (!resolvedPlotId) { setHouse(null); return; }
-      const url = `${API_BASE}/house/one/${encodeURIComponent(resolvedPlotId)}`;
+      const url = `${API_BASE}/house/one/${encodeURIComponent(resolvedPlotId)}?_t=${Date.now()}`;
       const { ok, status, json, text } = await fetchWithSignal(url, null);
       if (!ok) {
         if (status === 401) setError((json && (json.message || json.error)) || text || 'Unauthorized');
@@ -198,7 +189,7 @@ export default function HomeDetailsPage() {
   async function fetchBuildings() {
     try {
       if (!resolvedVillageId) { setBuildings([]); return; }
-      const url = `${API_BASE}/buildings/${encodeURIComponent(resolvedVillageId)}`;
+      const url = `${API_BASE}/buildings/${encodeURIComponent(resolvedVillageId)}?_t=${Date.now()}`;
       const { ok, status, json, text } = await fetchWithSignal(url, null);
       if (!ok) {
         if (status === 401) setError((json && (json.message || json.error)) || text || 'Unauthorized');
@@ -215,18 +206,15 @@ export default function HomeDetailsPage() {
     }
   }
 
-  // Core: fetch verifications (page, limit, optional homeId)
-  async function fetchFieldVerifications({ page: pageArg = 1, limit: limitArg = 15, homeId = null } = {}) {
+  // Core: fetch verifications (page, limit, optional homeId, currentStage, status, fromDate, toDate)
+  async function fetchFieldVerifications({ page: pageArg = 1, limit: limitArg = 15, currentStage = null, status = null, fromDate = null, toDate = null, homeId = null } = {}) {
+    // abort previous
     if (fetchAbortRef.current) {
       try { fetchAbortRef.current.abort(); } catch {}
     }
     const controller = new AbortController();
     fetchAbortRef.current = controller;
     const signal = controller.signal;
-
-    // ALWAYS clear previous cached data before starting a new call
-    cachedHomeVerificationsRef.current = null;
-    setCachedMeta(null);
 
     setVerifLoading(true);
     setVerifications([]);
@@ -242,20 +230,23 @@ export default function HomeDetailsPage() {
       const qs = new URLSearchParams();
       qs.set('page', String(pageArg || 1));
       qs.set('limit', String(limitArg || 15));
+      if (currentStage) qs.set('currentStage', String(currentStage));
+      if (status) qs.set('status', String(status));
+      if (fromDate) qs.set('fromDate', String(fromDate));
+      if (toDate) qs.set('toDate', String(toDate));
       if (homeId) qs.set('homeId', String(homeId));
+      // cache-busting
       qs.set('_t', String(Date.now()));
 
       const url = `${API_BASE}/field_verification/${encodeURIComponent(resolvedVillageId)}/${encodeURIComponent(resolvedPlotId)}?${qs.toString()}`;
-      console.debug('[fetchFieldVerifications] starting', { url, pageArg, limitArg, homeId });
+      console.debug('[fetchFieldVerifications] starting', { url, pageArg, limitArg, currentStage, status, fromDate, toDate, homeId });
 
-      const { ok, status, json, text } = await fetchWithSignal(url, signal);
+      const { ok, status: st, json, text } = await fetchWithSignal(url, signal);
 
       if (!ok) {
-        if (status === 401) setError((json && (json.message || json.error)) || text || 'Unauthorized');
-        else console.warn('fetchFieldVerifications failed', status, text);
+        if (st === 401) setError((json && (json.message || json.error)) || text || 'Unauthorized');
+        else console.warn('fetchFieldVerifications failed', st, text);
         setVerifications([]); setTotalCount(0);
-        cachedHomeVerificationsRef.current = null;
-        setCachedMeta(null);
         return [];
       }
 
@@ -277,15 +268,6 @@ export default function HomeDetailsPage() {
       setVerifications(items);
       setTotalCount(Number(count) || 0);
 
-      // Cache only when homeId provided
-      if (homeId) {
-        cachedHomeVerificationsRef.current = items;
-        setCachedMeta({ homeId: String(homeId), page: Number(pageArg || 1), limit: Number(limitArg || 15), ts: Date.now() });
-      } else {
-        cachedHomeVerificationsRef.current = null;
-        setCachedMeta(null);
-      }
-
       console.debug('[fetchFieldVerifications] finished', { itemsCount: items.length, totalCount: count });
       return items;
     } catch (err) {
@@ -296,15 +278,13 @@ export default function HomeDetailsPage() {
       console.error('fetchFieldVerifications error', err);
       setVerifications([]); setTotalCount(0);
       setError(err?.message || 'Error fetching verifications');
-      cachedHomeVerificationsRef.current = null;
-      setCachedMeta(null);
       return [];
     } finally {
       setVerifLoading(false);
     }
   }
 
-  // SINGLE verification fetch -> Uses /fieldverification/one/:id per your request
+  // SINGLE verification fetch -> Uses /field_verification/one/:id
   async function fetchVerification(verificationId) {
     if (modalAbortRef.current) {
       try { modalAbortRef.current.abort(); } catch {}
@@ -315,7 +295,6 @@ export default function HomeDetailsPage() {
 
     try {
       if (!verificationId) return null;
-      // NOTE: changed endpoint to /fieldverification/one/:id (no underscore)
       const url = `${API_BASE}/field_verification/one/${encodeURIComponent(verificationId)}?_t=${Date.now()}`;
       const { ok, status, json, text } = await fetchWithSignal(url, signal);
       if (!ok) {
@@ -348,17 +327,7 @@ export default function HomeDetailsPage() {
     return house?.typeName ?? house?.type ?? house?.typeId ?? '';
   }
 
-  // Choose data source for timeline & filters
-  function sourceVerifications() {
-    if (!selectedHome) return verifications;
-    if (!cachedMeta || !cachedHomeVerificationsRef.current) return verifications;
-    const hid = selectedHome.homeId ?? selectedHome.home_id ?? selectedHome.home ?? null;
-    if (!hid) return verifications;
-    if (String(cachedMeta.homeId) !== String(hid)) return verifications;
-    if (Number(cachedMeta.page) !== Number(page) || Number(cachedMeta.limit) !== Number(limit)) return verifications;
-    return cachedHomeVerificationsRef.current || verifications;
-  }
-
+  // Stage map: derive from building if available, otherwise infer from fetched verifications
   function getStagesMap() {
     const building = findBuildingForHouse();
     if (building) {
@@ -373,8 +342,7 @@ export default function HomeDetailsPage() {
     }
 
     const seen = new Map();
-    const source = sourceVerifications() || [];
-    for (const d of source) {
+    for (const d of verifications || []) {
       const st = d.currentStage ?? d.stageId ?? d.current_stage ?? null;
       if (!st) continue;
       if (!seen.has(st)) seen.set(st, { id: st, name: d.name ?? st, order: seen.size });
@@ -383,7 +351,7 @@ export default function HomeDetailsPage() {
   }
 
   function getCompletionDateForStage(stage) {
-    const candidates = sourceVerifications() || [];
+    const candidates = verifications || [];
     let latest = null;
     for (const d of candidates) {
       const dStage = d.currentStage ?? d.stageId ?? d.current_stage ?? '';
@@ -398,20 +366,20 @@ export default function HomeDetailsPage() {
     return latest ? latest.toISOString() : null;
   }
 
-  const stagesMap = useMemo(() => getStagesMap(), [buildings, verifications, selectedHome, cachedMeta]);
+  const stagesMap = useMemo(() => getStagesMap(), [buildings, verifications]);
   const completed = Array.isArray(selectedHome?.stagesCompleted) ? selectedHome.stagesCompleted : (Array.isArray(house?.stagesCompleted) ? house.stagesCompleted : []);
   const timeline = useMemo(() => stagesMap.map((st, idx) => {
     const name = st.name ?? st.label ?? String(st.id ?? `Stage ${idx + 1}`);
     const isCompleted = completed.includes(name) || completed.includes(st.id) || completed.includes(String(idx));
     const completionDate = isCompleted ? getCompletionDateForStage(st) : null;
     return { ...st, name, order: st.order ?? idx, isCompleted, completionDate };
-  }), [stagesMap, completed, verifications, cachedMeta]);
+  }), [stagesMap, completed, verifications]);
 
   const completedCount = timeline.filter(t => t.isCompleted).length;
   const pct = stagesMap.length ? Math.round((completedCount / stagesMap.length) * 100) : 0;
 
   const displayItems = useMemo(() => {
-    let items = Array.isArray(sourceVerifications()) ? sourceVerifications().slice() : [];
+    let items = Array.isArray(verifications) ? verifications.slice() : [];
     if (filteredStage) {
       items = items.filter(d => {
         const st = d.currentStage ?? d.stageId ?? d.current_stage ?? '';
@@ -423,15 +391,22 @@ export default function HomeDetailsPage() {
       items = items.filter(d => (d.name ?? '').toLowerCase().includes(q) || (d.insertedBy ?? '').toLowerCase().includes(q) || (d.notes ?? '').toLowerCase().includes(q));
     }
     return items;
-  }, [verifications, cachedMeta, filteredStage, search, selectedHome, page, limit]);
+  }, [verifications, filteredStage, search]);
 
   // user actions
-  function onTimelineClick(t) {
+  async function onTimelineClick(t) {
     const stageId = t?.id ?? null;
-    if (!stageId) { setFilteredStage(null); return; }
+    if (!stageId) { setFilteredStage(null); setPage(1); await fetchFieldVerifications({ page: 1, limit, currentStage: null, status: statusFilter || null, fromDate: fromDateFilter || null, toDate: toDateFilter || null, homeId: homeIdFilter || null }); return; }
     const same = String(filteredStage) === String(stageId);
-    if (same) setFilteredStage(null);
-    else setFilteredStage(stageId);
+    if (same) {
+      setFilteredStage(null);
+      setPage(1);
+      await fetchFieldVerifications({ page: 1, limit, currentStage: null, status: statusFilter || null, fromDate: fromDateFilter || null, toDate: toDateFilter || null, homeId: homeIdFilter || null });
+    } else {
+      setFilteredStage(stageId);
+      setPage(1);
+      await fetchFieldVerifications({ page: 1, limit, currentStage: stageId, status: statusFilter || null, fromDate: fromDateFilter || null, toDate: toDateFilter || null, homeId: homeIdFilter || null });
+    }
   }
 
   async function onSelectHome(h) {
@@ -441,19 +416,15 @@ export default function HomeDetailsPage() {
       setSelectedHome(null);
       setFilteredStage(null);
       setPage(1);
-      cachedHomeVerificationsRef.current = null;
-      setCachedMeta(null);
-      await fetchFieldVerifications({ page: 1, limit, homeId: null });
+      await fetchFieldVerifications({ page: 1, limit, currentStage: null, status: statusFilter || null, fromDate: fromDateFilter || null, toDate: toDateFilter || null, homeId: null });
       return;
     }
 
-    cachedHomeVerificationsRef.current = null;
-    setCachedMeta(null);
     setSelectedHome(h);
     setFilteredStage(null);
     setPage(1);
     setSearch('');
-    await fetchFieldVerifications({ page: 1, limit, homeId: hid });
+    await fetchFieldVerifications({ page: 1, limit, currentStage: null, status: statusFilter || null, fromDate: fromDateFilter || null, toDate: toDateFilter || null, homeId: hid });
   }
 
   async function gotoPage(p) {
@@ -462,9 +433,7 @@ export default function HomeDetailsPage() {
     if (np === page) return;
     setPage(np);
     const hid = selectedHome ? (selectedHome.homeId ?? selectedHome.home_id ?? selectedHome.home) : null;
-    cachedHomeVerificationsRef.current = null;
-    setCachedMeta(null);
-    await fetchFieldVerifications({ page: np, limit, homeId: hid });
+    await fetchFieldVerifications({ page: np, limit, currentStage: filteredStage, status: statusFilter || null, fromDate: fromDateFilter || null, toDate: toDateFilter || null, homeId: hid });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -473,9 +442,7 @@ export default function HomeDetailsPage() {
     setLimit(n);
     setPage(1);
     const hid = selectedHome ? (selectedHome.homeId ?? selectedHome.home_id ?? selectedHome.home) : null;
-    cachedHomeVerificationsRef.current = null;
-    setCachedMeta(null);
-    await fetchFieldVerifications({ page: 1, limit: n, homeId: hid });
+    await fetchFieldVerifications({ page: 1, limit: n, currentStage: filteredStage, status: statusFilter || null, fromDate: fromDateFilter || null, toDate: toDateFilter || null, homeId: hid });
   }
 
   async function openHistoryModalById(e, verificationId) {
@@ -513,7 +480,7 @@ export default function HomeDetailsPage() {
         setPage(1);
         setFilteredStage(null);
         const hid = selectedHome ? (selectedHome.homeId ?? selectedHome.home_id ?? selectedHome.home) : null;
-        await fetchFieldVerifications({ page: 1, limit, homeId: hid });
+        await fetchFieldVerifications({ page: 1, limit, currentStage: null, status: statusFilter || null, fromDate: fromDateFilter || null, toDate: toDateFilter || null, homeId: hid });
       } catch (e) {
         if (e && e.name === 'AbortError') { /* ignore */ }
         else {
@@ -533,12 +500,10 @@ export default function HomeDetailsPage() {
     (async () => {
       if (!resolvedVillageId || !resolvedPlotId) return;
       const hid = selectedHome ? (selectedHome.homeId ?? selectedHome.home_id ?? selectedHome.home) : null;
-      cachedHomeVerificationsRef.current = null;
-      setCachedMeta(null);
-      await fetchFieldVerifications({ page, limit, homeId: hid });
+      await fetchFieldVerifications({ page, limit, currentStage: filteredStage, status: statusFilter || null, fromDate: fromDateFilter || null, toDate: toDateFilter || null, homeId: hid });
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, limit, selectedHome]);
+  }, [page, limit, selectedHome, filteredStage, statusFilter, fromDateFilter, toDateFilter]);
 
   useEffect(() => {
     return () => {
@@ -603,6 +568,24 @@ export default function HomeDetailsPage() {
 
   const typeName = getTypeName();
 
+  // filter helpers
+  const applyFilters = async () => {
+    setPage(1);
+    const hid = selectedHome ? (selectedHome.homeId ?? selectedHome.home_id ?? selectedHome.home) : null;
+    await fetchFieldVerifications({ page: 1, limit, currentStage: filteredStage, status: statusFilter || null, fromDate: fromDateFilter || null, toDate: toDateFilter || null, homeId: homeIdFilter || hid });
+  };
+
+  const clearFilters = async () => {
+    setStatusFilter('');
+    setFromDateFilter('');
+    setToDateFilter('');
+    setHomeIdFilter('');
+    setFilteredStage(null);
+    setPage(1);
+    const hid = selectedHome ? (selectedHome.homeId ?? selectedHome.home_id ?? selectedHome.home) : null;
+    await fetchFieldVerifications({ page: 1, limit, currentStage: null, status: null, fromDate: null, toDate: null, homeId: hid });
+  };
+
   return (
     <div className="min-h-screen bg-[#f8f0dc]">
       <MainNavbar showVillageInNavbar />
@@ -613,7 +596,7 @@ export default function HomeDetailsPage() {
           </div>
 
           <div className="flex items-center gap-2">
-            <button onClick={async () => { setFilteredStage(null); setPage(1); setSelectedHome(null); cachedHomeVerificationsRef.current = null; setCachedMeta(null); await fetchFieldVerifications({ page: 1, limit, homeId: null }); }} className="px-3 py-2 border rounded bg-white text-sm flex items-center gap-2 text-slate-700"><RefreshCw size={16} /> Refresh</button>
+            <button onClick={async () => { setFilteredStage(null); setPage(1); setSelectedHome(null); await fetchFieldVerifications({ page: 1, limit, currentStage: null }); }} className="px-3 py-2 border rounded bg-white text-sm flex items-center gap-2 text-slate-700"><RefreshCw size={16} /> Refresh</button>
           </div>
         </div>
 
@@ -718,17 +701,52 @@ export default function HomeDetailsPage() {
             <div className="space-y-4">
               <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }} className="space-y-4">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-medium text-slate-800">Stage cards</h3>
+                  <h3 className="text-lg font-medium text-slate-800">Verifications</h3>
 
                   <div className="flex items-center gap-3">
                     <div className="text-sm text-slate-500 mr-3">Showing: <span className="font-medium">{filteredStage ? `${displayItems.length} (stage filtered)` : `${displayItems.length} on page ${page}`}</span></div>
                     <div className="relative">
-                      <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filter verifications or inserted by..." className="pl-9 pr-3 py-2 border rounded w-64 focus:outline-none focus:ring" />
-                      <div className="absolute left-3 top-2.5 text-slate-400"><Search size={16} /></div>
+                      
+                      
                     </div>
                     {filteredStage && (
-                      <button onClick={() => setFilteredStage(null)} className="px-3 py-2 text-sm bg-white border rounded">Clear stage filter</button>
+                      <button onClick={async () => { setFilteredStage(null); setPage(1); await fetchFieldVerifications({ page: 1, limit, currentStage: null }); }} className="px-3 py-2 text-sm bg-white border rounded">Clear stage filter</button>
                     )}
+                  </div>
+                </div>
+
+                {/* NEW: server-side filter controls (keeps existing style) */}
+                <div className="bg-yellow-100 border rounded-xl p-3 flex flex-wrap gap-3 items-end">
+                  <div>
+                    <label className="text-xs text-slate-600">Status</label>
+                    <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="mt-1 px-2 py-1 border rounded">
+                      <option value="">— any —</option>
+                      <option value="1">Forest Guard</option>
+                      <option value="2">Range Assistant</option>
+                      <option value="3">Range Officer</option>
+                      <option value="4">Assistant Director</option>
+                      <option value="-1">Deleted</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-xs text-slate-600">From date</label>
+                    <input type="date" value={fromDateFilter} onChange={(e) => setFromDateFilter(e.target.value)} className="mt-1 px-2 py-1 border rounded" />
+                  </div>
+
+                  <div>
+                    <label className="text-xs text-slate-600">To date</label>
+                    <input type="date" value={toDateFilter} onChange={(e) => setToDateFilter(e.target.value)} className="mt-1 px-2 py-1 border rounded" />
+                  </div>
+
+                  <div className="relative">
+                    <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filter verifications or inserted by..." className="pl-9 pr-3 py-2 border rounded w-64 focus:outline-none focus:ring" />
+                    <div className="absolute left-3 top-2.5 text-slate-400"><Search size={16} /></div>
+                  </div>
+
+                  <div className="ml-auto flex items-center gap-2">
+                    <button onClick={applyFilters} className="px-3 py-1 bg-sky-600 text-white rounded">Apply</button>
+                    <button onClick={clearFilters} className="px-3 py-1 bg-white border rounded">Clear</button>
                   </div>
                 </div>
 
@@ -740,7 +758,7 @@ export default function HomeDetailsPage() {
                       <select value={limit} onChange={(e) => onChangeLimit(e.target.value)} className="p-2 border rounded">
                         {[5, 10, 15, 25, 50].map(n => (<option key={n} value={n}>{n}</option>))}
                       </select>
-                    </div>  
+                    </div>
                   </div>
 
                   <div className="flex items-center gap-2">

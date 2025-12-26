@@ -286,13 +286,13 @@ export default function VillageDashboard() {
 
           <div className="flex items-center gap-3">
             <button onClick={() => navigate("/family")} className="bg-green-200 hover:bg-green-300 px-4 py-2 rounded-2xl shadow text-sm font-medium">All Beneficiaries</button>
-            <button onClick={() => navigate(`/plots`)} className="bg-yellow-50 hover:bg-yellow-100 px-4 py-2 rounded-2xl shadow text-sm font-medium" title="Open plots for this village">Plots</button>
-            <button onClick={() => navigate(`/house`)} className="bg-yellow-50 hover:bg-yellow-100 px-4 py-2 rounded-2xl shadow text-sm font-medium" title="Open plots for this village">House</button>
-            <button onClick={() => navigate(`/meetings`)} className="bg-yellow-50 hover:bg-yellow-100 px-4 py-2 rounded-2xl shadow text-sm font-medium" title="Open meetings for this village">Meetings</button>
             <button onClick={() => navigate(`/buildings`)} className="bg-yellow-50 hover:bg-yellow-100 px-4 py-2 rounded-2xl shadow text-sm font-medium" title="Open buildings for this village">Buildings</button>
-            <button onClick={() => navigate(`/feedbacks`)} className="bg-yellow-50 hover:bg-yellow-100 px-4 py-2 rounded-2xl shadow text-sm font-medium" title="Open buildings for this village">feedbacks</button>
-            <button onClick={() => navigate(`/material`)} className="bg-yellow-50 hover:bg-yellow-100 px-4 py-2 rounded-2xl shadow text-sm font-medium" title="Open buildings for this village">material</button>
-            <button onClick={() => navigate(`/facilities`)} className="bg-yellow-50 hover:bg-yellow-100 px-4 py-2 rounded-2xl shadow text-sm font-medium" title="Open buildings for this village">facilities</button>
+            <button onClick={() => navigate(`/plots`)} className="bg-yellow-50 hover:bg-yellow-100 px-4 py-2 rounded-2xl shadow text-sm font-medium" title="Open plots for this village">Plots</button>
+            <button onClick={() => navigate(`/house`)} className="bg-yellow-50 hover:bg-yellow-100 px-4 py-2 rounded-2xl shadow text-sm font-medium" title="Open house for this village">House</button>
+            <button onClick={() => navigate(`/material`)} className="bg-yellow-50 hover:bg-yellow-100 px-4 py-2 rounded-2xl shadow text-sm font-medium" title="Open material for this village">Material</button>
+            <button onClick={() => navigate(`/facilities`)} className="bg-yellow-50 hover:bg-yellow-100 px-4 py-2 rounded-2xl shadow text-sm font-medium" title="Open facilities for this village">Facilities</button>
+            <button onClick={() => navigate(`/meetings`)} className="bg-yellow-50 hover:bg-yellow-100 px-4 py-2 rounded-2xl shadow text-sm font-medium" title="Open meetings for this village">Meetings</button>
+            <button onClick={() => navigate(`/feedbacks`)} className="bg-yellow-50 hover:bg-yellow-100 px-4 py-2 rounded-2xl shadow text-sm font-medium" title="Open feedback for this village">Feedbacks</button>
           </div>
         </div>
 

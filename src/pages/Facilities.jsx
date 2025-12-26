@@ -1,547 +1,552 @@
-// src/pages/FacilitiesPage.jsx
-import React, { useEffect, useMemo, useState, useContext } from "react";
+import React, { useEffect, useState, useContext } from "react";
 import { useNavigate } from "react-router-dom";
 import MainNavbar from "../component/MainNavbar";
+import { API_BASE } from "../config/Api";
 import { AuthContext } from "../context/AuthContext";
-import { API_BASE } from "../config/Api.js";
-import {
-  ArrowLeft,
-  Search,
-  PlusCircle,
-  Edit2,
-  Trash2,
-  X,
-  Save,
-  FileText,
-} from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
 
-/**
- * Facilities page
- * - GET /facilities
- * - POST /facilities
- * - PUT /facilities/:facilityId
- * - DELETE /facilities/:facilityId  (soft delete in backend)
- */
+/*
+ FacilitiesPage.jsx
+ - Mirrors MaterialsPage behavior but for /facilities
+ - Click a card to save selected facility in AuthContext (or localStorage) and navigate to /facility/one/:facilityId
+ - Supports add/edit/delete, keyboard access, search
+*/
+
+function EditIcon({ className = "w-4 h-4" }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden>
+      <path d="M3 21v-3.75L14.06 6.19l3.75 3.75L6.75 21H3z" />
+      <path d="M20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0L15 3.25l3.75 3.75 1.96-.01z" />
+    </svg>
+  );
+}
+
+function TrashIcon({ className = "w-4 h-4" }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden>
+      <path d="M3 6h18" />
+      <path d="M8 6v14a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V6" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+      <path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" />
+    </svg>
+  );
+}
 
 export default function FacilitiesPage() {
   const navigate = useNavigate();
-  const auth = useContext(AuthContext) || {};
-  const { selectedVillageId } = auth;
+  const authCtx = useContext(AuthContext);
 
-  const [localVillageId] = useState(() => {
-    try {
-      return typeof window !== "undefined" ? localStorage.getItem("villageId") : null;
-    } catch {
-      return null;
-    }
-  });
-  const villageId = selectedVillageId ?? localVillageId;
-
-  // attempt to read token from common places
-  function getAuthToken() {
-    if (auth?.token) return auth.token;
-    if (auth?.authToken) return auth.authToken;
-    if (auth?.user?.token) return auth.user.token;
-    if (auth?.user?.accessToken) return auth.user.accessToken;
-    if (typeof window !== "undefined") {
-      return (
-        localStorage.getItem("token") ||
-        localStorage.getItem("authToken") ||
-        localStorage.getItem("accessToken") ||
-        null
-      );
-    }
-    return null;
-  }
-  const token = getAuthToken();
-  const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
-
-  // state
   const [facilities, setFacilities] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [pageError, setPageError] = useState(null);
 
-  const [search, setSearch] = useState("");
+  const [showForm, setShowForm] = useState(false);
+  const [editingFacility, setEditingFacility] = useState(null);
+  const [form, setForm] = useState({ name: "", villageId: "", desc: "" });
+  const [submitLoading, setSubmitLoading] = useState(false);
 
-  // modal (create / edit)
-  const [modalOpen, setModalOpen] = useState(false);
-  const [modalLoading, setModalLoading] = useState(false);
-  const [modalError, setModalError] = useState(null);
-  const [editing, setEditing] = useState(false); // false => create, true => edit
-  const [form, setForm] = useState({
-    facilityId: "",
-    name: "",
-    type: "",
-    villageId: villageId || "",
-    capacity: "",
-    description: "",
-  });
+  const [toDelete, setToDelete] = useState(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
-  // helper: safe parse
-  function safeParseJson(text, res) {
-    const ct = (res?.headers?.get?.("content-type") || "").toLowerCase();
-    const trimmed = String(text || "").trim();
+  const [query, setQuery] = useState("");
+  const [formError, setFormError] = useState(null);
 
-    if (!ct.includes("application/json") && !trimmed.startsWith("{") && !trimmed.startsWith("[")) {
-      const snippet = trimmed.slice(0, 400);
-      throw new Error(`Expected JSON but got content-type="${ct}". Response starts with: ${snippet}`);
-    }
-
-    try {
-      return JSON.parse(trimmed);
-    } catch (err) {
-      const snippet = trimmed.slice(0, 400);
-      throw new Error(`Invalid JSON: ${err.message}. Response (first 400 chars): ${snippet}`);
-    }
-  }
-
-  // small wrapper to unify API behavior
-  async function apiFetch(path, opts = {}) {
-    const url = path.startsWith("http") ? path : `${API_BASE}${path}`;
-    const headers = { Accept: "application/json", ...authHeaders, ...(opts.headers || {}) };
-    const merged = { ...opts, headers };
-
-    const res = await fetch(url, merged);
-    const text = await res.text();
-
-    // If unauthorized, redirect to login
-    if (res.status === 401) {
-      try {
-        localStorage.removeItem("token");
-        localStorage.removeItem("authToken");
-        localStorage.removeItem("accessToken");
-      } catch {}
-      navigate("/login");
-      throw new Error("Unauthorized - please login");
-    }
-
-    if (!res.ok) {
-      try {
-        const payload = safeParseJson(text, res);
-        if (payload && payload.message) {
-          throw new Error(payload.message);
-        }
-      } catch (e) {
-        const snippet = (text || "").slice(0, 400);
-        throw new Error(`HTTP ${res.status} ${res.statusText} — ${snippet}`);
-      }
-    }
-
-    const payload = safeParseJson(text, res);
-    if (payload && payload.error) {
-      throw new Error(payload.message || "API error");
-    }
-
-    return payload;
-  }
-
-  // normalized extractor (backend returns result.items etc.)
-  function extractListFromPayload(payload) {
-    if (!payload) return [];
-    if (Array.isArray(payload?.result?.items)) return payload.result.items;
-    if (Array.isArray(payload?.result?.data)) return payload.result.data;
-    if (Array.isArray(payload?.result)) return payload.result;
-    if (Array.isArray(payload?.data)) return payload.data;
-    if (Array.isArray(payload)) return payload;
-    const possible = payload?.result?.items ?? payload?.result?.rows ?? payload?.items;
-    return Array.isArray(possible) ? possible : [];
-  }
-
-  // initial load
-  useEffect(() => {
-    let mounted = true;
-    const ctrl = new AbortController();
-
-    async function load() {
-      if (!mounted) return;
-      setLoading(true);
-      setError(null);
-      try {
-        const payload = await apiFetch("/facilities", { method: "GET", signal: ctrl.signal });
-        const list = extractListFromPayload(payload);
-        if (!mounted) return;
-        setFacilities(Array.isArray(list) ? list : []);
-      } catch (err) {
-        if (!mounted) return;
-        setError(err.message || "Failed to fetch facilities");
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    }
-
-    load();
-    return () => {
-      mounted = false;
-      ctrl.abort();
+  function authHeaders() {
+    const token = localStorage.getItem("token");
+    return {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
-
-  // search filter
-  const filtered = useMemo(() => {
-    if (!search) return facilities.slice();
-    const q = search.toLowerCase();
-    return facilities.filter((f) => {
-      return (
-        String(f.facilityId ?? "").toLowerCase().includes(q) ||
-        String(f.name ?? "").toLowerCase().includes(q) ||
-        String(f.type ?? "").toLowerCase().includes(q) ||
-        String(f.description ?? "").toLowerCase().includes(q)
-      );
-    });
-  }, [facilities, search]);
-
-  // modal helpers
-  function openCreateModal() {
-    setEditing(false);
-    setForm({ facilityId: "", name: "", type: "", villageId: villageId || "", capacity: "", description: "" });
-    setModalError(null);
-    setModalOpen(true);
   }
 
-  function openEditModal(facility) {
-    setEditing(true);
-    setForm({
-      facilityId: facility.facilityId ?? "",
-      name: facility.name ?? "",
-      type: facility.type ?? "",
-      villageId: facility.villageId ?? villageId ?? "",
-      capacity: facility.capacity !== undefined && facility.capacity !== null ? String(facility.capacity) : "",
-      description: facility.description ?? "",
-    });
-    setModalError(null);
-    setModalOpen(true);
-  }
-
-  function closeModal() {
-    setModalOpen(false);
-    setModalError(null);
-    setModalLoading(false);
-  }
-
-  // create
-  async function createFacility() {
-    if (!form.name || !form.type || !(form.villageId || villageId)) {
-      setModalError("Please provide name, type and villageId.");
-      return;
-    }
-
-    if (form.capacity && isNaN(Number(form.capacity))) {
-      setModalError("Capacity must be a number.");
-      return;
-    }
-
-    setModalLoading(true);
-    setModalError(null);
-
+  // ---------------- FETCH ----------------
+  async function fetchFacilities() {
+    setLoading(true);
+    setPageError(null);
     try {
-      const payload = {
-        name: form.name,
-        type: form.type,
-        villageId: form.villageId || villageId,
-        capacity: form.capacity ? Number(form.capacity) : undefined,
-        description: form.description || undefined,
-      };
-
-      const payloadRes = await apiFetch("/facilities", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      const created = payloadRes?.result ?? payloadRes ?? null;
-      if (created && created.facilityId) {
-        setFacilities((prev) => [created, ...prev]);
-      } else {
-        await reloadFacilities();
+      const res = await fetch(`${API_BASE}/facilities`, { headers: authHeaders() });
+      let data = null;
+      try {
+        data = await res.json();
+      } catch (e) {
+        data = null;
       }
 
-      closeModal();
+      if (!res.ok) {
+        const msg = (data && data.message) || `Failed to fetch facilities: ${res.status}`;
+        throw new Error(msg);
+      }
+      if (data && data.error) {
+        throw new Error(data.message || "Server error");
+      }
+
+      let items = [];
+      if (data && data.result && Array.isArray(data.result.items)) {
+        items = data.result.items;
+      } else if (data && Array.isArray(data.result)) {
+        items = data.result;
+      } else if (data && Array.isArray(data.items)) {
+        items = data.items;
+      } else if (data && data.result && data.result.item && Array.isArray(data.result.item)) {
+        items = data.result.item;
+      } else if (data && Array.isArray(data)) {
+        items = data;
+      }
+
+      setFacilities(items || []);
     } catch (err) {
-      setModalError(err.message || "Failed to create facility");
-    } finally {
-      setModalLoading(false);
-    }
-  }
-
-  // update
-  async function updateFacility() {
-    if (!form.facilityId) {
-      setModalError("Missing facilityId for update");
-      return;
-    }
-    if (!form.name || !form.type) {
-      setModalError("Please provide name and type.");
-      return;
-    }
-    if (form.capacity && isNaN(Number(form.capacity))) {
-      setModalError("Capacity must be a number.");
-      return;
-    }
-
-    setModalLoading(true);
-    setModalError(null);
-
-    try {
-      const payload = {
-        name: form.name,
-        type: form.type,
-        villageId: form.villageId || undefined,
-        capacity: form.capacity ? Number(form.capacity) : undefined,
-        description: form.description || undefined,
-      };
-
-      const path = `/facilities/${encodeURIComponent(String(form.facilityId))}`;
-      const payloadRes = await apiFetch(path, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      const updated = payloadRes?.result ?? payloadRes ?? payload;
-      const updatedWithId = { ...updated, facilityId: form.facilityId };
-
-      setFacilities((prev) => prev.map((f) => (String(f.facilityId) === String(form.facilityId) ? { ...f, ...updatedWithId } : f)));
-
-      closeModal();
-    } catch (err) {
-      setModalError(err.message || "Failed to update facility");
-    } finally {
-      setModalLoading(false);
-    }
-  }
-
-  // delete (soft delete in backend)
-  async function deleteFacility(facilityId) {
-    const ok = window.confirm(`Delete facility ${facilityId}? This action cannot be undone.`);
-    if (!ok) return;
-
-    try {
-      const path = `/facilities/${encodeURIComponent(String(facilityId))}`;
-      await apiFetch(path, { method: "DELETE" });
-
-      setFacilities((prev) => prev.filter((f) => String(f.facilityId) !== String(facilityId)));
-    } catch (err) {
-      alert(err.message || "Failed to delete facility");
-    }
-  }
-
-  // reload helper
-  async function reloadFacilities() {
-    setLoading(true);
-    setError(null);
-    try {
-      const payload = await apiFetch("/facilities", { method: "GET" });
-      const list = extractListFromPayload(payload);
-      setFacilities(Array.isArray(list) ? list : []);
-    } catch (err) {
-      setError(err.message || "Failed to reload facilities");
+      console.error("fetchFacilities:", err);
+      setPageError(err.message || "Failed to fetch facilities");
+      setFacilities([]);
     } finally {
       setLoading(false);
     }
   }
 
-  // small Facility card
-  function FacilityCard({ f }) {
-    return (
-      <div className="w-full bg-white rounded-2xl p-4 shadow-md border mb-4">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex-1">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <div className="text-lg font-semibold text-slate-800">{f.name ?? "—"}</div>
-                <div className="text-sm text-gray-500 mt-1">{f.description ?? "-"}</div>
-              </div>
+  useEffect(() => {
+    fetchFacilities();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-              <div className="text-right">
-                <div className="flex items-center gap-2">
-                  <button onClick={() => openEditModal(f)} className="inline-flex items-center gap-2 px-3 py-2 rounded-md border hover:bg-blue-100">
-                    <Edit2 size={14} />
-                  </button>
-
-                  <button onClick={() => deleteFacility(f.facilityId)} className="inline-flex items-center gap-2 px-3 py-2 rounded-md border hover:bg-red-50 text-red-600">
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-
-                <div className="text-xs text-gray-400 mt-1">
-                  {f.type ?? "-"} · Capacity: {f.capacity !== undefined ? String(f.capacity) : "-"}
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-3 flex items-center gap-2">
-              {Array.isArray(f.docs) && f.docs.length > 0 && (
-                <a href={f.docs[0]} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 px-3 py-2 rounded-md border hover:bg-gray-50">
-                  <FileText size={14} /> View
-                </a>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-    );
+  // ---------------- HELPERS ----------------
+  function resetForm() {
+    setForm({ name: "", villageId: "", desc: "" });
+    setEditingFacility(null);
+    setFormError(null);
   }
 
-  function Modal() {
-    return (
-      <AnimatePresence>
-        {modalOpen && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40"
-            onClick={closeModal}
-          >
-            <motion.div
-              initial={{ y: 20, scale: 0.98 }}
-              animate={{ y: 0, scale: 1 }}
-              exit={{ y: 10, scale: 0.98 }}
-              transition={{ type: "spring", stiffness: 320, damping: 28 }}
-              className="max-w-2xl w-full bg-[#f8f0dc] rounded-2xl shadow-2xl border overflow-hidden"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center justify-between p-4 border-b">
-                <div>
-                  <div className="text-xs text-gray-500">{editing ? "Edit facility" : "New facility"}</div>
-                  <div className="text-lg font-semibold">{editing ? form.facilityId : "Create facility"}</div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <button onClick={closeModal} className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-indigo-600 text-white hover:bg-indigo-700">
-                    <X size={16} />
-                  </button>
-                </div>
-              </div>
-
-              <div className="p-6 grid grid-cols-1 gap-4">
-                {modalError && <div className="text-sm text-red-600">{modalError}</div>}
-
-                <div>
-                  <label className="text-xs text-gray-500">Name</label>
-                  <input
-                    value={form.name}
-                    onChange={(e) => setForm((s) => ({ ...s, name: e.target.value }))}
-                    className="w-full mt-1 px-3 py-2 border rounded-md text-sm"
-                    placeholder="e.g. Community Hall"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs text-gray-500">Type</label>
-                    <input
-                      value={form.type}
-                      onChange={(e) => setForm((s) => ({ ...s, type: e.target.value }))}
-                      className="w-full mt-1 px-3 py-2 border rounded-md text-sm"
-                      placeholder="e.g. School / Health / Hall"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-xs text-gray-500">Capacity</label>
-                    <input
-                      value={form.capacity}
-                      onChange={(e) => setForm((s) => ({ ...s, capacity: e.target.value }))}
-                      className="w-full mt-1 px-3 py-2 border rounded-md text-sm"
-                      placeholder="numeric (optional)"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-xs text-gray-500">Village ID</label>
-                  <input
-                    value={form.villageId}
-                    onChange={(e) => setForm((s) => ({ ...s, villageId: e.target.value }))}
-                    className="w-full mt-1 px-3 py-2 border rounded-md text-sm"
-                    placeholder="villageId (auto-filled if available)"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs text-gray-500">Description</label>
-                  <textarea
-                    value={form.description}
-                    onChange={(e) => setForm((s) => ({ ...s, description: e.target.value }))}
-                    className="w-full mt-1 px-3 py-2 border rounded-md text-sm"
-                    rows={3}
-                    placeholder="Optional description"
-                  />
-                </div>
-
-                <div className="flex items-center justify-end gap-2">
-                  <button onClick={closeModal} className="px-4 py-2 rounded-md bg-white border hover:bg-gray-50" disabled={modalLoading}>
-                    Cancel
-                  </button>
-
-                  <button
-                    onClick={editing ? updateFacility : createFacility}
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-indigo-600 text-white hover:bg-indigo-700"
-                    disabled={modalLoading}
-                  >
-                    <Save size={14} /> {modalLoading ? "Saving…" : editing ? "Update" : "Create"}
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    );
+  function openCreate() {
+    resetForm();
+    setShowForm(true);
   }
 
+  function openEdit(facility) {
+    setEditingFacility(facility);
+    setForm({ name: facility.name || "", villageId: facility.villageId || "", desc: facility.desc || "" });
+    setFormError(null);
+    setShowForm(true);
+  }
+
+  function saveSelectedFacilityId(id) {
+    if (id === undefined || id === null) return;
+    const idStr = String(id);
+    try {
+      if (authCtx && typeof authCtx.setSelectedFacility === "function") {
+        try {
+          authCtx.setSelectedFacility({ facilityId: idStr });
+        } catch {
+          authCtx.setSelectedFacility(idStr);
+        }
+        return;
+      }
+
+      if (authCtx && typeof authCtx.setFacilityId === "function") {
+        authCtx.setFacilityId(idStr);
+        return;
+      }
+
+      if (authCtx && typeof authCtx.selectFacility === "function") {
+        try {
+          authCtx.selectFacility({ facilityId: idStr });
+        } catch {
+          authCtx.selectFacility({ id: idStr });
+        }
+        return;
+      }
+
+      localStorage.setItem("facilityId", idStr);
+      localStorage.setItem("selectedFacility", JSON.stringify({ facilityId: idStr }));
+    } catch (e) {
+      console.warn("Failed to save selected facility to AuthContext, falling back to localStorage", e);
+      try {
+        localStorage.setItem("facilityId", idStr);
+        localStorage.setItem("selectedFacility", JSON.stringify({ facilityId: idStr }));
+      } catch {}
+    }
+  }
+
+  function handleCardClick(facility) {
+    const id = facility?.facilityId ?? facility?.id ?? facility?._id ?? facility?.facility_id;
+    if (id === undefined || id === null) {
+      setPageError("This facility has no id and cannot be opened.");
+      return;
+    }
+
+    saveSelectedFacilityId(id);
+    navigate(`/facility/one/${encodeURIComponent(String(id))}`);
+  }
+
+  function handleCardKeyDown(e, facility) {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      handleCardClick(facility);
+    }
+  }
+
+  // ---------------- CREATE / UPDATE ----------------
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setPageError(null);
+    setFormError(null);
+
+    const nameTrim = (form.name || "").trim();
+    const villageTrim = (form.villageId || "").trim();
+    const descTrim = String(form.desc || "").trim();
+
+    const isEdit = Boolean(editingFacility);
+    if (!isEdit && !nameTrim) {
+      setFormError("Name is required");
+      return;
+    }
+
+    const payload = {};
+    const originalName = (editingFacility?.name ?? "").toString();
+    if (!isEdit) {
+      payload.name = nameTrim;
+    } else {
+      if (nameTrim !== originalName.trim()) {
+        payload.name = nameTrim;
+      }
+    }
+
+    const originalVillage = (editingFacility?.villageId ?? "").toString();
+    if (!isEdit) {
+      if (villageTrim !== "") payload.villageId = villageTrim;
+    } else {
+      if (villageTrim !== originalVillage.trim()) {
+        if (villageTrim === "" && originalVillage.trim() !== "") {
+          payload.villageId = "";
+        } else if (villageTrim !== "") {
+          payload.villageId = villageTrim;
+        }
+      }
+    }
+
+    const originalDesc = (editingFacility?.desc ?? "").toString();
+    if (!isEdit) {
+      if (descTrim !== "") payload.desc = descTrim;
+    } else {
+      if (descTrim !== originalDesc.trim()) {
+        if (descTrim === "" && originalDesc.trim() !== "") {
+          payload.desc = "";
+        } else if (descTrim !== "") {
+          payload.desc = descTrim;
+        }
+      }
+    }
+
+    if (isEdit && Object.keys(payload).length === 0) {
+      setFormError("No changes to update");
+      return;
+    }
+
+    const url = isEdit
+      ? `${API_BASE}/facilities/${encodeURIComponent(editingFacility.facilityId)}`
+      : `${API_BASE}/facilities`;
+    const method = isEdit ? "PUT" : "POST";
+
+    setSubmitLoading(true);
+    try {
+      const res = await fetch(url, {
+        method,
+        headers: authHeaders(),
+        body: JSON.stringify(payload),
+      });
+
+      let data = null;
+      try {
+        data = await res.json();
+      } catch (e) {
+        data = null;
+      }
+
+      if (!res.ok) {
+        let msg = `Save failed: ${res.status}`;
+        if (data) {
+          if (data.message) msg = data.message;
+          else if (data.errors) msg = JSON.stringify(data.errors);
+          else msg = JSON.stringify(data);
+        }
+        throw new Error(msg);
+      }
+      if (data && data.error) {
+        const backendMsg = data.message || JSON.stringify(data);
+        throw new Error(backendMsg);
+      }
+
+      if (!isEdit) {
+        const created = data?.result ?? null;
+        if (created && (created.facilityId || created.facilityId === 0)) {
+          setFacilities((prev) => [created, ...prev]);
+        } else {
+          await fetchFacilities();
+        }
+      } else {
+        const updatedFields = data?.result ?? null;
+        if (updatedFields && Object.keys(updatedFields).length > 0) {
+          setFacilities((prev) =>
+            prev.map((f) => (String(f.facilityId) === String(editingFacility.facilityId) ? { ...f, ...updatedFields } : f))
+          );
+        } else {
+          await fetchFacilities();
+        }
+      }
+
+      setShowForm(false);
+      resetForm();
+    } catch (err) {
+      console.error("handleSubmit:", err);
+      const msg = err.message || "Save failed";
+      setFormError(msg);
+      setPageError(msg);
+    } finally {
+      setSubmitLoading(false);
+    }
+  }
+
+  // ---------------- DELETE ----------------
+  function confirmDelete(facility) {
+    setToDelete(facility);
+    setPageError(null);
+  }
+
+  async function handleDeleteConfirmed() {
+    if (!toDelete) return;
+    setDeleteLoading(true);
+    setPageError(null);
+    try {
+      const res = await fetch(`${API_BASE}/facilities/${encodeURIComponent(toDelete.facilityId)}`, {
+        method: "DELETE",
+        headers: authHeaders(),
+      });
+
+      let data = null;
+      try {
+        data = await res.json();
+      } catch (e) {
+        data = null;
+      }
+
+      if (!res.ok) {
+        const msg = (data && data.message) || `Delete failed: ${res.status}`;
+        throw new Error(msg);
+      }
+      if (data && data.error) {
+        throw new Error(data.message || "Server error");
+      }
+
+      setFacilities((prev) => prev.filter((f) => String(f.facilityId) !== String(toDelete.facilityId)));
+      setToDelete(null);
+    } catch (err) {
+      console.error("handleDeleteConfirmed:", err);
+      setPageError(err.message || "Delete failed");
+    } finally {
+      setDeleteLoading(false);
+    }
+  }
+
+  function cancelDelete() {
+    setToDelete(null);
+  }
+
+  // ---------------- SEARCH FILTER ----------------
+  const filtered = facilities.filter((f) => {
+    if (!query) return true;
+    const q = query.toLowerCase();
+    return (
+      (String(f.name || "") || "").toLowerCase().includes(q) ||
+      (String(f.desc || "") || "").toLowerCase().includes(q) ||
+      (String(f.facilityId || "") || "").toLowerCase().includes(q) ||
+      (String(f.villageId || "") || "").toLowerCase().includes(q)
+    );
+  });
+
+  // ---------------- RENDER ----------------
   return (
     <div className="min-h-screen bg-[#f8f0dc] font-sans">
       <MainNavbar showVillageInNavbar={true} />
 
-      <main className="max-w-6xl mx-auto px-6 py-8">
-        <div className="flex items-center justify-between mb-6 gap-4">
-          <div className="flex items-center gap-4">
-            <button onClick={() => navigate(`/home`)} className="inline-flex items-center gap-2 px-3 py-2 bg-white border rounded-lg shadow-sm hover:bg-gray-50">
-              <ArrowLeft size={16} /> Back
+      <div className="max-w-6xl mx-auto px-4 py-6 sm:px-6 lg:px-8">
+        {pageError && <div className="mb-4 p-3 rounded bg-red-50 border border-red-200 text-red-700">{pageError}</div>}
+
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-6">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => navigate("/home")}
+              className="px-3 py-2 border rounded-md bg-white text-sm shadow-sm hover:shadow"
+            >
+              ← Back
             </button>
-
-            
           </div>
+
           <div>
-              <h1 className="text-2xl font-bold">Facilities</h1>
-            </div>
+            <h1 className="text-2xl font-semibold">Facilities</h1>
+          </div>
 
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-3 border rounded-lg px-3 py-2 bg-white">
-              <Search size={18} />
-              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search id / name / type / description" className="bg-transparent outline-none text-sm w-64" />
-              <button onClick={() => setSearch("")} className="text-sm px-3 py-1 rounded-md bg-gray-50">Clear</button>
-            </div>
-
-            <button onClick={openCreateModal} className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-indigo-600 text-white hover:bg-indigo-700">
-              <PlusCircle size={16} /> New Facility
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search by id, name, village or description"
+              className="p-2 border rounded w-full sm:w-64"
+            />
+            <button onClick={openCreate} className="px-4 py-2 bg-blue-600 text-white rounded text-sm">
+              + Add
             </button>
           </div>
         </div>
 
-        {/* list */}
-        <section>
-          {loading ? (
-            <div className="text-sm text-gray-500">Loading…</div>
-          ) : error ? (
-            <div className="text-sm text-red-600">{error}</div>
-          ) : filtered.length === 0 ? (
-            <div className="text-sm text-gray-500">No facilities found.</div>
-          ) : (
-            <div>
-              {filtered.map((f) => (
-                <FacilityCard key={f.facilityId ?? `${f.name}_${f.type}`} f={f} />
-              ))}
-            </div>
-          )}
-        </section>
+        {loading ? (
+          <div className="text-center py-8">Loading facilities…</div>
+        ) : filtered.length === 0 ? (
+          <div className="text-sm text-gray-500">No facilities found.</div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filtered.map((f) => (
+              <div
+                key={String(f.facilityId)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => handleCardKeyDown(e, f)}
+                onClick={() => handleCardClick(f)}
+                className="relative bg-blue-100 rounded-2xl shadow p-4 hover:shadow-lg transition-shadow cursor-pointer"
+                aria-label={`Open facility ${f.name || f.facilityId}`}
+              >
+                <div className="absolute top-3 right-3 flex items-center gap-2">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openEdit(f);
+                    }}
+                    className="p-1 rounded-md hover:bg-gray-100"
+                    aria-label={`Edit facility ${f.name}`}
+                    title="Edit"
+                    type="button"
+                  >
+                    <EditIcon className="w-4 h-4 text-indigo-600" />
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      confirmDelete(f);
+                    }}
+                    className="p-1 rounded-md hover:bg-gray-100"
+                    aria-label={`Delete facility ${f.name}`}
+                    title="Delete"
+                    type="button"
+                  >
+                    <TrashIcon className="w-4 h-4 text-red-600" />
+                  </button>
+                </div>
 
-        <Modal />
-      </main>
+                <div className="mt-1">
+                  <div className="text-lg font-semibold text-gray-900 truncate">{f.name || "-"}</div>
+                  {f.villageId && <div className="text-xs text-gray-500">Village: {f.villageId}</div>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="h-24" />
+      </div>
+
+      {/* MODAL FORM */}
+      {showForm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40 p-4">
+          <form onSubmit={handleSubmit} className="bg-[#f8f0dc] rounded-lg shadow-lg p-6 w-full max-w-md">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">{editingFacility ? "Edit Facility" : "Add Facility"}</h3>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowForm(false);
+                  resetForm();
+                }}
+                className="text-gray-500"
+                aria-label="Close form"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm text-gray-700">Name</label>
+                <input
+                  required
+                  value={form.name}
+                  onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
+                  className="w-full p-2 border rounded"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm text-gray-700">Village ID</label>
+                <input
+                  value={form.villageId}
+                  onChange={(e) => setForm((p) => ({ ...p, villageId: e.target.value }))}
+                  className="w-full p-2 border rounded"
+                />
+              </div>
+
+              {formError && <div className="text-sm text-red-600">{formError}</div>}
+
+              <div className="flex justify-end gap-2 mt-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowForm(false);
+                    resetForm();
+                  }}
+                  className="px-4 py-2 border rounded"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submitLoading}
+                  className={`px-4 py-2 text-white rounded ${submitLoading ? "bg-gray-400" : "bg-blue-600"}`}
+                >
+                  {submitLoading ? (editingFacility ? "Saving…" : "Creating…") : editingFacility ? "Save" : "Create"}
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* DELETE CONFIRMATION */}
+      {toDelete && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-black bg-opacity-40 p-4">
+          <div className="bg-white rounded-xl shadow-lg p-6 w-lg max-w-lg">
+            <div className="flex items-start gap-4">
+              <div className="flex-1">
+                <h3 className="text-lg font-semibold">Delete facility</h3>
+                <p className="text-m text-gray-600 mt-1">
+                  Are you sure you want to delete <strong>{toDelete.name || `ID ${toDelete.facilityId}`}</strong>?
+                </p>
+
+                {pageError && <div className="text-sm text-red-600 mt-2">{pageError}</div>}
+
+                <div className="mt-4 flex justify-center gap-2">
+                  <button onClick={cancelDelete} className="px-4 py-2 border rounded" type="button" disabled={deleteLoading}>
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleDeleteConfirmed}
+                    className={`px-4 py-2 text-white rounded ${deleteLoading ? "bg-gray-400" : "bg-red-600"}`}
+                    type="button"
+                    disabled={deleteLoading}
+                  >
+                    {deleteLoading ? "Deleting…" : "Delete"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

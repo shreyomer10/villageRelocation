@@ -30,6 +30,11 @@ export default function PlotsPage() {
   // deleted view toggle (server-side)
   const [showDeleted, setShowDeleted] = useState(false);
 
+  // analytics (for applied type filter)
+  const [analytics, setAnalytics] = useState(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [analyticsError, setAnalyticsError] = useState(null);
+
   // helper for auth headers (keeps support for Authorization if you ever use header-based token)
   function authHeaders() {
     const token = localStorage.getItem("token");
@@ -213,10 +218,99 @@ export default function PlotsPage() {
     }
   }
 
+  // --- ANALYTICS: fetch when a type filter is applied AND showDeleted is false ---
+  useEffect(() => {
+    let mounted = true;
+
+    async function fetchAnalyticsForType() {
+      // If showDeleted is active, do not fetch analytics and clear it
+      if (showDeleted) {
+        if (mounted) {
+          setAnalytics(null);
+          setAnalyticsError(null);
+          setAnalyticsLoading(false);
+        }
+        return;
+      }
+
+      if (!villageId) {
+        if (mounted) {
+          setAnalytics(null);
+          setAnalyticsError("Missing villageId");
+          setAnalyticsLoading(false);
+        }
+        return;
+      }
+
+      if (!filterTypeId) {
+        // clear analytics when no filter is applied
+        if (mounted) {
+          setAnalytics(null);
+          setAnalyticsError(null);
+          setAnalyticsLoading(false);
+        }
+        return;
+      }
+
+      if (mounted) {
+        setAnalyticsLoading(true);
+        setAnalyticsError(null);
+      }
+
+      try {
+        const url = `${API_BASE}/analytics/building/${encodeURIComponent(villageId)}/${encodeURIComponent(filterTypeId)}`;
+        const { ok, status, json, text } = await fetchWithCreds(url, { method: "GET" });
+
+        if (!mounted) return;
+
+        if (!ok) {
+          if (status === 404) {
+            setAnalytics(null);
+            setAnalyticsError("No analytics available");
+            setAnalyticsLoading(false);
+            return;
+          }
+          if (status === 401) {
+            setAnalytics(null);
+            setAnalyticsError((json && (json.message || json.error)) || text || "Unauthorized — please sign in");
+            setAnalyticsLoading(false);
+            return;
+          }
+          throw new Error((json && (json.message || JSON.stringify(json))) || text || `Failed to fetch analytics: ${status}`);
+        }
+
+        const payload = json ?? {};
+        const result = payload.result ?? payload;
+        // Expect result.stages to be array like in your example
+        if (!result || !Array.isArray(result.stages) || result.stages.length === 0) {
+          setAnalytics(result ?? null);
+          setAnalyticsError(null); // valid but empty
+        } else {
+          setAnalytics(result);
+          setAnalyticsError(null);
+        }
+      } catch (err) {
+        console.error(err);
+        if (!mounted) return;
+        setAnalytics(null);
+        setAnalyticsError(err.message || "Failed to load analytics");
+      } finally {
+        if (mounted) setAnalyticsLoading(false);
+      }
+    }
+
+    fetchAnalyticsForType();
+
+    return () => {
+      mounted = false;
+    };
+  }, [filterTypeId, villageId, showDeleted]);
+
   // toggle deleted view (requests deleted items from server when true)
   function toggleDeletedView() {
     setShowDeleted((s) => !s);
     setPage(1); // ensure we go back to first page when toggling
+    // analytics effect will handle clearing/loading analytics based on new showDeleted
   }
 
   function typeNameFor(typeId) {
@@ -389,6 +483,200 @@ export default function PlotsPage() {
   }
   /* ------------------------------------------------------------------ */
 
+  // Attractive SVG bar chart (gradient, axis, ticks, animated)
+  function AnalyticsBarChart({ data }) {
+    // hooks inside component
+    const gradientIdRef = useRef(`g_${Math.random().toString(36).slice(2, 9)}`);
+    const shadowIdRef = useRef(`s_${Math.random().toString(36).slice(2, 9)}`);
+
+    if (!data || !Array.isArray(data.stages) || data.stages.length === 0) {
+      return <div className="text-sm text-gray-600">No analytics data available.</div>;
+    }
+
+    const stages = data.stages.map((s) => ({
+      ...s,
+      count: Number(s.count ?? 0),
+      name: s.name ?? s.id ?? "Stage",
+    }));
+
+    const total = stages.reduce((acc, s) => acc + s.count, 0);
+    let maxCount = Math.max(...stages.map((s) => s.count), 1);
+
+    // Round up max to a nicer number for ticks (e.g., 1,2,5,10,20,50,100...)
+    function niceMax(n) {
+      if (n <= 10) return Math.max(1, Math.ceil(n));
+      const pow = Math.pow(10, Math.floor(Math.log10(n)));
+      const leading = Math.ceil(n / pow);
+      if (leading <= 2) return 2 * pow;
+      if (leading <= 5) return 5 * pow;
+      return 10 * pow;
+    }
+    maxCount = niceMax(maxCount);
+
+    const ticks = 5;
+    const tickStep = Math.ceil(maxCount / ticks);
+    const displayMax = tickStep * ticks;
+
+    // layout
+    const chartWidth = 820; // internal viewBox width
+    const labelWidth = 210;
+    const rightPadding = 24;
+    const barMaxWidth = chartWidth - labelWidth - rightPadding;
+    const rowHeight = 46;
+    const height = stages.length * rowHeight + 64; // bottom space for x-axis
+
+    // helpers for scaling
+    const scaleX = (value) => {
+      if (displayMax === 0) return 0;
+      return Math.round((value / displayMax) * barMaxWidth);
+    };
+
+    // ensure at least some visual difference for small values
+    const minBarPx = 6;
+
+    return (
+      <div className="bg-yellow-100 rounded-lg border p-2 shadow-sm w-full">
+        <div className="overflow-auto">
+          <svg
+            width="100%"
+            height={Math.min(420, height)}
+            viewBox={`0 0 ${chartWidth} ${height}`}
+            preserveAspectRatio="xMidYMid meet"
+            role="img"
+            aria-label={`${data.buildingName ?? "Analytics"} bar chart`}
+          >
+            <defs>
+              {/* gradient for bars */}
+              <linearGradient id={gradientIdRef.current} x1="0" x2="1">
+                <stop offset="0%" stopColor="#60a5fa" stopOpacity="1" />
+                <stop offset="100%" stopColor="#2563eb" stopOpacity="1" />
+              </linearGradient>
+
+              {/* subtle drop shadow */}
+              <filter id={shadowIdRef.current} x="-20%" y="-20%" width="140%" height="140%">
+                <feDropShadow dx="0" dy="4" stdDeviation="6" floodColor="#0b1220" floodOpacity="0.12" />
+              </filter>
+
+              {/* label background */}
+              <linearGradient id={`${gradientIdRef.current}_bg`} x1="0" x2="1">
+                <stop offset="0%" stopColor="#f8fafc" />
+                <stop offset="100%" stopColor="#eef2ff" />
+              </linearGradient>
+            </defs>
+
+            {/* grid lines and x-axis ticks */}
+            {Array.from({ length: ticks + 1 }).map((_, i) => {
+              const x = labelWidth + Math.round((i / ticks) * barMaxWidth);
+              const tickValue = i * tickStep;
+              return (
+                <g key={`g_tick_${i}`}>
+                  <line x1={x} x2={x} y1={12} y2={height - 28} stroke="#e6eefb" strokeWidth="1" />
+                  <text x={x} y={height - 10} textAnchor="middle" fontSize="11" fill="#475569" style={{ fontFamily: "Inter, system-ui, -apple-system" }}>
+                    {tickValue}
+                  </text>
+                </g>
+              );
+            })}
+
+            {/* bars */}
+            {stages.map((s, idx) => {
+              const y = 16 + idx * rowHeight;
+              const barWidth = Math.max(minBarPx, scaleX(s.count));
+              const label = s.name;
+              const countText = String(s.count);
+
+              // dynamic placement for count label (inside white/contrast logic)
+              const inside = barWidth > 60;
+
+              return (
+                <g key={s.id ?? idx}>
+                  {/* label area */}
+                  <rect x="8" y={y + 6} width={labelWidth - 16} height={rowHeight - 12} rx={8} fill="transparent" />
+                  <text x={12} y={y + 28} fontSize="13" fill="#0f172a" style={{ fontFamily: "Inter, system-ui, -apple-system" }}>
+                    {label}
+                  </text>
+
+                  {/* bar background */}
+                  <rect
+                    x={labelWidth}
+                    y={y + 10}
+                    rx={10}
+                    ry={10}
+                    width={barMaxWidth}
+                    height={rowHeight - 20}
+                    fill="#f1f5f9"
+                  />
+
+                  {/* bar (animated) */}
+                  <rect
+                    x={labelWidth}
+                    y={y + 10}
+                    rx={10}
+                    ry={10}
+                    width="0"
+                    height={rowHeight - 20}
+                    fill={`url(#${gradientIdRef.current})`}
+                    filter={`url(#${shadowIdRef.current})`}
+                  >
+                    <animate
+                      attributeName="width"
+                      from="0"
+                      to={barWidth}
+                      dur="700ms"
+                      fill="freeze"
+                    />
+                  </rect>
+
+                  {/* small rounded cap for nicer look (drawn over the animated bar) */}
+                  <rect
+                    x={labelWidth}
+                    y={y + 10}
+                    rx={10}
+                    ry={10}
+                    width={barWidth}
+                    height={rowHeight - 20}
+                    fill="transparent"
+                    stroke="rgba(255,255,255,0.06)"
+                    strokeWidth="0.6"
+                  />
+
+                  {/* count label */}
+                  {inside ? (
+                    <text
+                      x={labelWidth + Math.min(barWidth - 8, barMaxWidth - 8)}
+                      y={y + 28}
+                      fontSize="12"
+                      textAnchor="end"
+                      fill="#ffffff"
+                      style={{ fontFamily: "Inter, system-ui, -apple-system", fontWeight: 600 }}
+                    >
+                      {countText}
+                    </text>
+                  ) : (
+                    <text
+                      x={labelWidth + barWidth + 12}
+                      y={y + 28}
+                      fontSize="12"
+                      textAnchor="start"
+                      fill="#0f172a"
+                      style={{ fontFamily: "Inter, system-ui, -apple-system", fontWeight: 600 }}
+                    >
+                      {countText}
+                    </text>
+                  )}
+                </g>
+              );
+            })}
+
+            {/* subtle bottom axis line */}
+            <line x1={labelWidth} x2={labelWidth + barMaxWidth} y1={height - 32} y2={height - 32} stroke="#c7d2fe" strokeWidth="1.2" />
+
+          </svg>
+        </div>
+      </div>
+    );
+  }
+
   // --- helper to store selected plot in localStorage and navigate ---
   function selectPlot(plot) {
     try {
@@ -497,6 +785,21 @@ export default function PlotsPage() {
           </div>
 
         </div>
+
+        {/* Analytics bar chart: shown only when a type filter is applied AND showDeleted is false */}
+        {filterTypeId && !showDeleted ? (
+          <div className="mb-4">
+            {analyticsLoading ? (
+              <div className="text-sm text-gray-600 py-2">Loading analytics…</div>
+            ) : analyticsError ? (
+              <div className="text-sm text-red-600 py-2">{analyticsError}</div>
+            ) : analytics ? (
+              <AnalyticsBarChart data={analytics} />
+            ) : (
+              <div className="text-sm text-gray-500 py-2">No analytics for selected type.</div>
+            )}
+          </div>
+        ) : null}
 
         {/* pagination info & controls */}
         <div className="flex items-center justify-between mb-4">

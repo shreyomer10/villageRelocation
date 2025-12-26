@@ -1,22 +1,31 @@
-﻿// src/pages/Auth.jsx
-import React, { useState, useRef, useEffect, useContext } from "react";
+﻿import React, { useState, useRef, useEffect, useContext } from "react";
 import { useNavigate } from "react-router-dom";
 import { AuthContext } from "../context/AuthContext";
 import { API_BASE } from "../config/Api";
+import { Menu, X, User, Lock, Phone, Key, Eye, EyeOff } from "lucide-react";
 
 export default function Auth() {
-  const [mode, setMode] = useState("login"); // login | register | forgot
-  const [empId, setEmpId] = useState("");
+  // modes: "login" | "forgot"
+  const [mode, setMode] = useState("login");
+
+  // hidden, fixed values required by backend
+  const [empId] = useState("UID_18");
+  const [role] = useState("dd");
+
+  // editable fields
   const [mobileNumber, setMobileNumber] = useState("");
-  const [role, setRole] = useState("Admin");
   const [password, setPassword] = useState("");
   const [otp, setOtp] = useState("");
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [info, setInfo] = useState(null);
 
-  const [registerStep, setRegisterStep] = useState("init");
+  // forgot steps: "init" | "otpSent" | "verified"
   const [forgotStep, setForgotStep] = useState("init");
+
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   const mountedRef = useRef(false);
   const navigate = useNavigate();
@@ -26,7 +35,6 @@ export default function Auth() {
     login: `${API_BASE}/login`,
     sendOtp: `${API_BASE}/sendOtp`,
     verifyOtp: `${API_BASE}/verifyOtp`,
-    register: `${API_BASE}/register`,
     updatePassword: `${API_BASE}/updatePassword`,
   };
 
@@ -67,29 +75,29 @@ export default function Auth() {
     return false;
   }
 
-  // LOGIN
+  /* ------------------ LOGIN ------------------ */
   async function handleLogin() {
     resetMessages();
-    const trimmedId = empId.trim();
-    if (!trimmedId || !mobileNumber.trim() || !password || !role) {
-      setError("Please provide emp_id, mobile number, role and password.");
+    const trimmedMobile = mobileNumber.trim();
+    if (!empId || !trimmedMobile || !password || !role) {
+      setError("Please provide mobile number and password.");
       return;
     }
 
     setLoading(true);
     try {
       const body = {
-        emp_id: trimmedId,
-        mobile_number: mobileNumber.trim(),
-        role,
+        emp_id: empId, // hidden fixed value
+        mobile_number: trimmedMobile,
+        role, // hidden fixed 'dd'
         password,
-        is_app: false, // web uses cookie-based token by default per your backend
+        is_app: false,
       };
 
       const { ok, status, json, text } = await safeFetch(ENDPOINTS.login, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include", // allow server to set cookie token
+        credentials: "include",
         body: JSON.stringify(body),
       });
 
@@ -102,31 +110,23 @@ export default function Auth() {
 
       const payload = json ?? {};
 
-      // store raw backend response exactly as received (no decoding)
       try {
         localStorage.setItem("auth_payload", JSON.stringify(payload));
-      } catch (e) {
-        // ignore localStorage errors
-      }
+      } catch {}
 
-      // Let provider normalize the payload into context
       const okLogin = await auth.login(payload);
       if (!okLogin) {
         setError("Login succeeded but client could not process server response.");
         return;
       }
 
-      // If backend didn't provide token or expiry, start a 2-hour session timer (cookie flows)
       const providedToken = payload.token ?? payload.accessToken ?? payload.access_token ?? null;
       const providedExpiry =
         payload.expiresIn ?? payload.expires_in ?? payload.expiresAt ?? payload.expires_at ?? null;
       if (!providedToken && !providedExpiry) {
         try {
-          // setToken accepts expiresIn and will set an expiry even with null token
           auth.setToken(null, { expiresIn: 2 * 3600 });
-        } catch {
-          // ignore
-        }
+        } catch {}
       }
 
       navigate("/dashboard");
@@ -137,17 +137,17 @@ export default function Auth() {
     }
   }
 
-  // send OTP (register or forgot)
-  async function sendOtp(purpose = "register") {
+  /* ------------------ FORGOT (OTP -> reset) ------------------ */
+  async function sendOtp() {
     resetMessages();
-    const trimmedId = empId.trim();
-    if (!trimmedId || !mobileNumber.trim() || !role) {
-      setError("Please provide emp_id, mobile number and role.");
+    const trimmedMobile = mobileNumber.trim();
+    if (!empId || !trimmedMobile || !role) {
+      setError("Missing required values.");
       return null;
     }
     setLoading(true);
     try {
-      const body = { emp_id: trimmedId, mobile_number: mobileNumber.trim(), role, purpose };
+      const body = { emp_id: empId, mobile_number: trimmedMobile, role, purpose: "forgot" };
       const { ok, status, json, text } = await safeFetch(ENDPOINTS.sendOtp, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -168,8 +168,7 @@ export default function Auth() {
     }
   }
 
-  // verify OTP
-  async function verifyOtp(action = "register") {
+  async function verifyOtp() {
     resetMessages();
     if (!otp.trim()) {
       setError("Please enter OTP.");
@@ -178,7 +177,7 @@ export default function Auth() {
     setLoading(true);
     try {
       const body = {
-        emp_id: empId.trim(),
+        emp_id: empId,
         mobile_number: mobileNumber.trim(),
         role,
         otp: otp.trim(),
@@ -204,100 +203,19 @@ export default function Auth() {
     }
   }
 
-  // complete registration
-  async function completeRegistration() {
-    resetMessages();
-    const trimmedId = empId.trim();
-    if (!trimmedId || !mobileNumber.trim() || !role || !password) {
-      setError("Please provide emp_id, mobile_number, role and password.");
-      return;
-    }
-    setLoading(true);
-    try {
-      const body = { emp_id: trimmedId, mobile_number: mobileNumber.trim(), role, password };
-      const { ok, status, json, text } = await safeFetch(ENDPOINTS.register, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-
-      if (!mountedRef.current) return;
-      if (!isBackendSuccess({ ok, status, json, text })) {
-        const msg = (json && (json.message || json.error)) || text || `Registration failed (status ${status})`;
-        throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
-      }
-
-      setInfo("Registration successful. Attempting to sign in...");
-
-      if (json && (json.user || json.token)) {
-        try {
-          localStorage.setItem("auth_payload", JSON.stringify(json));
-        } catch {}
-        await auth.login(json);
-        navigate("/dashboard");
-      } else {
-        await handleAutoLoginAfterRegister(trimmedId, mobileNumber.trim(), role, password);
-      }
-    } catch (err) {
-      if (mountedRef.current) setError(err?.message || "Registration failed.");
-    } finally {
-      if (mountedRef.current) setLoading(false);
-    }
-  }
-
-  async function handleAutoLoginAfterRegister(emp_id, mobile_number, roleVal, pwd) {
-    try {
-      const { ok, status, json, text } = await safeFetch(ENDPOINTS.login, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ emp_id, mobile_number, role: roleVal, password: pwd, is_app: false }),
-      });
-      if (!mountedRef.current) return;
-      if (!isBackendSuccess({ ok, status, json, text })) {
-        setInfo("Registered — please sign in.");
-        setMode("login");
-        return;
-      }
-
-      try {
-        localStorage.setItem("auth_payload", JSON.stringify(json ?? {}));
-      } catch {}
-
-      await auth.login(json ?? {});
-      // if server didn't send token/expires, ensure 2-hour fallback
-      const payload = json ?? {};
-      const providedToken = payload.token ?? payload.accessToken ?? payload.access_token ?? null;
-      const providedExpiry =
-        payload.expiresIn ?? payload.expires_in ?? payload.expiresAt ?? payload.expires_at ?? null;
-      if (!providedToken && !providedExpiry) {
-        try {
-          auth.setToken(null, { expiresIn: 2 * 3600 });
-        } catch {}
-      }
-
-      navigate("/dashboard");
-    } catch (err) {
-      setMode("login");
-      setInfo("Registered — please sign in.");
-    }
-  }
-
-  // forgot flows
   async function handleForgotSendOtp() {
-    const p = await sendOtp("forgot");
+    const p = await sendOtp();
     if (p) setForgotStep("otpSent");
   }
 
   async function handleForgotVerifyOtp() {
-    const ok = await verifyOtp("forgot");
+    const ok = await verifyOtp();
     if (ok) {
       setForgotStep("verified");
       setInfo("OTP verified — set your new password below.");
     }
   }
 
-  // NOTE: backend's updatePassword may be auth protected; we still attempt with credentials:include
   async function handleForgotResetPassword() {
     resetMessages();
     if (!password || password.length < 6) {
@@ -306,7 +224,7 @@ export default function Auth() {
     }
     setLoading(true);
     try {
-      const body = { emp_id: empId.trim(), mobile_number: mobileNumber.trim(), role, password };
+      const body = { emp_id: empId, mobile_number: mobileNumber.trim(), role, password };
       const { ok, status, json, text } = await safeFetch(ENDPOINTS.updatePassword, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -323,8 +241,43 @@ export default function Auth() {
 
       setInfo("Password updated. Attempting to sign in...");
 
-      // try to auto-login (if backend didn't set cookie)
-      await handleAutoLoginAfterRegister(empId.trim(), mobileNumber.trim(), role, password);
+      try {
+        const { ok: lOk, status: lStatus, json: lJson, text: lText } = await safeFetch(ENDPOINTS.login, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ emp_id: empId, mobile_number: mobileNumber.trim(), role, password, is_app: false }),
+        });
+
+        if (!mountedRef.current) return;
+
+        if (!isBackendSuccess({ ok: lOk, status: lStatus, json: lJson, text: lText })) {
+          setInfo("Password updated — please sign in.");
+          setMode("login");
+          setForgotStep("init");
+          return;
+        }
+
+        try {
+          localStorage.setItem("auth_payload", JSON.stringify(lJson ?? {}));
+        } catch {}
+
+        await auth.login(lJson ?? {});
+        const payload = lJson ?? {};
+        const providedToken = payload.token ?? payload.accessToken ?? payload.access_token ?? null;
+        const providedExpiry =
+          payload.expiresIn ?? payload.expires_in ?? payload.expiresAt ?? payload.expires_at ?? null;
+        if (!providedToken && !providedExpiry) {
+          try {
+            auth.setToken(null, { expiresIn: 2 * 3600 });
+          } catch {}
+        }
+
+        navigate("/dashboard");
+      } catch {
+        setMode("login");
+        setInfo("Password updated — please sign in.");
+      }
     } catch (err) {
       if (mountedRef.current) setError(err?.message || "Password update failed.");
     } finally {
@@ -332,200 +285,228 @@ export default function Auth() {
     }
   }
 
-  // helpers for register steps
-  async function handleRegisterSendOtp() {
-    const p = await sendOtp("register");
-    if (p) setRegisterStep("otpSent");
-  }
-  async function handleRegisterVerifyOtpAndProceed() {
-    const ok = await verifyOtp("register");
-    if (ok) {
-      setRegisterStep("verified");
-      setInfo("OTP verified. Please set password to complete registration.");
-    }
+  function fillTest() {
+    setMobileNumber("3333333333");
+    setPassword("dddd");
+    setOtp("");
+    resetMessages();
   }
 
-  function fillTest() {
-    setEmpId("UID_4");
-    setMobileNumber("9876543210");
-    setRole("fg");
-    setPassword("User@1234");
-  }
+  // small presentational helpers
+  const primaryBtn = "w-full py-2 rounded-lg text-white bg-green-600 hover:bg-green-700 disabled:opacity-60 flex items-center justify-center gap-2";
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-[#f7f2e7]">
-      <header className="fixed top-0 left-0 w-full bg-[#c8e6c9]/95 backdrop-blur-sm p-4 flex items-center justify-between shadow z-50">
-        <div className="flex items-center px-10 gap-2">
-          <img src="/images/logo.png" alt="logo" className="h-14 w-20 rounded" />
-          <div>
+    <div className="min-h-screen bg-[#f8f0dc] flex flex-col">
+      <header className="w-full bg-[#a7dec0] p-3 md:p-4 flex items-center justify-between z-40">
+        <div className="flex items-center gap-3 pl-4 md:pl-10">
+          <img src="/images/logo.png" alt="logo" className="h-12 w-16 rounded" />
+          <div className="hidden sm:block">
             <h1 className="text-lg font-bold text-[#1b5e20]">MAATI</h1>
             <p className="text-xs text-gray-700">Village Relocation Monitoring</p>
           </div>
         </div>
-        <nav className="hidden md:flex gap-6 text-sm px-40 items-center">
-          <a href="/" className="hover:text-[#1b5e20]">home</a>
+
+        <nav className="flex items-center gap-4 pr-4 md:pr-10">
+          <div className="hidden md:flex gap-6 text-sm items-center">
+            <button onClick={() => navigate("/landingpage")}>home</button>
+          </div>
+
+          <button
+            className="md:hidden p-2 rounded-md hover:bg-white/60"
+            aria-label="Toggle menu"
+            onClick={() => setMobileOpen((s) => !s)}
+          >
+            {mobileOpen ? <X size={20} /> : <Menu size={20} />}
+          </button>
         </nav>
       </header>
 
-      <div className="w-full max-w-md p-8 bg-white rounded-xl shadow-md text-center mt-24">
-        <div className="flex text-lg font-bold text-[#1b5e20] justify-center py-4">
-          <h1 className="text-3xl font-extrabold tracking-wide drop-shadow-sm">
-            {mode === "login" ? "Log in" : mode === "register" ? "Register" : "Forgot password"}
-          </h1>
+      {mobileOpen && (
+        <div className="md:hidden bg-white/90 shadow p-3">
+          <a href="/" className="block py-2">Home</a>
         </div>
+      )}
 
-        {error && <div className="mb-4 text-sm text-red-600" role="alert">{error}</div>}
-        {info && <div className="mb-4 text-sm text-green-700">{info}</div>}
+      <main className="flex-1 flex items-center justify-center py-10 px-4">
+        <div className="w-full max-w-md p-6 sm:p-8 bg-white rounded-xl shadow-md text-center transition-transform transform sm:scale-100 md:scale-100">
+          <div className="flex flex-col items-center">
+            <h2 className="text-3xl font-extrabold text-[#1b5e20] tracking-tight">{mode === "login" ? "Log in" : "Forgot password"}</h2>
+            <p className="text-sm text-gray-600 mt-4">{mode === "login" ? "Official" : "Reset your account password"}</p>
 
-        <div className="mb-3">
-          <input
-            type="text"
-            value={empId}
-            onChange={(e) => setEmpId(e.target.value)}
-            placeholder="Employee ID (emp_id)"
-            className="w-full px-4 py-2 text-center border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
-          />
-        </div>
+            {/* progress / step indicator for forgot flow (small) */}
+            {mode === "forgot" && (
+              <div className="w-full mt-4 text-left">
+                <div className="text-xs text-gray-500">Step</div>
+                <div className="relative h-2 bg-gray-200 rounded-full mt-1">
+                  <div
+                    className={`absolute h-2 rounded-full bg-green-600 transition-all`} 
+                    style={{ width: forgotStep === "init" ? "20%" : forgotStep === "otpSent" ? "60%" : "100%" }}
+                  />
+                </div>
+                <div className="flex justify-between text-[11px] text-gray-500 mt-1">
+                  <span>Request</span>
+                  <span>Verify</span>
+                  <span>Reset</span>
+                </div>
+              </div>
+            )}
 
-        <div className="mb-3">
-          <input
-            type="tel"
-            value={mobileNumber}
-            onChange={(e) => setMobileNumber(e.target.value)}
-            placeholder="Mobile number (mobile_number)"
-            className="w-full px-4 py-2 text-center border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
-          />
-        </div>
+            {error && <div className="w-full mt-4 text-sm text-red-600" role="alert">{error}</div>}
+            {info && <div className="w-full mt-4 text-sm text-green-700">{info}</div>}
 
-        <div className="mb-3">
-          <select
-            value={role}
-            onChange={(e) => setRole(e.target.value)}
-            className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
-          >
-            <option value="Admin">Admin</option>
-            <option value="fg">fg</option>
-            <option value="ra">ra</option>
-            <option value="ro">ro</option>
-            <option value="ab">ab</option>
-            <option value="dd">dd</option>
-          </select>
-        </div>
-
-        {mode === "login" && (
-          <div className="mb-3">
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Password"
-              className="w-full px-4 py-2 text-center border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
-            />
-          </div>
-        )}
-
-        {mode === "register" && registerStep === "verified" && (
-          <div className="mb-3">
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Set a password to complete registration"
-              className="w-full px-4 py-2 text-center border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
-            />
-          </div>
-        )}
-
-        {mode === "forgot" && forgotStep === "verified" && (
-          <div className="mb-3">
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="New password"
-              className="w-full px-4 py-2 text-center border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
-            />
-          </div>
-        )}
-
-        {((mode === "register" && registerStep === "otpSent") ||
-          (mode === "forgot" && (forgotStep === "otpSent" || forgotStep === "verified"))) && (
-          <div className="mb-3">
-            <input
-              type="text"
-              value={otp}
-              onChange={(e) => setOtp(e.target.value)}
-              placeholder="OTP"
-              className="w-full px-4 py-2 text-center border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
-            />
-          </div>
-        )}
-
-        <div className="flex items-center justify-between gap-4">
-          {mode === "login" && (
-            <button
-              onClick={handleLogin}
-              disabled={loading}
-              className="w-full py-2 text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-60"
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (mode === "login") handleLogin();
+                else if (mode === "forgot") {
+                  if (forgotStep === "init") handleForgotSendOtp();
+                  else if (forgotStep === "otpSent") handleForgotVerifyOtp();
+                  else if (forgotStep === "verified") handleForgotResetPassword();
+                }
+              }}
+              className="w-full mt-4"
             >
-              {loading ? "Signing in..." : "Sign in"}
-            </button>
-          )}
+              <label className="sr-only">Mobile number</label>
+              <div className="mb-3 relative">
+                <Phone className="absolute left-3 top-3 text-gray-400" size={16} />
+                <input
+                  inputMode="tel"
+                  pattern="[0-9]*"
+                  value={mobileNumber}
+                  onChange={(e) => setMobileNumber(e.target.value)}
+                  placeholder="Mobile number"
+                  className="w-full pl-10 pr-4 py-2 text-center border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
 
-          {mode === "register" && registerStep === "init" && (
-            <button onClick={handleRegisterSendOtp} disabled={loading} className="w-full py-2 text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-60">
-              {loading ? "Sending OTP..." : "Send OTP"}
-            </button>
-          )}
-          {mode === "register" && registerStep === "otpSent" && (
-            <button onClick={handleRegisterVerifyOtpAndProceed} disabled={loading} className="w-full py-2 text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-60">
-              {loading ? "Verifying OTP..." : "Verify OTP"}
-            </button>
-          )}
-          {mode === "register" && registerStep === "verified" && (
-            <button onClick={completeRegistration} disabled={loading} className="w-full py-2 text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-60">
-              {loading ? "Completing..." : "Complete Registration"}
-            </button>
-          )}
+              {mode === "login" && (
+                <div className="mb-3 relative">
+                  <Lock className="absolute left-3 top-3 text-gray-400" size={16} />
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Password"
+                    className="w-full pl-10 pr-10 py-2 text-center border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    aria-label="Password"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((s) => !s)}
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                    className="absolute right-3 top-2.5"
+                  >
+                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
+              )}
 
-          {mode === "forgot" && forgotStep === "init" && (
-            <button onClick={handleForgotSendOtp} disabled={loading} className="w-full py-2 text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-60">
-              {loading ? "Sending OTP..." : "Send OTP"}
-            </button>
-          )}
-          {mode === "forgot" && forgotStep === "otpSent" && (
-            <button onClick={handleForgotVerifyOtp} disabled={loading} className="w-full py-2 text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-60">
-              {loading ? "Verifying OTP..." : "Verify OTP"}
-            </button>
-          )}
-          {mode === "forgot" && forgotStep === "verified" && (
-            <button onClick={handleForgotResetPassword} disabled={loading} className="w-full py-2 text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-60">
-              {loading ? "Resetting..." : "Reset Password"}
-            </button>
-          )}
+              {mode === "forgot" && (forgotStep === "otpSent" || forgotStep === "verified") && (
+                <div className="mb-3 relative">
+                  <Key className="absolute left-3 top-3 text-gray-400" size={16} />
+                  <input
+                    type="text"
+                    value={otp}
+                    onChange={(e) => setOtp(e.target.value)}
+                    placeholder="OTP"
+                    className="w-full pl-10 pr-4 py-2 text-center border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    inputMode="numeric"
+                    aria-label="OTP"
+                  />
+                </div>
+              )}
+
+              {mode === "forgot" && forgotStep === "verified" && (
+                <div className="mb-3 relative">
+                  <Lock className="absolute left-3 top-3 text-gray-400" size={16} />
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="New password"
+                    className="w-full pl-10 pr-4 py-2 text-center border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+              )}
+
+              <div className="mt-4">
+                {mode === "login" && (
+                  <button type="submit" disabled={loading} className={primaryBtn}>
+                    {loading ? (
+                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+                      </svg>
+                    ) : null}
+                    <span>{loading ? "Signing in..." : "Sign in"}</span>
+                  </button>
+                )}
+
+                {mode === "forgot" && forgotStep === "init" && (
+                  <button type="submit" disabled={loading} className={primaryBtn}>
+                    <span>{loading ? "Sending OTP..." : "Send OTP"}</span>
+                  </button>
+                )}
+
+                {mode === "forgot" && forgotStep === "otpSent" && (
+                  <button type="submit" disabled={loading} className={primaryBtn}>
+                    <span>{loading ? "Verifying OTP..." : "Verify OTP"}</span>
+                  </button>
+                )}
+
+                {mode === "forgot" && forgotStep === "verified" && (
+                  <button type="submit" disabled={loading} className={primaryBtn}>
+                    <span>{loading ? "Resetting..." : "Reset Password"}</span>
+                  </button>
+                )}
+              </div>
+            </form>
+
+            <div className="mt-3 w-full flex items-center justify-between text-sm">
+              {mode !== "forgot" ? (
+                <button
+                  onClick={() => {
+                    resetMessages();
+                    setMode("forgot");
+                    setForgotStep("init");
+                    setOtp("");
+                    setPassword("");
+                  }}
+                  className="text-gray-600 underline"
+                >
+                  Forgot password?
+                </button>
+              ) : (
+                <button
+                  onClick={() => {
+                    resetMessages();
+                    setMode("login");
+                    setForgotStep("init");
+                    setOtp("");
+                    setPassword("");
+                  }}
+                  className="text-gray-600 underline"
+                >
+                  Back to login
+                </button>
+              )}
+
+              <button onClick={fillTest} className="text-sm text-gray-600 underline">
+                Fill test credentials
+              </button>
+            </div>
+
+            <div className="mt-6 text-center">
+              <h3 className="text-2xl font-bold text-gray-800">माटी</h3>
+              <p className="text-sm font-bold text-gray-600 tracking-wide">MAATI</p>
+            </div>
+          </div>
         </div>
+      </main>
 
-        <div className="mt-3 flex justify-between text-sm">
-          {mode !== "register" ? (
-            <button onClick={() => { resetMessages(); setMode("register"); setRegisterStep("init"); setOtp(""); setPassword(""); }} className="text-gray-600 underline">Register</button>
-          ) : (
-            <button onClick={() => { resetMessages(); setMode("login"); setRegisterStep("init"); setOtp(""); setPassword(""); }} className="text-gray-600 underline">Back to login</button>
-          )}
-
-          {mode !== "forgot" ? (
-            <button onClick={() => { resetMessages(); setMode("forgot"); setForgotStep("init"); setOtp(""); setPassword(""); }} className="text-gray-600 underline">Forgot password?</button>
-          ) : (
-            <button onClick={() => { resetMessages(); setMode("login"); setForgotStep("init"); setOtp(""); setPassword(""); }} className="text-gray-600 underline">Back to login</button>
-          )}
-        </div>
-
-        <button onClick={fillTest} className="mt-3 text-sm text-gray-600 underline">Fill test credentials</button>
-
-        <div className="mt-8">
-          <h1 className="text-3xl font-bold text-gray-800">माटी</h1>
-          <p className="text-m font-bold text-gray-600 tracking-wide">MAATI</p>
-        </div>
-      </div>
+      <footer className="w-full text-center py-4 text-xs text-gray-500">
+        © {new Date().getFullYear()} MAATI — Village Relocation Monitoring
+      </footer>
     </div>
   );
 }

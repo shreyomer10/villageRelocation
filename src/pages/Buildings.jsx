@@ -884,7 +884,7 @@ export default function StagePage() {
               onClick={() => navigate("/home")}
               className="px-3 py-2 border rounded-md bg-white text-sm"
             >
-              ◀ Back
+              ← Back
             </button>
           </div>
 
@@ -1000,7 +1000,7 @@ export default function StagePage() {
                       if (el) stageRefs.current[String(stageId)] = el;
                       else delete stageRefs.current[String(stageId)];
                     }}
-                    className={`bg-white rounded-lg shadow p-4 border relative ${isDragOver ? "border-dashed border-2" : ""}`}
+                    className={`bg-blue-100 rounded-lg shadow p-4 border relative ${isDragOver ? "border-dashed border-2" : ""}`}
                     draggable={false}
                     style={{ cursor: "default" }}
                   >
@@ -1019,21 +1019,20 @@ export default function StagePage() {
                         <div>
                           <div className="text-base sm:text-lg font-semibold text-gray-800 truncate">{s.name}</div>
                           {s.desc && <div className="text-sm text-gray-500 mt-1 truncate">{s.desc}</div>}
-                          <div className="text-xs text-gray-400 mt-1">ID: {stageId} </div>
                         </div>
                       </div>
 
                       <div className="flex items-center gap-2 mt-3 sm:mt-0">
                         {!globalSelectMode && !expanded && (
                           <>
-                            <button onClick={() => setEditStage({ stageId, name: s.name ?? "", desc: s.desc ?? "", deleted: !!s.deleted })} className="px-3 py-1 rounded bg-indigo-50 text-sm">Edit</button>
-                            <button onClick={() => toggleExpandStage(stageId)} className="px-3 py-1 rounded bg-gray-50 text-sm">▼</button>
+                            <button onClick={() => setEditStage({ stageId, name: s.name ?? "", desc: s.desc ?? "", deleted: !!s.deleted })} className="px-3 py-1 rounded bg-blue-50 text-sm">Edit</button>
+                            <button onClick={() => toggleExpandStage(stageId)} className="px-3 py-1 rounded bg-blue-50 text-sm">▼</button>
                           </>
                         )}
 
                         {!globalSelectMode && expanded && (
                           <>
-                            <button onClick={() => toggleExpandStage(stageId)} className="px-3 py-1 rounded bg-gray-50 text-sm">▲</button>
+                            <button onClick={() => toggleExpandStage(stageId)} className="px-3 py-1 rounded bg-blue-50 text-sm">▲</button>
                           </>
                         )}
                       </div>
@@ -1178,18 +1177,17 @@ export default function StagePage() {
                     const dsSub = ds.stages ?? ds.subStages ?? ds.sub_stages ?? [];
                     const isExpanded = expandedDeletedStageIds.has(id);
                     return (
-                      <div key={String(id)} className="p-4 border rounded-xl bg-gray-100 ">
+                      <div key={String(id)} className="p-4 border rounded-xl bg-red-200 ">
                         <div className="flex items-start justify-between gap-4">
                           <div className="min-w-0">
                             <div className="font-medium truncate">{ds.name}</div>
                             {ds.desc && <div className="text-xs text-gray-500 mt-1">{ds.desc}</div>}
-                            <div className="text-xs text-gray-400 mt-1">ID: {id}</div>
                           </div>
 
                           <div className="flex items-center gap-2">
                             <button
                               onClick={() => toggleExpandDeletedStage(id)}
-                              className="px-2 py-1 rounded bg-gray-100 text-sm"
+                              className="px-2 py-1 rounded bg-red-100 text-sm"
                               title={isExpanded ? "Collapse" : "Expand"}
                             >
                               {isExpanded ? "▲" : "▼"}
@@ -1203,10 +1201,9 @@ export default function StagePage() {
                               dsSub.map(sub => {
                                 const subId = sub.subStageId ?? sub.sub_stage_id ?? sub.id ?? sub.sub_id ?? sub.subId ?? sub.stageId ?? sub.name;
                                 return (
-                                  <div key={String(subId)} className="p-2 bg-gray-50 border rounded">
+                                  <div key={String(subId)} className="p-2 bg-red-50 border rounded">
                                     <div className={`${sub.deleted ? "line-through text-gray-400" : "text-gray-800"} font-medium`}>{sub.name}</div>
                                     {sub.desc && <div className="text-xs text-gray-500 mt-1">{sub.desc}</div>}
-                                    <div className="text-xs text-gray-400 mt-1">ID: {subId}{sub.deleted ? " (deleted)" : ""}</div>
                                   </div>
                                 );
                               })

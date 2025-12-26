@@ -18,12 +18,33 @@ export const AuthContext = createContext({
   forceRefresh: async () => {},
   isAuthenticated: false,
 
-  // new exports
+  // plot
   plotId: null,
   selectedPlot: null,
   setPlotId: () => {},
   setSelectedPlot: () => {},
   selectPlot: () => {},
+
+  // material
+  materialId: null,
+  selectedMaterial: null,
+  setMaterialId: () => {},
+  setSelectedMaterial: () => {},
+  selectMaterial: () => {},
+
+  // facility (NEW)
+  facilityId: null,
+  selectedFacility: null,
+  setFacilityId: () => {},
+  setSelectedFacility: () => {},
+  selectFacility: () => {},
+
+  // family (ADDED)
+  familyId: null,
+  selectedFamily: null,
+  setFamilyId: () => {},
+  setSelectedFamily: () => {},
+  selectFamily: () => {},
 });
 
 const STORAGE_KEYS = {
@@ -36,10 +57,33 @@ const STORAGE_KEYS = {
   REFRESH_TOKEN: "refreshToken",
   AUTH_PAYLOAD: "auth_payload",
 
-  // new keys for selected plot
+  // canonical keys for selected plot/material/facility
   PLOT_ID: "plotId",
   SELECTED_PLOT: "selectedPlot",
+
+  MATERIAL_ID: "materialId",
+  SELECTED_MATERIAL: "selectedMaterial",
+
+  FACILITY_ID: "facilityId",
+  SELECTED_FACILITY: "selectedFacility",
+
+  // family canonical keys (ADDED)
+  FAMILY_ID: "familyId",
+  SELECTED_FAMILY: "selectedFamily",
 };
+
+// Aliases
+const MATERIAL_ID_ALIASES = ["materialId", "MATERIAL_ID", "MATERIAL", "MATERIALID"];
+const SELECTED_MATERIAL_ALIASES = ["selectedMaterial", "SELECTED_MATERIAL", "SELECTED_MATERIALS"];
+const PLOT_ID_ALIASES = ["plotId", "PLOT_ID", "PLOT", "PLOTID"];
+const SELECTED_PLOT_ALIASES = ["selectedPlot", "SELECTED_PLOT", "SELECTED_PLOTS"];
+// facility aliases
+const FACILITY_ID_ALIASES = ["facilityId", "FACILITY_ID", "FACILITY", "FACILITYID"];
+const SELECTED_FACILITY_ALIASES = ["selectedFacility", "SELECTED_FACILITY", "SELECTED_FACILITIES"];
+
+// family aliases (ADDED)
+const FAMILY_ID_ALIASES = ["familyId", "FAMILY_ID", "FAMILY", "FAMILYID"];
+const SELECTED_FAMILY_ALIASES = ["selectedFamily", "SELECTED_FAMILY", "SELECTED_FAMILIES"];
 
 function normalizeVillageId(raw) {
   if (raw == null) return null;
@@ -75,7 +119,7 @@ function normalizeRefreshToken(raw) {
   }
 }
 
-/* ---------- NEW: plot normalizers ---------- */
+/* ---------- plot normalizers ---------- */
 function normalizePlotId(raw) {
   if (raw == null) return null;
   if (Array.isArray(raw)) return raw.length ? String(raw[0]) : null;
@@ -92,6 +136,72 @@ function normalizeSelectedPlot(raw) {
   if (!raw) return null;
   if (Array.isArray(raw)) return raw.length ? raw[0] : null;
   if (typeof raw === "string" || typeof raw === "number") return { plotId: String(raw) };
+  if (typeof raw === "object") return raw;
+  return null;
+}
+/* ------------------------------------------- */
+
+/* ---------- material normalizers ---------- */
+function normalizeMaterialId(raw) {
+  if (raw == null) return null;
+  if (Array.isArray(raw)) return raw.length ? String(raw[0]) : null;
+  if (typeof raw === "object") {
+    const id = raw.materialId ?? raw.material_id ?? raw.id ?? raw._id ?? null;
+    return id !== null && id !== undefined ? String(id) : null;
+  }
+  if (typeof raw === "number") return String(raw);
+  if (typeof raw === "string") return raw || null;
+  return null;
+}
+
+function normalizeSelectedMaterial(raw) {
+  if (!raw) return null;
+  if (Array.isArray(raw)) return raw.length ? raw[0] : null;
+  if (typeof raw === "string" || typeof raw === "number") return { materialId: String(raw) };
+  if (typeof raw === "object") return raw;
+  return null;
+}
+/* ------------------------------------------- */
+
+/* ---------- facility normalizers (NEW) ---------- */
+function normalizeFacilityId(raw) {
+  if (raw == null) return null;
+  if (Array.isArray(raw)) return raw.length ? String(raw[0]) : null;
+  if (typeof raw === "object") {
+    const id = raw.facilityId ?? raw.facility_id ?? raw.id ?? raw._id ?? null;
+    return id !== null && id !== undefined ? String(id) : null;
+  }
+  if (typeof raw === "number") return String(raw);
+  if (typeof raw === "string") return raw || null;
+  return null;
+}
+
+function normalizeSelectedFacility(raw) {
+  if (!raw) return null;
+  if (Array.isArray(raw)) return raw.length ? raw[0] : null;
+  if (typeof raw === "string" || typeof raw === "number") return { facilityId: String(raw) };
+  if (typeof raw === "object") return raw;
+  return null;
+}
+/* ------------------------------------------- */
+
+/* ---------- family normalizers (ADDED) ---------- */
+function normalizeFamilyId(raw) {
+  if (raw == null) return null;
+  if (Array.isArray(raw)) return raw.length ? String(raw[0]) : null;
+  if (typeof raw === "object") {
+    const id = raw.familyId ?? raw.family_id ?? raw.id ?? raw._id ?? null;
+    return id !== null && id !== undefined ? String(id) : null;
+  }
+  if (typeof raw === "number") return String(raw);
+  if (typeof raw === "string") return raw || null;
+  return null;
+}
+
+function normalizeSelectedFamily(raw) {
+  if (!raw) return null;
+  if (Array.isArray(raw)) return raw.length ? raw[0] : null;
+  if (typeof raw === "string" || typeof raw === "number") return { familyId: String(raw) };
   if (typeof raw === "object") return raw;
   return null;
 }
@@ -142,10 +252,22 @@ export function AuthProvider({ children }) {
   const [plotId, setPlotIdState] = useState(null);
   const [selectedPlot, setSelectedPlotState] = useState(null);
 
+  // NEW: selected material state
+  const [materialId, setMaterialIdState] = useState(null);
+  const [selectedMaterial, setSelectedMaterialState] = useState(null);
+
+  // NEW: selected facility state
+  const [facilityId, setFacilityIdState] = useState(null);
+  const [selectedFacility, setSelectedFacilityState] = useState(null);
+
+  // NEW: selected family state (ADDED)
+  const [familyId, setFamilyIdState] = useState(null);
+  const [selectedFamily, setSelectedFamilyState] = useState(null);
+
   const expiryTimerRef = useRef(null);
   const tickIntervalRef = useRef(null);
 
-  // Initialize from localStorage (unchanged + plot keys)...
+  // Initialize from localStorage (robust: use aliases for material/plot/facility/family)
   useEffect(() => {
     try {
       const rawUser = localStorage.getItem(STORAGE_KEYS.USER);
@@ -244,7 +366,7 @@ export function AuthProvider({ children }) {
           } catch {}
         }
 
-        // NEW: restore selectedPlot/plotId from auth payload if present
+        // restore selectedPlot/plotId from auth payload if present
         if (parsed?.selectedPlot) {
           const sp = normalizeSelectedPlot(parsed.selectedPlot);
           if (sp) {
@@ -253,29 +375,213 @@ export function AuthProvider({ children }) {
             if (pid) setPlotIdState(String(pid));
           }
         }
+
+        // restore selectedMaterial if present in auth payload
+        if (parsed?.selectedMaterial) {
+          const sm = normalizeSelectedMaterial(parsed.selectedMaterial);
+          if (sm) {
+            setSelectedMaterialState(sm);
+            const mid = normalizeMaterialId(sm.materialId ?? sm.id ?? sm._id);
+            if (mid) setMaterialIdState(String(mid));
+          }
+        }
+
+        // restore selectedFacility if present in auth payload (NEW)
+        if (parsed?.selectedFacility) {
+          const sf = normalizeSelectedFacility(parsed.selectedFacility);
+          if (sf) {
+            setSelectedFacilityState(sf);
+            const fid = normalizeFacilityId(sf.facilityId ?? sf.id ?? sf._id);
+            if (fid) setFacilityIdState(String(fid));
+          }
+        }
+
+        // restore selectedFamily if present in auth payload (ADDED)
+        if (parsed?.selectedFamily) {
+          const sfam = normalizeSelectedFamily(parsed.selectedFamily);
+          if (sfam) {
+            setSelectedFamilyState(sfam);
+            const famId = normalizeFamilyId(sfam.familyId ?? sfam.id ?? sfam._id);
+            if (famId) setFamilyIdState(String(famId));
+          }
+        }
       }
     } catch {}
 
-    // NEW: read plot keys directly from localStorage too (in case auth payload didn't include it)
+    // read plot keys directly from localStorage (aliases)
     try {
-      const pId = localStorage.getItem(STORAGE_KEYS.PLOT_ID);
-      if (pId) setPlotIdState(pId);
+      let foundPlotId = null;
+      for (const k of PLOT_ID_ALIASES) {
+        const v = localStorage.getItem(k);
+        if (v) {
+          foundPlotId = v;
+          break;
+        }
+      }
+      if (foundPlotId) setPlotIdState(normalizePlotId(foundPlotId));
     } catch {}
     try {
-      const rawSelPlot = localStorage.getItem(STORAGE_KEYS.SELECTED_PLOT);
+      let rawSelPlot = null;
+      for (const k of SELECTED_PLOT_ALIASES) {
+        const v = localStorage.getItem(k);
+        if (v) {
+          rawSelPlot = v;
+          break;
+        }
+      }
       if (rawSelPlot) {
-        const parsed = JSON.parse(rawSelPlot);
+        const parsed = (() => {
+          try {
+            return JSON.parse(rawSelPlot);
+          } catch {
+            return rawSelPlot; // primitive id string
+          }
+        })();
         const normalized = Array.isArray(parsed) ? parsed[0] ?? null : parsed;
         if (normalized) {
-          setSelectedPlotState(normalized);
-          const pid = normalizePlotId(normalized.plotId ?? normalized.id ?? normalized._id);
+          const sp = normalizeSelectedPlot(normalized);
+          setSelectedPlotState(sp);
+          const pid = normalizePlotId(sp);
           if (pid) setPlotIdState(String(pid));
+        }
+      }
+    } catch {}
+
+    // read material keys from localStorage (aliases)
+    try {
+      let foundMatId = null;
+      for (const k of MATERIAL_ID_ALIASES) {
+        const v = localStorage.getItem(k);
+        if (v) {
+          foundMatId = v;
+          break;
+        }
+      }
+      if (foundMatId) setMaterialIdState(normalizeMaterialId(foundMatId));
+    } catch {}
+    try {
+      let rawSelMat = null;
+      for (const k of SELECTED_MATERIAL_ALIASES) {
+        const v = localStorage.getItem(k);
+        if (v) {
+          rawSelMat = v;
+          break;
+        }
+      }
+      if (rawSelMat) {
+        const parsed = (() => {
+          try {
+            return JSON.parse(rawSelMat);
+          } catch {
+            return rawSelMat; // primitive id string
+          }
+        })();
+        const normalized = Array.isArray(parsed) ? parsed[0] ?? null : parsed;
+        if (normalized) {
+          const sm = normalizeSelectedMaterial(normalized);
+          setSelectedMaterialState(sm);
+          const mid = normalizeMaterialId(sm);
+          if (mid) setMaterialIdState(String(mid));
+        } else if (typeof parsed === "string") {
+          // stored as primitive id string
+          const sm = normalizeSelectedMaterial(parsed);
+          setSelectedMaterialState(sm);
+          const mid = normalizeMaterialId(parsed);
+          if (mid) setMaterialIdState(String(mid));
+        }
+      }
+    } catch {}
+
+    // read facility keys from localStorage (aliases) (NEW)
+    try {
+      let foundFacId = null;
+      for (const k of FACILITY_ID_ALIASES) {
+        const v = localStorage.getItem(k);
+        if (v) {
+          foundFacId = v;
+          break;
+        }
+      }
+      if (foundFacId) setFacilityIdState(normalizeFacilityId(foundFacId));
+    } catch {}
+    try {
+      let rawSelFac = null;
+      for (const k of SELECTED_FACILITY_ALIASES) {
+        const v = localStorage.getItem(k);
+        if (v) {
+          rawSelFac = v;
+          break;
+        }
+      }
+      if (rawSelFac) {
+        const parsed = (() => {
+          try {
+            return JSON.parse(rawSelFac);
+          } catch {
+            return rawSelFac; // primitive id string
+          }
+        })();
+        const normalized = Array.isArray(parsed) ? parsed[0] ?? null : parsed;
+        if (normalized) {
+          const sf = normalizeSelectedFacility(normalized);
+          setSelectedFacilityState(sf);
+          const fid = normalizeFacilityId(sf);
+          if (fid) setFacilityIdState(String(fid));
+        } else if (typeof parsed === "string") {
+          const sf = normalizeSelectedFacility(parsed);
+          setSelectedFacilityState(sf);
+          const fid = normalizeFacilityId(parsed);
+          if (fid) setFacilityIdState(String(fid));
+        }
+      }
+    } catch {}
+
+    // read family keys from localStorage (aliases) (ADDED)
+    try {
+      let foundFamilyId = null;
+      for (const k of FAMILY_ID_ALIASES) {
+        const v = localStorage.getItem(k);
+        if (v) {
+          foundFamilyId = v;
+          break;
+        }
+      }
+      if (foundFamilyId) setFamilyIdState(normalizeFamilyId(foundFamilyId));
+    } catch {}
+    try {
+      let rawSelFamily = null;
+      for (const k of SELECTED_FAMILY_ALIASES) {
+        const v = localStorage.getItem(k);
+        if (v) {
+          rawSelFamily = v;
+          break;
+        }
+      }
+      if (rawSelFamily) {
+        const parsed = (() => {
+          try {
+            return JSON.parse(rawSelFamily);
+          } catch {
+            return rawSelFamily; // primitive id string
+          }
+        })();
+        const normalized = Array.isArray(parsed) ? parsed[0] ?? null : parsed;
+        if (normalized) {
+          const sfam = normalizeSelectedFamily(normalized);
+          setSelectedFamilyState(sfam);
+          const fid = normalizeFamilyId(sfam);
+          if (fid) setFamilyIdState(String(fid));
+        } else if (typeof parsed === "string") {
+          const sfam = normalizeSelectedFamily(parsed);
+          setSelectedFamilyState(sfam);
+          const fid = normalizeFamilyId(parsed);
+          if (fid) setFamilyIdState(String(fid));
         }
       }
     } catch {}
   }, []);
 
-  // persisters (unchanged + plot persisters)...
+  // persisters
   useEffect(() => {
     try {
       if (user && user.name) localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(user));
@@ -326,22 +632,146 @@ export function AuthProvider({ children }) {
     } catch {}
   }, [refreshTokenString]);
 
-  // NEW: persist plot state
+  // persist plot state (canonical keys)
   useEffect(() => {
     try {
       if (plotId) localStorage.setItem(STORAGE_KEYS.PLOT_ID, String(plotId));
       else localStorage.removeItem(STORAGE_KEYS.PLOT_ID);
+    } catch {}
+    // also write aliases for backwards compat (optional)
+    try {
+      for (const k of PLOT_ID_ALIASES) {
+        if (plotId) localStorage.setItem(k, String(plotId));
+        else localStorage.removeItem(k);
+      }
     } catch {}
   }, [plotId]);
 
   useEffect(() => {
     try {
       if (selectedPlot && typeof selectedPlot === "object") localStorage.setItem(STORAGE_KEYS.SELECTED_PLOT, JSON.stringify(selectedPlot));
-      else localStorage.removeItem(STORAGE_KEYS.SELECTED_PLOT);
+      else if (selectedPlot && (typeof selectedPlot === "string" || typeof selectedPlot === "number")) {
+        const preview = normalizeSelectedPlot(selectedPlot);
+        if (preview) localStorage.setItem(STORAGE_KEYS.SELECTED_PLOT, JSON.stringify(preview));
+      } else localStorage.removeItem(STORAGE_KEYS.SELECTED_PLOT);
+    } catch {}
+    // write aliases
+    try {
+      for (const k of SELECTED_PLOT_ALIASES) {
+        if (selectedPlot && typeof selectedPlot === "object") localStorage.setItem(k, JSON.stringify(selectedPlot));
+        else if (selectedPlot && (typeof selectedPlot === "string" || typeof selectedPlot === "number")) {
+          const preview = normalizeSelectedPlot(selectedPlot);
+          if (preview) localStorage.setItem(k, JSON.stringify(preview));
+        } else localStorage.removeItem(k);
+      }
     } catch {}
   }, [selectedPlot]);
 
-  // persist full raw payload (include selectedVillage + selectedPlot)
+  // persist material state (canonical + aliases)
+  useEffect(() => {
+    try {
+      if (materialId) localStorage.setItem(STORAGE_KEYS.MATERIAL_ID, String(materialId));
+      else localStorage.removeItem(STORAGE_KEYS.MATERIAL_ID);
+    } catch {}
+    try {
+      for (const k of MATERIAL_ID_ALIASES) {
+        if (materialId) localStorage.setItem(k, String(materialId));
+        else localStorage.removeItem(k);
+      }
+    } catch {}
+  }, [materialId]);
+
+  useEffect(() => {
+    try {
+      if (selectedMaterial && typeof selectedMaterial === "object")
+        localStorage.setItem(STORAGE_KEYS.SELECTED_MATERIAL, JSON.stringify(selectedMaterial));
+      else if (selectedMaterial && (typeof selectedMaterial === "string" || typeof selectedMaterial === "number")) {
+        const preview = normalizeSelectedMaterial(selectedMaterial);
+        if (preview) localStorage.setItem(STORAGE_KEYS.SELECTED_MATERIAL, JSON.stringify(preview));
+      } else localStorage.removeItem(STORAGE_KEYS.SELECTED_MATERIAL);
+    } catch {}
+
+    try {
+      for (const k of SELECTED_MATERIAL_ALIASES) {
+        if (selectedMaterial && typeof selectedMaterial === "object")
+          localStorage.setItem(k, JSON.stringify(selectedMaterial));
+        else if (selectedMaterial && (typeof selectedMaterial === "string" || typeof selectedMaterial === "number")) {
+          const preview = normalizeSelectedMaterial(selectedMaterial);
+          if (preview) localStorage.setItem(k, JSON.stringify(preview));
+        } else localStorage.removeItem(k);
+      }
+    } catch {}
+  }, [selectedMaterial]);
+
+  // persist facility state (canonical + aliases) (NEW)
+  useEffect(() => {
+    try {
+      if (facilityId) localStorage.setItem(STORAGE_KEYS.FACILITY_ID, String(facilityId));
+      else localStorage.removeItem(STORAGE_KEYS.FACILITY_ID);
+    } catch {}
+    try {
+      for (const k of FACILITY_ID_ALIASES) {
+        if (facilityId) localStorage.setItem(k, String(facilityId));
+        else localStorage.removeItem(k);
+      }
+    } catch {}
+  }, [facilityId]);
+
+  useEffect(() => {
+    try {
+      if (selectedFacility && typeof selectedFacility === "object") localStorage.setItem(STORAGE_KEYS.SELECTED_FACILITY, JSON.stringify(selectedFacility));
+      else if (selectedFacility && (typeof selectedFacility === "string" || typeof selectedFacility === "number")) {
+        const preview = normalizeSelectedFacility(selectedFacility);
+        if (preview) localStorage.setItem(STORAGE_KEYS.SELECTED_FACILITY, JSON.stringify(preview));
+      } else localStorage.removeItem(STORAGE_KEYS.SELECTED_FACILITY);
+    } catch {}
+
+    try {
+      for (const k of SELECTED_FACILITY_ALIASES) {
+        if (selectedFacility && typeof selectedFacility === "object") localStorage.setItem(k, JSON.stringify(selectedFacility));
+        else if (selectedFacility && (typeof selectedFacility === "string" || typeof selectedFacility === "number")) {
+          const preview = normalizeSelectedFacility(selectedFacility);
+          if (preview) localStorage.setItem(k, JSON.stringify(preview));
+        } else localStorage.removeItem(k);
+      }
+    } catch {}
+  }, [selectedFacility]);
+
+  // persist family state (canonical + aliases) (ADDED)
+  useEffect(() => {
+    try {
+      if (familyId) localStorage.setItem(STORAGE_KEYS.FAMILY_ID, String(familyId));
+      else localStorage.removeItem(STORAGE_KEYS.FAMILY_ID);
+    } catch {}
+    try {
+      for (const k of FAMILY_ID_ALIASES) {
+        if (familyId) localStorage.setItem(k, String(familyId));
+        else localStorage.removeItem(k);
+      }
+    } catch {}
+  }, [familyId]);
+
+  useEffect(() => {
+    try {
+      if (selectedFamily && typeof selectedFamily === "object") localStorage.setItem(STORAGE_KEYS.SELECTED_FAMILY, JSON.stringify(selectedFamily));
+      else if (selectedFamily && (typeof selectedFamily === "string" || typeof selectedFamily === "number")) {
+        const preview = normalizeSelectedFamily(selectedFamily);
+        if (preview) localStorage.setItem(STORAGE_KEYS.SELECTED_FAMILY, JSON.stringify(preview));
+      } else localStorage.removeItem(STORAGE_KEYS.SELECTED_FAMILY);
+    } catch {}
+
+    try {
+      for (const k of SELECTED_FAMILY_ALIASES) {
+        if (selectedFamily && typeof selectedFamily === "object") localStorage.setItem(k, JSON.stringify(selectedFamily));
+        else if (selectedFamily && (typeof selectedFamily === "string" || typeof selectedFamily === "number")) {
+          const preview = normalizeSelectedFamily(selectedFamily);
+          if (preview) localStorage.setItem(k, JSON.stringify(preview));
+        } else localStorage.removeItem(k);
+      }
+    } catch {}
+  }, [selectedFamily]);
+
+  // persist full raw payload (include selectedVillage + selectedPlot + selectedMaterial + selectedFacility + selectedFamily)
   useEffect(() => {
     try {
       const raw = {
@@ -351,6 +781,9 @@ export function AuthProvider({ children }) {
         user: user ?? undefined,
         selectedVillage: village ?? undefined,
         selectedPlot: selectedPlot ?? undefined,
+        selectedMaterial: selectedMaterial ?? undefined,
+        selectedFacility: selectedFacility ?? undefined,
+        selectedFamily: selectedFamily ?? undefined,
       };
       const hasAny = Object.values(raw).some((v) => v !== undefined && v !== null);
       if (hasAny) {
@@ -363,9 +796,9 @@ export function AuthProvider({ children }) {
         } catch {}
       }
     } catch {}
-  }, [token, tokenExpiresAt, refreshTokenString, user, village, selectedPlot]);
+  }, [token, tokenExpiresAt, refreshTokenString, user, village, selectedPlot, selectedMaterial, selectedFacility, selectedFamily]);
 
-  // storage sync across tabs (unchanged + plot keys)...
+  // storage sync across tabs (robust with aliases)
   useEffect(() => {
     function onStorage(e) {
       if (!e.key) return;
@@ -418,21 +851,75 @@ export function AuthProvider({ children }) {
         }
       }
 
-      // NEW: plot keys
-      if (e.key === STORAGE_KEYS.PLOT_ID) {
-        setPlotIdState(e.newValue);
+      // plot aliases
+      if (PLOT_ID_ALIASES.includes(e.key)) {
+        setPlotIdState(normalizePlotId(e.newValue));
       }
-      if (e.key === STORAGE_KEYS.SELECTED_PLOT) {
+      if (SELECTED_PLOT_ALIASES.includes(e.key)) {
         try {
           const val = e.newValue ? JSON.parse(e.newValue) : null;
           const normalized = Array.isArray(val) ? val[0] ?? null : val;
-          setSelectedPlotState(normalized);
-          if (normalized && (normalized.plotId || normalized.plot_id || normalized.id || normalized._id)) {
-            const id = normalized.plotId ?? normalized.plot_id ?? normalized.id ?? normalized._id;
+          const sp = normalizeSelectedPlot(normalized ?? val ?? null);
+          setSelectedPlotState(sp);
+          if (sp && (sp.plotId || sp.id || sp._id)) {
+            const id = sp.plotId ?? sp.id ?? sp._id;
             setPlotIdState(String(id));
           }
         } catch {
           setSelectedPlotState(null);
+        }
+      }
+
+      // material aliases
+      if (MATERIAL_ID_ALIASES.includes(e.key)) {
+        setMaterialIdState(normalizeMaterialId(e.newValue));
+      }
+      if (SELECTED_MATERIAL_ALIASES.includes(e.key)) {
+        try {
+          const val = e.newValue ? (() => {
+            try { return JSON.parse(e.newValue); } catch { return e.newValue; }
+          })() : null;
+          const normalized = Array.isArray(val) ? val[0] ?? null : val;
+          const sm = normalizeSelectedMaterial(normalized ?? val ?? null);
+          setSelectedMaterialState(sm);
+          const mid = normalizeMaterialId(sm ?? val);
+          if (mid) setMaterialIdState(String(mid));
+        } catch {
+          setSelectedMaterialState(null);
+        }
+      }
+
+      // facility aliases (NEW)
+      if (FACILITY_ID_ALIASES.includes(e.key)) {
+        setFacilityIdState(normalizeFacilityId(e.newValue));
+      }
+      if (SELECTED_FACILITY_ALIASES.includes(e.key)) {
+        try {
+          const val = e.newValue ? (() => { try { return JSON.parse(e.newValue); } catch { return e.newValue; } })() : null;
+          const normalized = Array.isArray(val) ? val[0] ?? null : val;
+          const sf = normalizeSelectedFacility(normalized ?? val ?? null);
+          setSelectedFacilityState(sf);
+          const fid = normalizeFacilityId(sf ?? val);
+          if (fid) setFacilityIdState(String(fid));
+        } catch {
+          setSelectedFacilityState(null);
+        }
+      }
+
+      // family aliases (ADDED)
+      if (FAMILY_ID_ALIASES.includes(e.key)) {
+        setFamilyIdState(normalizeFamilyId(e.newValue));
+      }
+      if (SELECTED_FAMILY_ALIASES.includes(e.key)) {
+        try {
+          const val = e.newValue ? (() => { try { return JSON.parse(e.newValue); } catch { return e.newValue; } })() : null;
+          const normalized = Array.isArray(val) ? val[0] ?? null : val;
+          const sfam = normalizeSelectedFamily(normalized ?? val ?? null);
+          setSelectedFamilyState(sfam);
+          const fid = normalizeFamilyId(sfam ?? val);
+          if (fid) setFamilyIdState(String(fid));
+        } catch {
+          setSelectedFamilyState(null);
         }
       }
 
@@ -446,7 +933,7 @@ export function AuthProvider({ children }) {
             if (parsed.user) setUserState(parsed.user && parsed.user.name ? { name: parsed.user.name, role: parsed.user.role, email: parsed.user.email } : null);
             if (parsed.selectedVillage) setVillageState(parsed.selectedVillage);
 
-            // NEW: selectedPlot in auth payload
+            // selectedPlot in auth payload
             if (parsed.selectedPlot) {
               const sp = normalizeSelectedPlot(parsed.selectedPlot);
               setSelectedPlotState(sp);
@@ -454,6 +941,30 @@ export function AuthProvider({ children }) {
                 const id = sp.plotId ?? sp.id ?? sp._id;
                 setPlotIdState(String(id));
               }
+            }
+
+            // selectedMaterial in auth payload
+            if (parsed.selectedMaterial) {
+              const sm = normalizeSelectedMaterial(parsed.selectedMaterial);
+              setSelectedMaterialState(sm);
+              const mid = normalizeMaterialId(sm ?? parsed.selectedMaterial);
+              if (mid) setMaterialIdState(String(mid));
+            }
+
+            // selectedFacility in auth payload
+            if (parsed.selectedFacility) {
+              const sf = normalizeSelectedFacility(parsed.selectedFacility);
+              setSelectedFacilityState(sf);
+              const fid = normalizeFacilityId(sf ?? parsed.selectedFacility);
+              if (fid) setFacilityIdState(String(fid));
+            }
+
+            // selectedFamily in auth payload (ADDED)
+            if (parsed.selectedFamily) {
+              const sfam = normalizeSelectedFamily(parsed.selectedFamily);
+              setSelectedFamilyState(sfam);
+              const fid = normalizeFamilyId(sfam ?? parsed.selectedFamily);
+              if (fid) setFamilyIdState(String(fid));
             }
           } else {
             setTokenState(null);
@@ -465,6 +976,12 @@ export function AuthProvider({ children }) {
             setVillageNameState(null);
             setSelectedPlotState(null);
             setPlotIdState(null);
+            setSelectedMaterialState(null);
+            setMaterialIdState(null);
+            setSelectedFacilityState(null);
+            setFacilityIdState(null);
+            setSelectedFamilyState(null);
+            setFamilyIdState(null);
           }
         } catch {}
       }
@@ -473,7 +990,7 @@ export function AuthProvider({ children }) {
     return () => window.removeEventListener("storage", onStorage);
   }, []);
 
-  // tick for tokenRemaining (updates every second)
+  // tick for tokenRemaining
   useEffect(() => {
     if (tickIntervalRef.current) {
       clearInterval(tickIntervalRef.current);
@@ -500,7 +1017,6 @@ export function AuthProvider({ children }) {
     };
   }, [tokenExpiresAt]);
 
-  // clear timers helper
   const clearTimers = useCallback(() => {
     if (expiryTimerRef.current) {
       clearTimeout(expiryTimerRef.current);
@@ -512,20 +1028,17 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
-  // expiry timer -> automatic logout on expiry
   useEffect(() => {
     clearTimers();
     if (!tokenExpiresAt) return undefined;
     const now = Date.now();
     const msToExpiry = tokenExpiresAt - now;
     if (msToExpiry <= 0) {
-      // Already expired -> ensure full logout
       setTokenState(null);
       setTokenExpiresAt(null);
       try {
-        logout(); // call logout to clear user, storage, etc.
+        logout(); // logout defined later, still works
       } catch {
-        // fallback clearing
         setUserState(null);
         setVillageIdState(null);
         setVillageState(null);
@@ -533,6 +1046,12 @@ export function AuthProvider({ children }) {
         setRefreshTokenString(null);
         setSelectedPlotState(null);
         setPlotIdState(null);
+        setSelectedMaterialState(null);
+        setMaterialIdState(null);
+        setSelectedFacilityState(null);
+        setFacilityIdState(null);
+        setSelectedFamilyState(null);
+        setFamilyIdState(null);
         try {
           localStorage.removeItem(STORAGE_KEYS.USER);
           localStorage.removeItem(STORAGE_KEYS.VILLAGE);
@@ -544,12 +1063,17 @@ export function AuthProvider({ children }) {
           localStorage.removeItem(STORAGE_KEYS.AUTH_PAYLOAD);
           localStorage.removeItem(STORAGE_KEYS.PLOT_ID);
           localStorage.removeItem(STORAGE_KEYS.SELECTED_PLOT);
+          localStorage.removeItem(STORAGE_KEYS.MATERIAL_ID);
+          localStorage.removeItem(STORAGE_KEYS.SELECTED_MATERIAL);
+          localStorage.removeItem(STORAGE_KEYS.FACILITY_ID);
+          localStorage.removeItem(STORAGE_KEYS.SELECTED_FACILITY);
+          localStorage.removeItem(STORAGE_KEYS.FAMILY_ID);
+          localStorage.removeItem(STORAGE_KEYS.SELECTED_FAMILY);
         } catch {}
       }
       return undefined;
     }
     expiryTimerRef.current = setTimeout(() => {
-      // on expiry, perform logout flow to clear everything and keep clients consistent
       try {
         logout();
       } catch {
@@ -559,11 +1083,8 @@ export function AuthProvider({ children }) {
     }, msToExpiry);
 
     return () => clearTimers();
-  }, [tokenExpiresAt, clearTimers]); // logout is defined later but available at runtime
+  }, [tokenExpiresAt, clearTimers]);
 
-  // internal refresh implementation:
-  //   - supports sending normalized refresh token string (body) or cookie-only fallback
-  // RETURNS: { ok, payload?, absExpiry?, remaining?, expirySource?, status?, json?, text? }
   const doRefresh = useCallback(
     async (opts = { allowCookieFallback: true }) => {
       try {
@@ -601,7 +1122,6 @@ export function AuthProvider({ children }) {
             expirySource = "server";
           }
 
-          // if no expiry provided but token present, try parse 'exp' from JWT
           if (!absExpiry && newToken) {
             const parsed = parseJwt(newToken);
             if (parsed && parsed.exp) {
@@ -613,16 +1133,11 @@ export function AuthProvider({ children }) {
             }
           }
 
-          // If we still don't have absExpiry:
-          // - If there was already a tokenExpiresAt known, DO NOT overwrite it (we can't safely guess)
-          // - If there was no previous expiry known, provide a fallback default (2 hours) so sessions still work.
           if (!absExpiry) {
             if (tokenExpiresAt) {
-              // preserve existing expiry; don't set a new one
               expirySource = "preserve";
               absExpiry = null;
             } else if (newToken) {
-              // no previous expiry and no server/jwt expiry -> fallback to 2 hours
               absExpiry = Date.now() + 2 * 3600 * 1000;
               expirySource = "fallback";
             } else {
@@ -630,7 +1145,6 @@ export function AuthProvider({ children }) {
             }
           }
 
-          // Update state: only set tokenExpiresAt if we computed absExpiry (or fallback applied)
           setTokenState(newToken);
           if (absExpiry) setTokenExpiresAt(absExpiry);
           if (newRefresh) setRefreshTokenString(newRefresh);
@@ -664,7 +1178,7 @@ export function AuthProvider({ children }) {
             }
           }
 
-          // NEW: support selectedPlot returned by refresh endpoint
+          // selectedPlot returned by refresh endpoint
           if (payload.selectedPlot) {
             const sp = normalizeSelectedPlot(payload.selectedPlot);
             if (sp) {
@@ -677,9 +1191,46 @@ export function AuthProvider({ children }) {
             }
           }
 
-          const remaining = absExpiry ? Math.max(0, Math.ceil((absExpiry - Date.now()) / 1000)) : null;
+          // selectedMaterial returned by refresh endpoint
+          if (payload.selectedMaterial) {
+            const sm = normalizeSelectedMaterial(payload.selectedMaterial);
+            if (sm) {
+              setSelectedMaterialState(sm);
+              const mid = normalizeMaterialId(sm.materialId ?? sm.id ?? sm._id);
+              if (mid) setMaterialIdState(mid);
+              try {
+                localStorage.setItem(STORAGE_KEYS.SELECTED_MATERIAL, JSON.stringify(sm));
+              } catch {}
+            }
+          }
 
-          // ensure tokenRemaining immediate update only if we computed an absExpiry (or fallback)
+          // selectedFacility returned by refresh endpoint (NEW)
+          if (payload.selectedFacility) {
+            const sf = normalizeSelectedFacility(payload.selectedFacility);
+            if (sf) {
+              setSelectedFacilityState(sf);
+              const fid = normalizeFacilityId(sf.facilityId ?? sf.id ?? sf._id);
+              if (fid) setFacilityIdState(fid);
+              try {
+                localStorage.setItem(STORAGE_KEYS.SELECTED_FACILITY, JSON.stringify(sf));
+              } catch {}
+            }
+          }
+
+          // selectedFamily returned by refresh endpoint (ADDED)
+          if (payload.selectedFamily) {
+            const sfam = normalizeSelectedFamily(payload.selectedFamily);
+            if (sfam) {
+              setSelectedFamilyState(sfam);
+              const fid = normalizeFamilyId(sfam.familyId ?? sfam.id ?? sfam._id);
+              if (fid) setFamilyIdState(fid);
+              try {
+                localStorage.setItem(STORAGE_KEYS.SELECTED_FAMILY, JSON.stringify(sfam));
+              } catch {}
+            }
+          }
+
+          const remaining = absExpiry ? Math.max(0, Math.ceil((absExpiry - Date.now()) / 1000)) : null;
           if (typeof remaining === "number") setTokenRemaining(remaining);
 
           return { ok: true, payload, absExpiry: absExpiry ?? null, remaining: remaining ?? null, expirySource };
@@ -690,7 +1241,6 @@ export function AuthProvider({ children }) {
           return handlePayload(payload);
         }
 
-        // If first failed and server indicates OTP/cookie-only expectation, try cookie-only
         const looksLikeOtpValidationError =
           (first.json &&
             first.json.detail &&
@@ -703,7 +1253,7 @@ export function AuthProvider({ children }) {
           (first.json && JSON.stringify(first.json).toLowerCase().includes("extra_forbidden"));
 
         if (opts.allowCookieFallback && looksLikeOtpValidationError) {
-          const second = await attempt({}); // empty body (cookie flow)
+          const second = await attempt({});
           if (second.ok) {
             const payload = second.json ?? {};
             return handlePayload(payload);
@@ -716,11 +1266,9 @@ export function AuthProvider({ children }) {
         return { ok: false, status: 0, json: null, text: String(err) };
       }
     },
-    // include tokenExpiresAt so doRefresh can decide to preserve existing expiry
     [refreshTokenString, tokenExpiresAt]
   );
 
-  // PUBLIC: forceRefresh (exposed to components). Returns result object { ok, payload, absExpiry, remaining, expirySource }
   const forceRefresh = useCallback(() => {
     return doRefresh({ allowCookieFallback: true });
   }, [doRefresh]);
@@ -772,8 +1320,6 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
-  // setToken helper for callers - accepts options { expiresIn, expiresAt, refreshToken }
-  // NOTE: unchanged behavior: will attempt to compute expiry from params or JWT; keep this for explicit callers.
   const setToken = useCallback((t, options = {}) => {
     const { expiresIn, expiresAt, refreshToken: rToken } = options;
     setTokenState(t ?? null);
@@ -782,7 +1328,6 @@ export function AuthProvider({ children }) {
       setRefreshTokenString(normalized ?? null);
     }
 
-    // compute absolute expiry if provided as relative or absolute
     let absExpiry = null;
     if (expiresIn && !isNaN(Number(expiresIn))) absExpiry = Date.now() + Number(expiresIn) * 1000;
     else if (expiresAt) {
@@ -790,7 +1335,6 @@ export function AuthProvider({ children }) {
       absExpiry = !Number.isNaN(asNum) ? asNum : Date.parse(expiresAt);
     }
 
-    // if server didn't provide expiry but token is JWT, attempt to read exp claim
     if (!absExpiry && t) {
       const parsed = parseJwt(t);
       if (parsed && parsed.exp) {
@@ -799,10 +1343,8 @@ export function AuthProvider({ children }) {
       }
     }
 
-    // DEFAULT FALLBACK -> 2 hours (if we were asked to set an expiry or token exists)
     if (!absExpiry && (t || expiresIn || expiresAt)) absExpiry = Date.now() + 2 * 3600 * 1000;
 
-    // If no token and no expiry requested, clear expiry
     if (!t && !expiresIn && !expiresAt) {
       setTokenExpiresAt(null);
       return;
@@ -811,7 +1353,6 @@ export function AuthProvider({ children }) {
     setTokenExpiresAt(absExpiry);
   }, []);
 
-  // login payload normalization — returns true when processed successfully
   const login = useCallback(
     async (payload = {}) => {
       try {
@@ -838,10 +1379,8 @@ export function AuthProvider({ children }) {
           }
         }
 
-        // token handling: accept token or accessToken
         const tok = p.token ?? p.accessToken ?? p.access_token ?? null;
         if (tok) {
-          // set token state
           setTokenState(tok);
           let absExpiry = null;
           const expiresIn = p.expiresIn ?? p.expires_in;
@@ -856,11 +1395,9 @@ export function AuthProvider({ children }) {
             const parsed = parseJwt(tok);
             if (parsed && parsed.exp) absExpiry = Number(parsed.exp) * 1000;
           }
-          // DEFAULT FALLBACK -> 2 hours
           if (!absExpiry) absExpiry = Date.now() + 2 * 3600 * 1000;
           setTokenExpiresAt(absExpiry);
 
-          // If user not provided, try extract from JWT payload
           if (!userObj) {
             const parsed = parseJwt(tok);
             if (parsed && (parsed.name || parsed.email || parsed.sub)) {
@@ -872,21 +1409,19 @@ export function AuthProvider({ children }) {
           }
         }
 
-        // refresh token
         const rawRefresh = p.refreshToken ?? p.refresh_token ?? null;
         if (rawRefresh) {
           const normalized = normalizeRefreshToken(rawRefresh);
           setRefreshTokenString(normalized);
         }
 
-        // selected village
         const rawSv = p.selectedVillage ?? p.selected_village ?? p.selected ?? null;
         const normalizedSv = normalizeSelectedVillage(rawSv);
         if (normalizedSv) {
           setVillage(normalizedSv);
         }
 
-        // NEW: selected plot from payload
+        // selected plot
         const rawSp = p.selectedPlot ?? p.selected_plot ?? p.selected ?? null;
         const normalizedSp = normalizeSelectedPlot(rawSp);
         if (normalizedSp) {
@@ -895,7 +1430,6 @@ export function AuthProvider({ children }) {
           if (pid) setPlotIdState(String(pid));
         }
 
-        // fallback villageId fields
         if (!normalizedSv && (p.villageId || p.village_id || p.villageID)) {
           const vidRaw = p.villageId ?? p.village_id ?? p.villageID;
           const normalizedId = normalizeVillageId(vidRaw);
@@ -914,26 +1448,86 @@ export function AuthProvider({ children }) {
           if (normalizedPid) {
             setPlotIdState(normalizedPid);
             try {
-              // minimal preview
               const preview = { plotId: normalizedPid };
               setSelectedPlotState(preview);
             } catch {}
           }
         }
 
-        // persist raw backend payload
+        // selected material from payload (if any)
+        const rawSm = p.selectedMaterial ?? p.selected_material ?? null;
+        const normalizedSm = normalizeSelectedMaterial(rawSm);
+        if (normalizedSm) {
+          setSelectedMaterialState(normalizedSm);
+          const mid = normalizeMaterialId(normalizedSm.materialId ?? normalizedSm.id ?? normalizedSm._id);
+          if (mid) setMaterialIdState(String(mid));
+        }
+
+        // fallback materialId if provided directly
+        if (!normalizedSm && (p.materialId || p.material_id || p._id || p.id)) {
+          const midRaw = p.materialId ?? p.material_id ?? p._id ?? p.id;
+          const normalizedMid = normalizeMaterialId(midRaw);
+          if (normalizedMid) {
+            setMaterialIdState(normalizedMid);
+            try {
+              const preview = { materialId: normalizedMid };
+              setSelectedMaterialState(preview);
+            } catch {}
+          }
+        }
+
+        // selected facility from payload (NEW)
+        const rawSf = p.selectedFacility ?? p.selected_facility ?? null;
+        const normalizedSf = normalizeSelectedFacility(rawSf);
+        if (normalizedSf) {
+          setSelectedFacilityState(normalizedSf);
+          const fid = normalizeFacilityId(normalizedSf.facilityId ?? normalizedSf.id ?? normalizedSf._id);
+          if (fid) setFacilityIdState(String(fid));
+        }
+
+        // fallback facilityId if provided directly
+        if (!normalizedSf && (p.facilityId || p.facility_id || p._id || p.id)) {
+          const fidRaw = p.facilityId ?? p.facility_id ?? p._id ?? p.id;
+          const normalizedFid = normalizeFacilityId(fidRaw);
+          if (normalizedFid) {
+            setFacilityIdState(normalizedFid);
+            try {
+              const preview = { facilityId: normalizedFid };
+              setSelectedFacilityState(preview);
+            } catch {}
+          }
+        }
+
+        // selected family from payload (ADDED)
+        const rawFam = p.selectedFamily ?? p.selected_family ?? null;
+        const normalizedFam = normalizeSelectedFamily(rawFam);
+        if (normalizedFam) {
+          setSelectedFamilyState(normalizedFam);
+          const fid = normalizeFamilyId(normalizedFam.familyId ?? normalizedFam.id ?? normalizedFam._id);
+          if (fid) setFamilyIdState(String(fid));
+        }
+
+        // fallback familyId if provided directly
+        if (!normalizedFam && (p.familyId || p.family_id || p._id || p.id)) {
+          const famRaw = p.familyId ?? p.family_id ?? p._id ?? p.id;
+          const normalizedFid = normalizeFamilyId(famRaw);
+          if (normalizedFid) {
+            setFamilyIdState(normalizedFid);
+            try {
+              const preview = { familyId: normalizedFid };
+              setSelectedFamilyState(preview);
+            } catch {}
+          }
+        }
+
         try {
           localStorage.setItem(STORAGE_KEYS.AUTH_PAYLOAD, JSON.stringify(p));
         } catch {}
 
-        // --- START a 2-hour expiry if the server did not provide expiry info but user logged in.
-        // This covers cookie-only flows where server didn't hand back a token or expiry.
         const serverProvidedExpiry = (p.expiresIn ?? p.expires_in) || (p.expiresAt ?? p.expires_at) || null;
         if (!tok && userObj && !serverProvidedExpiry && !tokenExpiresAt) {
-          // start a 2-hour session timer
           setTokenExpiresAt(Date.now() + 2 * 3600 * 1000);
         }
-        // -------------------------------------------------------------------------
 
         return true;
       } catch (err) {
@@ -957,6 +1551,18 @@ export function AuthProvider({ children }) {
     setSelectedPlotState(null);
     setPlotIdState(null);
 
+    // clear material keys
+    setSelectedMaterialState(null);
+    setMaterialIdState(null);
+
+    // clear facility keys
+    setSelectedFacilityState(null);
+    setFacilityIdState(null);
+
+    // clear family keys (ADDED)
+    setSelectedFamilyState(null);
+    setFamilyIdState(null);
+
     try {
       localStorage.removeItem(STORAGE_KEYS.USER);
       localStorage.removeItem(STORAGE_KEYS.VILLAGE);
@@ -968,13 +1574,22 @@ export function AuthProvider({ children }) {
       localStorage.removeItem(STORAGE_KEYS.AUTH_PAYLOAD);
       localStorage.removeItem(STORAGE_KEYS.PLOT_ID);
       localStorage.removeItem(STORAGE_KEYS.SELECTED_PLOT);
+      localStorage.removeItem(STORAGE_KEYS.MATERIAL_ID);
+      localStorage.removeItem(STORAGE_KEYS.SELECTED_MATERIAL);
+      localStorage.removeItem(STORAGE_KEYS.FACILITY_ID);
+      localStorage.removeItem(STORAGE_KEYS.SELECTED_FACILITY);
+      localStorage.removeItem(STORAGE_KEYS.FAMILY_ID);
+      localStorage.removeItem(STORAGE_KEYS.SELECTED_FAMILY);
+      // remove aliases too for best effort
+      for (const k of [...PLOT_ID_ALIASES, ...SELECTED_PLOT_ALIASES, ...MATERIAL_ID_ALIASES, ...SELECTED_MATERIAL_ALIASES, ...FACILITY_ID_ALIASES, ...SELECTED_FACILITY_ALIASES, ...FAMILY_ID_ALIASES, ...SELECTED_FAMILY_ALIASES]) {
+        try { localStorage.removeItem(k); } catch {}
+      }
     } catch {}
-    // Keep caller responsible for redirecting if desired.
   }, [clearTimers]);
 
   const isAuthenticated = !!(user && token);
 
-  // NEW: public setters for plot
+  // public setters for plot
   const setPlotId = useCallback((p) => {
     const normalized = normalizePlotId(p);
     setPlotIdState(normalized ?? null);
@@ -1012,7 +1627,6 @@ export function AuthProvider({ children }) {
         localStorage.removeItem(STORAGE_KEYS.PLOT_ID);
       } catch {}
     } else {
-      // sp might be an id
       const normalizedId = normalizePlotId(sp);
       if (normalizedId) {
         setPlotIdState(normalizedId);
@@ -1028,7 +1642,6 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
-  // convenience: selectPlot similar to what you used in PlotsPage
   const selectPlot = useCallback((plot) => {
     try {
       const pid = plot.plotId ?? plot.id ?? plot._id ?? "";
@@ -1044,6 +1657,213 @@ export function AuthProvider({ children }) {
       setPlotIdState(String(pid));
     } catch (e) {
       console.warn("Failed to save selected plot to localStorage", e);
+    }
+  }, []);
+
+  // public setters for material (robust)
+  const setMaterialId = useCallback((m) => {
+    const normalized = normalizeMaterialId(m);
+    setMaterialIdState(normalized ?? null);
+    if (!normalized) {
+      setSelectedMaterialState(null);
+      try {
+        localStorage.removeItem(STORAGE_KEYS.SELECTED_MATERIAL);
+      } catch {}
+    }
+  }, []);
+
+  const setSelectedMaterial = useCallback((sm) => {
+    if (sm && typeof sm === "object") {
+      const normalized = Array.isArray(sm) ? sm[0] ?? null : sm;
+      if (!normalized) {
+        setSelectedMaterialState(null);
+        setMaterialIdState(null);
+        try {
+          localStorage.removeItem(STORAGE_KEYS.SELECTED_MATERIAL);
+          localStorage.removeItem(STORAGE_KEYS.MATERIAL_ID);
+        } catch {}
+        return;
+      }
+      setSelectedMaterialState(normalized);
+      const id = normalizeMaterialId(normalized);
+      if (id !== undefined && id !== null) setMaterialIdState(String(id));
+      try {
+        localStorage.setItem(STORAGE_KEYS.SELECTED_MATERIAL, JSON.stringify(normalized));
+      } catch {}
+    } else if (sm == null) {
+      setSelectedMaterialState(null);
+      setMaterialIdState(null);
+      try {
+        localStorage.removeItem(STORAGE_KEYS.SELECTED_MATERIAL);
+        localStorage.removeItem(STORAGE_KEYS.MATERIAL_ID);
+      } catch {}
+    } else {
+      const normalizedId = normalizeMaterialId(sm);
+      if (normalizedId) {
+        setMaterialIdState(normalizedId);
+        const preview = { materialId: normalizedId };
+        setSelectedMaterialState(preview);
+        try {
+          localStorage.setItem(STORAGE_KEYS.SELECTED_MATERIAL, JSON.stringify(preview));
+        } catch {}
+      } else {
+        setSelectedMaterialState(null);
+        setMaterialIdState(null);
+      }
+    }
+  }, []);
+
+  const selectMaterial = useCallback((material) => {
+    try {
+      const mid = material.materialId ?? material.id ?? material._id ?? "";
+      localStorage.setItem(STORAGE_KEYS.MATERIAL_ID, String(mid));
+      const preview = {
+        materialId: mid,
+        name: material.name ?? null,
+      };
+      localStorage.setItem(STORAGE_KEYS.SELECTED_MATERIAL, JSON.stringify(preview));
+      setSelectedMaterialState(preview);
+      setMaterialIdState(String(mid));
+    } catch (e) {
+      console.warn("Failed to save selected material to localStorage", e);
+    }
+  }, []);
+
+  // public setters for facility (NEW)
+  const setFacilityId = useCallback((f) => {
+    const normalized = normalizeFacilityId(f);
+    setFacilityIdState(normalized ?? null);
+    if (!normalized) {
+      setSelectedFacilityState(null);
+      try {
+        localStorage.removeItem(STORAGE_KEYS.SELECTED_FACILITY);
+      } catch {}
+    }
+  }, []);
+
+  const setSelectedFacility = useCallback((sf) => {
+    if (sf && typeof sf === "object") {
+      const normalized = Array.isArray(sf) ? sf[0] ?? null : sf;
+      if (!normalized) {
+        setSelectedFacilityState(null);
+        setFacilityIdState(null);
+        try {
+          localStorage.removeItem(STORAGE_KEYS.SELECTED_FACILITY);
+          localStorage.removeItem(STORAGE_KEYS.FACILITY_ID);
+        } catch {}
+        return;
+      }
+      setSelectedFacilityState(normalized);
+      const id = normalizeFacilityId(normalized);
+      if (id !== undefined && id !== null) setFacilityIdState(String(id));
+      try {
+        localStorage.setItem(STORAGE_KEYS.SELECTED_FACILITY, JSON.stringify(normalized));
+      } catch {}
+    } else if (sf == null) {
+      setSelectedFacilityState(null);
+      setFacilityIdState(null);
+      try {
+        localStorage.removeItem(STORAGE_KEYS.SELECTED_FACILITY);
+        localStorage.removeItem(STORAGE_KEYS.FACILITY_ID);
+      } catch {}
+    } else {
+      const normalizedId = normalizeFacilityId(sf);
+      if (normalizedId) {
+        setFacilityIdState(normalizedId);
+        const preview = { facilityId: normalizedId };
+        setSelectedFacilityState(preview);
+        try {
+          localStorage.setItem(STORAGE_KEYS.SELECTED_FACILITY, JSON.stringify(preview));
+        } catch {}
+      } else {
+        setSelectedFacilityState(null);
+        setFacilityIdState(null);
+      }
+    }
+  }, []);
+
+  const selectFacility = useCallback((facility) => {
+    try {
+      const fid = facility.facilityId ?? facility.id ?? facility._id ?? "";
+      localStorage.setItem(STORAGE_KEYS.FACILITY_ID, String(fid));
+      const preview = {
+        facilityId: fid,
+        name: facility.name ?? null,
+      };
+      localStorage.setItem(STORAGE_KEYS.SELECTED_FACILITY, JSON.stringify(preview));
+      setSelectedFacilityState(preview);
+      setFacilityIdState(String(fid));
+    } catch (e) {
+      console.warn("Failed to save selected facility to localStorage", e);
+    }
+  }, []);
+
+  // public setters for family (ADDED)
+  const setFamilyId = useCallback((f) => {
+    const normalized = normalizeFamilyId(f);
+    setFamilyIdState(normalized ?? null);
+    if (!normalized) {
+      setSelectedFamilyState(null);
+      try {
+        localStorage.removeItem(STORAGE_KEYS.SELECTED_FAMILY);
+      } catch {}
+    }
+  }, []);
+
+  const setSelectedFamily = useCallback((sfam) => {
+    if (sfam && typeof sfam === "object") {
+      const normalized = Array.isArray(sfam) ? sfam[0] ?? null : sfam;
+      if (!normalized) {
+        setSelectedFamilyState(null);
+        setFamilyIdState(null);
+        try {
+          localStorage.removeItem(STORAGE_KEYS.SELECTED_FAMILY);
+          localStorage.removeItem(STORAGE_KEYS.FAMILY_ID);
+        } catch {}
+        return;
+      }
+      setSelectedFamilyState(normalized);
+      const id = normalizeFamilyId(normalized);
+      if (id !== undefined && id !== null) setFamilyIdState(String(id));
+      try {
+        localStorage.setItem(STORAGE_KEYS.SELECTED_FAMILY, JSON.stringify(normalized));
+      } catch {}
+    } else if (sfam == null) {
+      setSelectedFamilyState(null);
+      setFamilyIdState(null);
+      try {
+        localStorage.removeItem(STORAGE_KEYS.SELECTED_FAMILY);
+        localStorage.removeItem(STORAGE_KEYS.FAMILY_ID);
+      } catch {}
+    } else {
+      const normalizedId = normalizeFamilyId(sfam);
+      if (normalizedId) {
+        setFamilyIdState(normalizedId);
+        const preview = { familyId: normalizedId };
+        setSelectedFamilyState(preview);
+        try {
+          localStorage.setItem(STORAGE_KEYS.SELECTED_FAMILY, JSON.stringify(preview));
+        } catch {}
+      } else {
+        setSelectedFamilyState(null);
+        setFamilyIdState(null);
+      }
+    }
+  }, []);
+
+  const selectFamily = useCallback((family) => {
+    try {
+      const fid = family.familyId ?? family.id ?? family._id ?? "";
+      localStorage.setItem(STORAGE_KEYS.FAMILY_ID, String(fid));
+      const preview = {
+        familyId: fid,
+        name: family.name ?? null,
+      };
+      localStorage.setItem(STORAGE_KEYS.SELECTED_FAMILY, JSON.stringify(preview));
+      setSelectedFamilyState(preview);
+      setFamilyIdState(String(fid));
+    } catch (e) {
+      console.warn("Failed to save selected family to localStorage", e);
     }
   }, []);
 
@@ -1065,12 +1885,33 @@ export function AuthProvider({ children }) {
     forceRefresh,
     isAuthenticated,
 
-    // new plot exports
+    // plot exports
     plotId,
     selectedPlot,
     setPlotId,
     setSelectedPlot,
     selectPlot,
+
+    // material exports
+    materialId,
+    selectedMaterial,
+    setMaterialId,
+    setSelectedMaterial,
+    selectMaterial,
+
+    // facility exports
+    facilityId,
+    selectedFacility,
+    setFacilityId,
+    setSelectedFacility,
+    selectFacility,
+
+    // family exports (ADDED)
+    familyId,
+    selectedFamily,
+    setFamilyId,
+    setSelectedFamily,
+    selectFamily,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

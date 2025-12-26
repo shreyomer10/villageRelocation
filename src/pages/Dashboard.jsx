@@ -39,7 +39,7 @@ function VillageCardCompact({ village, onOpen, computeProgress, totalSubstages, 
   })();
 
   return (
-    <div role="button" onClick={() => onOpen(village)} className="bg-white rounded-lg p-4 shadow-sm hover:shadow-md transition transform hover:-translate-y-0.5 cursor-pointer border border-gray-100">
+    <div role="button" onClick={() => onOpen(village)} className="bg-blue-200 rounded-lg p-4 shadow-sm hover:shadow-md transition transform hover:-translate-y-0.5 cursor-pointer border border-gray-100">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <h3 className="font-semibold text-gray-800 truncate">{name} (<span className="font-medium">{villageId}</span>)</h3>
@@ -51,8 +51,8 @@ function VillageCardCompact({ village, onOpen, computeProgress, totalSubstages, 
 
       <div className="mt-3 flex items-center justify-between gap-3">
         <div className="w-full">
-          <div className="text-xs text-gray-600 mb-1">{progress}%</div>
-          <div className="w-full bg-gray-200 rounded h-2 overflow-hidden">
+          <div className="text-xs text-green mb-1">{progress}%</div>
+          <div className="w-full bg-white rounded h-2 overflow-hidden">
             <div className="h-2 rounded bg-green-500" style={{ width: `${progress}%` }} />
           </div>
         </div>
@@ -601,16 +601,16 @@ export default function Dashboard() {
                 onClick={() => setAdminMenuOpen((s) => !s)}
                 onFocus={() => { if (adminHoverTimeoutRef.current) clearTimeout(adminHoverTimeoutRef.current); setAdminMenuOpen(true); }}
                 onBlur={() => { adminHoverTimeoutRef.current = setTimeout(() => setAdminMenuOpen(false), 150); }}
-                className="px-3 py-2 bg-white border border-gray-300 rounded-lg shadow-sm hover:bg-gray-50 flex items-center gap-2"
+                className="px-3 py-2 bg-green-600 border border-gray-300 rounded-lg shadow-sm hover:bg-blue-400 flex items-center gap-2"
                 aria-haspopup="true"
                 aria-expanded={adminMenuOpen}
               >
-                <LayoutGrid className="w-4 h-4" />
-                <span className="text-sm">Admin</span>
+                <LayoutGrid className="w-6 h-6 text-white" />
+                {/* <span className="text-lg text-white">Admin</span> */}
               </button>
 
               {adminMenuOpen && (
-                <div className="absolute right-0 mt-2 w-44 bg-white rounded-xl shadow-lg border border-gray-100 p-2 z-50" role="menu" aria-label="Admin menu">
+                <div className="absolute right-0 mt-2 w-44 bg-blue-300 rounded-xl shadow-lg border border-gray-100 p-2 z-50" role="menu" aria-label="Admin menu">
                   <button
                     role="menuitem"
                     onMouseDown={() => { setAdminMenuOpen(false); navigate('/stages'); }}

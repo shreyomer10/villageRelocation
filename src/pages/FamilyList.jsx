@@ -1,10 +1,11 @@
 ﻿﻿// src/pages/FamilyList.jsx
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useContext } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { SlidersHorizontal } from "lucide-react";
 import { motion } from "framer-motion";
 import MainNavbar from "../component/MainNavbar";
 import { API_BASE } from "../config/Api.js";
+import { AuthContext } from "../context/AuthContext";
 import {
   ResponsiveContainer,
   BarChart,
@@ -17,7 +18,7 @@ import {
 } from "recharts";
 
 /* -------------------------
-  FamilyCard (visual) — motion style, shows full details
+  FamilyCard (visual)
   ------------------------- */
 function FamilyCard({ family, onView }) {
   const photo = family.mukhiyaPhoto || "/images/default-avatar.png";
@@ -31,7 +32,7 @@ function FamilyCard({ family, onView }) {
       layout
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
-      className="bg-white rounded-2xl p-4 shadow cursor-pointer hover:shadow-lg transition"
+      className="bg-blue-100 rounded-2xl p-4 shadow cursor-pointer hover:shadow-lg transition"
       onClick={() => onView(familyId)}
     >
       <div className="flex items-center gap-7">
@@ -39,7 +40,7 @@ function FamilyCard({ family, onView }) {
           src={photo}
           onError={(e) => (e.currentTarget.src = "/images/default-avatar.png")}
           alt={name}
-          className="w-20 h-20 rounded-full object-cover border"
+          className="w-20 h-20 rounded-full object-cover border bg-gray-50"
         />
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-2">
@@ -74,6 +75,7 @@ function FamilyCard({ family, onView }) {
 export default function FamilyList() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
+  const auth = useContext(AuthContext);
 
   const queryVillageId = searchParams.get("villageId");
   const [storedVillageId, setStoredVillageId] = useState(() =>
@@ -94,11 +96,21 @@ export default function FamilyList() {
       : null;
   const [filterOption, setFilterOption] = useState(normalizedOpen ?? "All");
 
+  // list states (server-side paging/filtering)
   const [beneficiaries, setBeneficiaries] = useState([]);
   const [loadingList, setLoadingList] = useState(true);
   const [listError, setListError] = useState(null);
 
-  const [search, setSearch] = useState("");
+  // pagination / search
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(() => {
+    const p = Number(searchParams.get("limit"));
+    return [5, 10, 15, 25, 50].includes(p) ? p : 15;
+  });
+  const [totalCount, setTotalCount] = useState(null);
+
+  const [search, setSearch] = useState(() => searchParams.get("mukhiyaName") || "");
+  const searchDebounceRef = useRef(null);
 
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
   const filterBtnRef = useRef(null);
@@ -125,6 +137,7 @@ export default function FamilyList() {
     return () => {};
   }, []);
 
+  // keep filterOption / menu in sync with query param 'open'
   useEffect(() => {
     const open = (searchParams.get("open") ?? "").toLowerCase();
     if (open === "option1" || open === "1" || open === "option-1") {
@@ -140,7 +153,6 @@ export default function FamilyList() {
       setFilterMenuOpen(false);
       setTimeout(() => optionAllRef.current?.focus(), 0);
     } else if (open === "filter") {
-      // if URL specifically requests filter, open menu
       setFilterMenuOpen(true);
       setTimeout(() => optionAllRef.current?.focus(), 0);
     } else {
@@ -149,10 +161,16 @@ export default function FamilyList() {
     }
   }, [searchParams]);
 
+  // helper to update URL search param for filter menu
+  function setOpenQueryToFilter() {
+    const qp = new URLSearchParams(Object.fromEntries(searchParams.entries()));
+    qp.set("open", "filter");
+    if (effectiveVillageId) qp.set("villageId", effectiveVillageId);
+    setSearchParams(qp, { replace: true });
+  }
+
   // -------------------------
-  // Fetch beneficiaries ONCE per village / on manual refresh.
-  // We intentionally do NOT include `filterOption` here so switching
-  // filters won't trigger another backend call.
+  // Fetch beneficiaries server-side with page/limit/optionId/mukhiyaName
   // -------------------------
   useEffect(() => {
     let mounted = true;
@@ -172,8 +190,13 @@ export default function FamilyList() {
           ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }
           : { "Content-Type": "application/json" };
 
-        // fetch all beneficiaries for the village — apply filter client-side
-        const url = `${API_BASE}/villages/${encodeURIComponent(effectiveVillageId)}/beneficiaries`;
+        const qp = new URLSearchParams();
+        qp.set("page", String(page));
+        qp.set("limit", String(pageSize));
+        if (filterOption && filterOption !== "All") qp.set("optionId", filterOption);
+        if (search && search.trim().length > 0) qp.set("mukhiyaName", search.trim());
+
+        const url = `${API_BASE}/villages/${encodeURIComponent(effectiveVillageId)}/beneficiaries?${qp.toString()}`;
 
         const res = await fetch(url, {
           method: "GET",
@@ -190,15 +213,26 @@ export default function FamilyList() {
           throw new Error(`Failed to fetch beneficiaries (${res.status})${bodyText}`);
         }
 
-        const data = await res.json();
-        if (data && data.error) {
-          throw new Error(data.message || "Unable to load beneficiaries.");
+        const data = await res.json().catch(() => null);
+        // Backend may return { result: [...] } OR directly [...]; also may include total/count fields.
+        const list = (data && Array.isArray(data.result) ? data.result : Array.isArray(data) ? data : (data && Array.isArray(data.result) ? data.result : []));
+
+        // try to deduce total count: data.totalCount || data.total || data.count || header X-Total-Count
+        let total = null;
+        if (data && typeof data.totalCount === "number") total = data.totalCount;
+        else if (data && typeof data.total === "number") total = data.total;
+        else if (data && typeof data.count === "number") total = data.count;
+        else {
+          const hdr = res.headers.get("X-Total-Count");
+          if (hdr) {
+            const n = Number(hdr);
+            if (!Number.isNaN(n)) total = n;
+          }
         }
 
-        // API returns { result: [ { familyId, mukhiyaName, mukhiyaPhoto, relocationOption } ] }
-        const list = Array.isArray(data.result) ? data.result : [];
         if (!mounted) return;
-        setBeneficiaries(list);
+        setBeneficiaries(list || []);
+        setTotalCount(total !== null ? total : null);
       } catch (err) {
         if (!mounted) return;
         if (err.name !== "AbortError") setListError(err.message || "Unable to load beneficiaries.");
@@ -208,13 +242,13 @@ export default function FamilyList() {
     }
 
     loadList();
-
     return () => {
       mounted = false;
       ctrl.abort();
     };
-  }, [effectiveVillageId, reloadKey]); // <--- filterOption removed intentionally
+  }, [effectiveVillageId, reloadKey, page, pageSize, filterOption, search]);
 
+  // close filter menu when clicking outside
   useEffect(() => {
     function onDocClick(e) {
       if (!menuRef.current) return;
@@ -226,7 +260,26 @@ export default function FamilyList() {
     return () => document.removeEventListener("mousedown", onDocClick);
   }, []);
 
+  // debounce search input
+  useEffect(() => {
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = setTimeout(() => {
+      setPage(1); // when search changes, go to first page
+      // also reflect search in URL (optional)
+      const qp = new URLSearchParams(Object.fromEntries(searchParams.entries()));
+      if (search) qp.set("mukhiyaName", search);
+      else qp.delete("mukhiyaName");
+      if (effectiveVillageId) qp.set("villageId", effectiveVillageId);
+      setSearchParams(qp, { replace: true });
+      // triggering effect will happen because search is in deps of the caller effect
+    }, 450);
+    return () => clearTimeout(searchDebounceRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
+
+  // -------------------------
   // Fetch analytics for chart based on filterOption (only when Option_1 or Option_2 selected)
+  // -------------------------
   useEffect(() => {
     let mounted = true;
 
@@ -245,9 +298,7 @@ export default function FamilyList() {
     }
 
     async function loadChart() {
-      // If 'All' is selected, do not call analytics API
       if (!effectiveVillageId || !filterOption || filterOption === "All") {
-        // clear chart state
         if (mounted) {
           setChartData(null);
           setChartKeys([]);
@@ -263,24 +314,18 @@ export default function FamilyList() {
       setChartKeys([]);
 
       try {
-        // only requested when filterOption is a single option (Option_1 or Option_2)
         const resp = await fetchAnalyticsForOption(filterOption);
-        // resp.stages: [{id,name,count}]
         const data = (resp.stages || []).map((s) => ({ name: s.name || s.id, [filterOption]: s.count || 0 }));
-
-        // Only set chart if there is data
         if (!mounted) return;
         if (data && data.length > 0) {
           setChartData(data);
           setChartKeys([filterOption]);
         } else {
-          // no data -> leave chartData null so the box will not show
           setChartData(null);
           setChartKeys([]);
         }
       } catch (err) {
         if (!mounted) return;
-        // on error we don't show the analytics box (per request)
         setChartError(err.message || "Failed to load analytics");
         setChartData(null);
         setChartKeys([]);
@@ -295,24 +340,41 @@ export default function FamilyList() {
     };
   }, [filterOption, effectiveVillageId]);
 
-  // apply textual search & option filter client-side (no backend calls)
-  const filteredFamilies = beneficiaries.filter((f) => {
-    if (!f) return false;
-    const name = (f.mukhiyaName || "").toString();
-    if (!name.toLowerCase().includes(search.toLowerCase())) return false;
-
-    if (!filterOption || filterOption === "All") return true;
-    const opt = (f.relocationOption || f.relocation || "").toString();
-    if (!opt) return false;
-    return opt.toLowerCase() === filterOption.toString().toLowerCase();
-  });
-
+  // navigation to family details
   const handleViewFamily = (familyId) => {
     if (familyId === undefined || familyId === null) {
       console.error("No familyId provided to navigation");
       return;
     }
-    navigate(`/families/${encodeURIComponent(familyId)}`);
+
+    const fid = String(familyId);
+
+    // persist to localStorage for next page to read
+    try {
+      localStorage.setItem("selectedFamilyId", fid);
+    } catch (e) {
+      // localStorage may be unavailable in some environments — ignore errors
+      console.warn("Could not persist selectedFamilyId to localStorage", e);
+    }
+
+    // update AuthContext if it exposes a setter (support a couple common names)
+    try {
+      if (auth) {
+        if (typeof auth.setSelectedFamilyId === "function") {
+          auth.setSelectedFamilyId(fid);
+        } else if (typeof auth.setFamilyId === "function") {
+          auth.setFamilyId(fid);
+        } else if (typeof auth.setSelectedFamily === "function") {
+          auth.setSelectedFamily(fid);
+        }
+      }
+    } catch (e) {
+      // never crash if AuthContext setter misbehaves
+      console.warn("AuthContext update error:", e);
+    }
+
+    // navigate and also pass the id in state (optional)
+    navigate(`/families/${encodeURIComponent(fid)}`, { state: { familyId: fid } });
   };
 
   const refresh = () => setReloadKey((k) => k + 1);
@@ -347,12 +409,78 @@ export default function FamilyList() {
   // show chart box only when option is Option_1 or Option_2 AND chart has data or is loading
   const shouldShowChartBox = filterOption !== "All" && (chartLoading || (chartData && chartData.length > 0));
 
-  // helper to update URL search param for filter menu
-  function setOpenQueryToFilter() {
-    const qp = new URLSearchParams(Object.fromEntries(searchParams.entries()));
-    qp.set("open", "filter");
-    if (effectiveVillageId) qp.set("villageId", effectiveVillageId);
-    setSearchParams(qp, { replace: true });
+  // pagination helpers
+  const startIndex = totalCount !== null ? (totalCount === 0 ? 0 : (page - 1) * pageSize + 1) : (beneficiaries.length === 0 ? 0 : (page - 1) * pageSize + 1);
+  const endIndex = startIndex === 0 ? 0 : startIndex + beneficiaries.length - 1;
+  const totalPages = totalCount !== null ? Math.max(1, Math.ceil(totalCount / pageSize)) : null;
+
+  function renderPageButtons() {
+    // if totalPages known -> render page numbers with window
+    if (totalPages !== null) {
+      const windowSize = 5;
+      let start = Math.max(1, page - Math.floor(windowSize / 2));
+      let end = Math.min(totalPages, start + windowSize - 1);
+      if (end - start + 1 < windowSize) start = Math.max(1, end - windowSize + 1);
+
+      const buttons = [];
+
+      buttons.push(
+        <button key="first" onClick={() => setPage(1)} disabled={page === 1} className="px-2 py-1 border rounded mx-1 text-sm">
+          «
+        </button>
+      );
+      buttons.push(
+        <button key="prev" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} className="px-2 py-1 border rounded mx-1 text-sm">
+          Prev
+        </button>
+      );
+
+      for (let p = start; p <= end; p++) {
+        buttons.push(
+          <button
+            key={p}
+            onClick={() => setPage(p)}
+            className={`px-3 py-1 border rounded mx-1 text-sm ${p === page ? "bg-green-200 font-semibold" : ""}`}
+          >
+            {p}
+          </button>
+        );
+      }
+
+      buttons.push(
+        <button key="next" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages} className="px-2 py-1 border rounded mx-1 text-sm">
+          Next
+        </button>
+      );
+      buttons.push(
+        <button key="last" onClick={() => setPage(totalPages)} disabled={page === totalPages} className="px-2 py-1 border rounded mx-1 text-sm">
+          »
+        </button>
+      );
+
+      return <div className="flex items-center">{buttons}</div>;
+    }
+
+    // total unknown -> show simple Prev / Next based on results length
+    return (
+      <div className="flex items-center gap-2">
+        <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} className="px-3 py-1 border rounded text-sm">
+          Prev
+        </button>
+        <div className="text-sm px-2">Page {page}</div>
+        <button
+          onClick={() => {
+            // if results less than pageSize, assume no next page
+            if (beneficiaries.length < pageSize) return;
+            setPage((p) => p + 1);
+          }}
+          disabled={beneficiaries.length < pageSize}
+          className="px-3 py-1 border rounded text-sm"
+        >
+          Next
+        </button>
+      </div>
+    );
   }
 
   return (
@@ -371,11 +499,6 @@ export default function FamilyList() {
           </button>
 
           <div className="flex items-center gap-3">
-            {/*
-              Change: filter menu now opens on hover (and on focus for keyboard users).
-              We keep the menu clickable, focusable and accessible. A small close-delay
-              helps avoid accidental flicker when moving the mouse.
-            */}
             <div
               className="relative"
               onMouseEnter={() => {
@@ -384,13 +507,10 @@ export default function FamilyList() {
                   closeTimerRef.current = null;
                 }
                 setFilterMenuOpen(true);
-                // keep URL in sync (optional) so users can share link
                 setOpenQueryToFilter();
-                // focus first option after opening
                 setTimeout(() => optionAllRef.current?.focus(), 50);
               }}
               onMouseLeave={() => {
-                // short delay so quick moves don't close the menu immediately
                 closeTimerRef.current = setTimeout(() => setFilterMenuOpen(false), 150);
               }}
             >
@@ -399,7 +519,6 @@ export default function FamilyList() {
                 aria-haspopup="true"
                 aria-expanded={filterMenuOpen}
                 onFocus={() => {
-                  // keyboard users: open on focus
                   if (closeTimerRef.current) {
                     clearTimeout(closeTimerRef.current);
                     closeTimerRef.current = null;
@@ -408,7 +527,6 @@ export default function FamilyList() {
                   setOpenQueryToFilter();
                 }}
                 onBlur={() => {
-                  // if focus moves outside both button and menu, close menu
                   setTimeout(() => {
                     if (!menuRef.current) return;
                     const active = document.activeElement;
@@ -435,7 +553,6 @@ export default function FamilyList() {
                     }
                   }}
                   onBlur={() => {
-                    // close when keyboard focus leaves the menu
                     setTimeout(() => {
                       const active = document.activeElement;
                       if (!menuRef.current) return;
@@ -451,6 +568,7 @@ export default function FamilyList() {
                     onClick={() => {
                       setFilterOption("All");
                       setFilterMenuOpen(false);
+                      setPage(1);
                       const qp = new URLSearchParams(Object.fromEntries(searchParams.entries()));
                       qp.set("open", "all");
                       if (effectiveVillageId) qp.set("villageId", effectiveVillageId);
@@ -466,6 +584,7 @@ export default function FamilyList() {
                     onClick={() => {
                       setFilterOption("Option_1");
                       setFilterMenuOpen(false);
+                      setPage(1);
                       const qp = new URLSearchParams(Object.fromEntries(searchParams.entries()));
                       qp.set("open", "option1");
                       if (effectiveVillageId) qp.set("villageId", effectiveVillageId);
@@ -481,6 +600,7 @@ export default function FamilyList() {
                     onClick={() => {
                       setFilterOption("Option_2");
                       setFilterMenuOpen(false);
+                      setPage(1);
                       const qp = new URLSearchParams(Object.fromEntries(searchParams.entries()));
                       qp.set("open", "option2");
                       if (effectiveVillageId) qp.set("villageId", effectiveVillageId);
@@ -504,7 +624,44 @@ export default function FamilyList() {
           </div>
         </div>
 
-        {/* Chart area: show only for Option_1 / Option_2 and only when there is data (or while loading) */}
+        {/* Pagination header */}
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-4">
+            {/* Showing range */}
+            <div className="text-sm text-gray-600">
+              {totalCount !== null ? (
+                <>
+                  Showing {totalCount === 0 ? 0 : startIndex}–{endIndex} of {totalCount}
+                </>
+              ) : (
+                <>Page {page}</>
+              )}
+            </div>
+
+            {/* page size selector */}
+            <div className="flex items-center gap-2 text-sm">
+              <div className="text-xs text-gray-500">Page size</div>
+              <select
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value));
+                  setPage(1);
+                }}
+                className="p-1 border rounded"
+              >
+                {[5, 10, 15, 25, 50].map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div>{renderPageButtons()}</div>
+        </div>
+
+        {/* Chart area */}
         {shouldShowChartBox && (
           <div className="mb-6 w-full bg-white rounded-xl p-4 shadow">
             <div className="flex items-center justify-between mb-3">
@@ -536,12 +693,11 @@ export default function FamilyList() {
           <div className="py-8 text-center text-sm text-gray-600">Loading families…</div>
         ) : (
           <>
-            {filteredFamilies.length === 0 ? (
+            {beneficiaries.length === 0 ? (
               <div className="text-sm text-gray-600">No families found.</div>
             ) : (
-              // grid updated to show 3 cards per row on md+ screens
               <div className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-4 gap-6">
-                {filteredFamilies.map((family) => (
+                {beneficiaries.map((family) => (
                   <FamilyCard key={family.familyId ?? family.id ?? family._id} family={family} onView={handleViewFamily} />
                 ))}
               </div>

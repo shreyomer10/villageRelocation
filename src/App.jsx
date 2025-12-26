@@ -1,6 +1,6 @@
 ﻿// src/App.jsx
 import React from "react";
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, Navigate } from "react-router-dom";
 
 import Auth from "./pages/Auth.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
@@ -15,22 +15,24 @@ import OptionPage from "./pages/OptionPage.jsx";
 import PlotPage from "./pages/PlotPage.jsx";
 import Building from "./pages/Buildings.jsx";
 import PlotDetails from "./pages/PlotDetails.jsx";
-import FamilyDetails from "./pages/FamilyDetail.jsx"; // protected detailed view
+import FamilyDetails from "./pages/FamilyDetail.jsx";
 import Feedbacks from "./pages/Feedbacks.jsx";
 import Material from "./pages/Material.jsx";
 import Facilities from "./pages/Facilities.jsx";
-import House from "./pages/Housepage.jsx";
+import House from "./pages/HousePage.jsx";
 import HouseDetails from "./pages/HouseDetails.jsx";
+import MaterialDetails from "./pages/MaterialDetails.jsx";
+import FacilityDetails from "./pages/FacilitiesDetails.jsx";
 
 export default function App() {
   return (
     <Routes>
-      {/* Public landing */}
+      {/* Landing page is the public homepage */}
       <Route path="/" element={<LandingPage />} />
+      {/* optional alias */}
+      <Route path="/landingpage" element={<LandingPage />} />
 
-      
-
-      {/* Authentication */}
+      {/* Separate login route */}
       <Route path="/login" element={<Auth />} />
 
       {/* Protected routes */}
@@ -58,7 +60,6 @@ export default function App() {
           </PrivateRoute>
         }
       />
-
       <Route
         path="/house"
         element={
@@ -120,6 +121,26 @@ export default function App() {
         }
       />
 
+      {/* Fixed: material detail route — uses materialId param */}
+      <Route
+        path="/material/one/:materialId"
+        element={
+          <PrivateRoute>
+            <MaterialDetails />
+          </PrivateRoute>
+        }
+      />
+
+      {/* Facility detail route (list is /facilities) */}
+      <Route
+        path="/facility/one/:facilityId"
+        element={
+          <PrivateRoute>
+            <FacilityDetails />
+          </PrivateRoute>
+        }
+      />
+
       <Route
         path="/stages"
         element={
@@ -174,8 +195,8 @@ export default function App() {
         }
       />
 
-      {/* Fallback */}
-      <Route path="*" element={<Auth />} />
+      {/* Fallback -> go to landing page */}
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }

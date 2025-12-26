@@ -4,8 +4,9 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import MainNavbar from '../component/MainNavbar';
 import { API_BASE } from '../config/Api.js';
 import { motion } from 'framer-motion';
-import { FileText, RefreshCw, ArrowLeft, Search } from 'lucide-react';
+import { FileText, RefreshCw, ArrowLeft, Search, Image as ImageIcon } from 'lucide-react';
 import { AuthContext } from '../context/AuthContext';
+import DocumentModal from '../component/DocsModal';
 
 function fmtDate(iso) {
   try {
@@ -21,9 +22,9 @@ function StatusBadge({ status }) {
   const map = {
     '-1': { label: 'Deleted', color: 'bg-gray-100 text-gray-700' },
     '1': { label: 'Forest Guard', color: 'bg-yellow-200 text-yellow-800' },
-    '2': { label: 'Range Assitant', color: 'bg-blue-300 text-blue-800' },
+    '2': { label: 'Range Assistant', color: 'bg-blue-300 text-blue-800' },
     '3': { label: 'Range Officer', color: 'bg-indigo-300 text-indigo-800' },
-    '4': { label: 'Assitant Director', color: 'bg-green-300 text-green-800' }
+    '4': { label: 'Assistant Director', color: 'bg-green-300 text-green-800' }
   };
   const entry = map[String(status)] || { label: `Status ${status}`, color: 'bg-gray-100 text-gray-800' };
   return <span className={`text-xs px-2 py-1 rounded ${entry.color}`}>{entry.label}</span>;
@@ -31,24 +32,21 @@ function StatusBadge({ status }) {
 
 function ProgressBar({ pct }) {
   return (
-    <div className="w-48 h-3 bg-gray-200 rounded-full overflow-hidden">
-      <div style={{ width: `${Math.max(0, Math.min(100, pct))}%`, backgroundColor: '#2563eb' }} className="h-full rounded" />
+    <div className="w-48 h-3 bg-slate-200 rounded-full overflow-hidden shadow-inner">
+      <div style={{ width: `${Math.max(0, Math.min(100, pct))}%`, backgroundColor: '#1e40af' }} className="h-full rounded transition-all duration-500" />
     </div>
   );
 }
 
 export default function PlotStagesPage() {
-  // normalize params: support both /plots/one/:plotId and /plots/one/:villageId/:plotId
   const rawParams = useParams();
   const location = useLocation();
   const navigate = useNavigate();
   const { plotId: contextPlotId, selectedPlot, villageId: contextVillageId } = useContext(AuthContext || {});
 
-  // derive route params robustly: if route contains only one param, treat it as plotId
   let routePlotId = rawParams.plotId ?? rawParams.villageId ?? rawParams.plot_id ?? null;
   let routeVillageId = rawParams.villageId ?? rawParams.villageID ?? rawParams.village ?? null;
 
-  // If both existed but accidental, ensure routePlotId is correct param
   if (!rawParams.plotId && rawParams.villageId && !rawParams.villageId.includes('/')) {
     if (rawParams.plotId == null && rawParams.villageId) {
       routeVillageId = null;
@@ -87,7 +85,6 @@ export default function PlotStagesPage() {
     return null;
   };
 
-  // initial resolved ids: prefer route param, then location.state, then context, then selectedPlot from context, then storage
   const initialResolvedPlot = routePlotId
     || (location && location.state && location.state.selectedPlot && (location.state.selectedPlot.plotId ?? location.state.selectedPlot.id))
     || contextPlotId
@@ -152,48 +149,49 @@ export default function PlotStagesPage() {
   }, []);
 
   // page state
-  const [loading, setLoading] = useState(true); // global page loading (building + plot)
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [plot, setPlot] = useState(null);
   const [buildings, setBuildings] = useState([]);
   const [search, setSearch] = useState('');
 
-  // verifications state (this now drives the cards)
+  // verifications state
   const [verifications, setVerifications] = useState([]);
   const [verifLoading, setVerifLoading] = useState(false);
 
-  // server-side filter state: when set, server returns filtered results
+  // server-side filter state
   const [filteredStage, setFilteredStage] = useState(null);
+
+  // FILTERS (homeId removed)
+  const [statusFilter, setStatusFilter] = useState('');
+  const [fromDateFilter, setFromDateFilter] = useState('');
+  const [toDateFilter, setToDateFilter] = useState('');
 
   // pagination
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(15);
   const [totalCount, setTotalCount] = useState(0);
 
-  // modal state
+  // modal
   const [modalOpen, setModalOpen] = useState(false);
   const [modalVerification, setModalVerification] = useState(null);
   const [modalLoading, setModalLoading] = useState(false);
 
-  // refs for auto-scroll to card when timeline clicked
+  // docs modal
+  const [docsModalOpen, setDocsModalOpen] = useState(false);
+  const [docsModalDocs, setDocsModalDocs] = useState([]);
+  const [docsModalTitle, setDocsModalTitle] = useState('Documents');
+  const [docsModalLoading, setDocsModalLoading] = useState(false);
+
   const stageRefs = useRef({});
 
-  useEffect(() => {
-    // load main resources (buildings + plot) whenever resolved ids change
-    // NOTE: we intentionally avoid including page/limit/filteredStage here so changing those values
-    // does not set the global `loading` and therefore will not show the full-page loader.
-    loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolvedVillageId, resolvedPlotId]);
+  useEffect(() => { loadAll(); }, [resolvedVillageId, resolvedPlotId]); // load plot + buildings
 
-  // Separate effect to fetch verifications only (this controls the stage cards area)
   useEffect(() => {
-    // whenever plot/village/page/limit/filteredStage changes, fetch verifications only
     fetchFieldVerifications(page, limit, filteredStage);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolvedVillageId, resolvedPlotId, page, limit, filteredStage]);
+  }, [resolvedVillageId, resolvedPlotId, page, limit, filteredStage, statusFilter, fromDateFilter, toDateFilter]);
 
-  // --- helper fetch ---
   async function fetchWithCreds(url, opts = {}) {
     try {
       const res = await fetch(url, {
@@ -201,15 +199,9 @@ export default function PlotStagesPage() {
         headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
         ...opts
       });
-
       const text = await res.text().catch(() => '');
       let json = null;
-      try {
-        json = text ? JSON.parse(text) : null;
-      } catch (e) {
-        json = null;
-      }
-
+      try { json = text ? JSON.parse(text) : null; } catch (e) { json = null; }
       return { res, ok: res.ok, status: res.status, json, text };
     } catch (err) {
       return { res: null, ok: false, status: 0, json: null, text: String(err) };
@@ -220,8 +212,6 @@ export default function PlotStagesPage() {
     setLoading(true);
     setError(null);
     try {
-      // fetchBuildings and plot in parallel. We DO NOT fetch verifications here because
-      // there's a dedicated effect that fetches them and shows a loading state local to the cards.
       await Promise.all([
         fetchBuildings(),
         resolvedPlotId ? fetchPlot() : Promise.resolve()
@@ -236,64 +226,33 @@ export default function PlotStagesPage() {
 
   async function fetchPlot() {
     try {
-      if (!resolvedPlotId) {
-        setPlot(null);
-        return;
-      }
+      if (!resolvedPlotId) { setPlot(null); return; }
       const url = `${API_BASE}/plots/one/${encodeURIComponent(resolvedPlotId)}`;
       const { ok, status, json, text } = await fetchWithCreds(url, { method: 'GET' });
-
       if (!ok) {
-        if (status === 401) {
-          const msg = (json && (json.message || json.error)) || text || 'Unauthorized — please sign in';
-          setError(msg);
-          return;
-        }
+        if (status === 401) { const msg = (json && (json.message || json.error)) || text || 'Unauthorized — please sign in'; setError(msg); return; }
         const t = (json && (json.message || JSON.stringify(json))) || text || `Failed to fetch plot (status ${status})`;
         throw new Error(t);
       }
-
       const payload = json ?? {};
       let item = null;
-
       if (payload.result) {
-        if (Array.isArray(payload.result.items) && payload.result.items.length > 0) {
-          item = payload.result.items[0];
-        } else if (typeof payload.result === 'object' && !Array.isArray(payload.result)) {
-          item = payload.result;
-        }
+        if (Array.isArray(payload.result.items) && payload.result.items.length > 0) item = payload.result.items[0];
+        else if (typeof payload.result === 'object' && !Array.isArray(payload.result)) item = payload.result;
       }
-
-      if (!item && Array.isArray(payload.items) && payload.items.length > 0) {
-        item = payload.items[0];
-      }
-
-      if (!item && Array.isArray(payload) && payload.length > 0) {
-        item = payload[0];
-      }
-
+      if (!item && Array.isArray(payload.items) && payload.items.length > 0) item = payload.items[0];
+      if (!item && Array.isArray(payload) && payload.length > 0) item = payload[0];
       if (!item && payload && typeof payload === 'object' && !Array.isArray(payload)) {
-        if (payload.plotId || payload.plot_id || payload.name || payload.familyId) {
-          item = payload;
-        }
+        if (payload.plotId || payload.plot_id || payload.name || payload.familyId) item = payload;
       }
-
-      if (!item) {
-        setPlot(null);
-        return;
-      }
-
+      if (!item) { setPlot(null); return; }
       const normalized = { ...item };
       normalized.docs = Array.isArray(item.docs) ? item.docs : [];
       normalized.stagesCompleted = Array.isArray(item.stagesCompleted) ? item.stagesCompleted : [];
       setPlot(normalized);
-
       try {
         const currentRoutePlot = rawParams.plotId || rawParams.plot_id;
-        if (!currentRoutePlot && normalized.plotId) {
-          // push URL with plotId so the route contains it (but don't overwrite village if it was intentionally present)
-          navigate(`/plots/one/${encodeURIComponent(String(normalized.plotId))}`, { replace: true });
-        }
+        if (!currentRoutePlot && normalized.plotId) navigate(`/plots/one/${encodeURIComponent(String(normalized.plotId))}`, { replace: true });
       } catch {}
     } catch (err) {
       console.error(err);
@@ -304,132 +263,147 @@ export default function PlotStagesPage() {
 
   async function fetchBuildings() {
     try {
-      if (!resolvedVillageId) {
-        setBuildings([]);
-        return;
-      }
+      if (!resolvedVillageId) { setBuildings([]); return; }
       const url = `${API_BASE}/buildings/${encodeURIComponent(resolvedVillageId)}`;
       const { ok, status, json, text } = await fetchWithCreds(url, { method: 'GET' });
-
       if (!ok) {
-        if (status === 401) {
-          const msg = (json && (json.message || json.error)) || text || 'Unauthorized — please sign in';
-          setError(msg);
-          return;
-        }
+        if (status === 401) { const msg = (json && (json.message || json.error)) || text || 'Unauthorized — please sign in'; setError(msg); return; }
         console.warn('Failed to fetch buildings', status, text);
-        setBuildings([]);
-        return;
+        setBuildings([]); return;
       }
-
       const payload = json ?? {};
       const items = payload?.result?.items ?? (Array.isArray(payload) ? payload : []);
       setBuildings(items);
-    } catch (e) {
-      console.error(e);
-      setBuildings([]);
-    }
+    } catch (e) { console.error(e); setBuildings([]); }
   }
 
-  // fetch field verifications (page/limit/currentStage). Attach to plot.docs for compatibility.
+  // fetch verifications — status/fromDate/toDate supported
   async function fetchFieldVerifications(pageArg = page, limitArg = limit, currentStage = filteredStage) {
     setVerifLoading(true);
     try {
-      if (!resolvedVillageId || !resolvedPlotId) {
-        setVerifications([]);
-        setPlot(prev => prev ? { ...prev, docs: [] } : prev);
-        setTotalCount(0);
-        return;
-      }
+      if (!resolvedVillageId || !resolvedPlotId) { setVerifications([]); setPlot(prev => prev ? { ...prev, docs: [] } : prev); setTotalCount(0); return; }
 
-      // build query params
       const qs = new URLSearchParams();
       qs.set('page', String(pageArg || 1));
       qs.set('limit', String(limitArg || 15));
       if (currentStage) qs.set('currentStage', String(currentStage));
+      if (statusFilter) qs.set('status', String(statusFilter));
+      if (fromDateFilter) qs.set('fromDate', String(fromDateFilter));
+      if (toDateFilter) qs.set('toDate', String(toDateFilter));
 
       const url = `${API_BASE}/field_verification/${encodeURIComponent(resolvedVillageId)}/${encodeURIComponent(resolvedPlotId)}?${qs.toString()}`;
       const { ok, status, json, text } = await fetchWithCreds(url, { method: 'GET' });
 
       if (!ok) {
-        if (status === 401) {
-          const msg = (json && (json.message || json.error)) || text || 'Unauthorized — please sign in';
-          setError(msg);
-          setVerifications([]);
-          setPlot(prev => prev ? { ...prev, docs: [] } : prev);
-          setTotalCount(0);
-          return;
-        }
+        if (status === 401) { const msg = (json && (json.message || json.error)) || text || 'Unauthorized — please sign in'; setError(msg); setVerifications([]); setPlot(prev => prev ? { ...prev, docs: [] } : prev); setTotalCount(0); return; }
         console.warn('Failed to fetch verifications', status, text);
-        setVerifications([]);
-        setPlot(prev => prev ? { ...prev, docs: [] } : prev);
-        setTotalCount(0);
-        return;
+        setVerifications([]); setPlot(prev => prev ? { ...prev, docs: [] } : prev); setTotalCount(0); return;
       }
 
       const payload = json ?? {};
-      // payload expected: { result: { count, page, limit, items } } or { count, items } depending on API
-      let items = [];
-      let count = 0;
-
-      if (payload.result) {
-        items = payload.result.items ?? [];
-        count = payload.result.count ?? (payload.result.total ?? 0);
-      } else if (Array.isArray(payload)) {
-        items = payload;
-        count = items.length;
-      } else {
-        items = payload.items ?? [];
-        count = payload.count ?? 0;
-      }
-
-      // guard: ensure array
+      let items = []; let count = 0;
+      if (payload.result) { items = payload.result.items ?? []; count = payload.result.count ?? (payload.result.total ?? 0); }
+      else if (Array.isArray(payload)) { items = payload; count = items.length; }
+      else { items = payload.items ?? []; count = payload.count ?? 0; }
       items = Array.isArray(items) ? items : [];
-
       setVerifications(items);
-      // keep plot.docs for compatibility with getStagesMap
       setPlot(prev => ({ ...(prev || {}), docs: items }));
       setTotalCount(Number(count) || 0);
     } catch (e) {
       console.error('fetchFieldVerifications error', e);
-      setVerifications([]);
-      setPlot(prev => prev ? { ...prev, docs: [] } : prev);
-      setTotalCount(0);
-    } finally {
-      setVerifLoading(false);
-    }
+      setVerifications([]); setPlot(prev => prev ? { ...prev, docs: [] } : prev); setTotalCount(0);
+    } finally { setVerifLoading(false); }
   }
 
-  // fetch single verification details (used for modal)
   async function fetchVerification(verificationId) {
     try {
       if (!verificationId) return null;
       const url = `${API_BASE}/field_verification/one/${encodeURIComponent(verificationId)}`;
       const { ok, status, json, text } = await fetchWithCreds(url, { method: 'GET' });
-
-      if (!ok) {
-        console.warn('Failed to fetch verification', status, text);
-        return null;
-      }
-
+      if (!ok) { console.warn('Failed to fetch verification', status, text); return null; }
       const payload = json ?? {};
+      // payload shape example provided by you: { result: { ... } }
       const result = payload.result ?? payload;
       return result;
-    } catch (e) {
-      console.error('fetchVerification error', e);
-      return null;
+    } catch (e) { console.error('fetchVerification error', e); return null; }
+  }
+
+  // New: fetch only docs for a verification. Tries docs-only endpoints first and falls back to the full "one" endpoint.
+  async function fetchVerificationDocs(verificationId) {
+    if (!verificationId) return [];
+    setDocsModalLoading(true);
+    setError(null);
+    try {
+      const tryUrls = [
+        `${API_BASE}/field_verification/docs/${encodeURIComponent(verificationId)}`,
+        `${API_BASE}/field_verification/${encodeURIComponent(verificationId)}/docs`,
+        `${API_BASE}/field_verification/one/${encodeURIComponent(verificationId)}`,
+      ];
+
+      for (let i = 0; i < tryUrls.length; i++) {
+        const url = tryUrls[i];
+        try {
+          const { ok, status, json, text } = await fetchWithCreds(url, { method: 'GET' });
+          if (!ok) {
+            if (status === 404) continue; // try next candidate
+            const msg = (json && (json.message || json.error)) || text || `Failed to fetch docs: ${status}`;
+            throw new Error(msg);
+          }
+
+          const payload = json ?? {};
+          let docsArr = null;
+
+          // Common shapes
+          if (payload.result && (Array.isArray(payload.result.docs) || Array.isArray(payload.result.documents))) {
+            docsArr = payload.result.docs ?? payload.result.documents;
+          } else if (Array.isArray(payload.docs) || Array.isArray(payload.documents)) {
+            docsArr = payload.docs ?? payload.documents;
+          } else if (Array.isArray(payload)) {
+            docsArr = payload;
+          } else if (payload.result && Array.isArray(payload.result)) {
+            docsArr = payload.result;
+          } else if (payload.files && Array.isArray(payload.files)) {
+            docsArr = payload.files;
+          } else {
+            // If it's the full verification object, try candidate fields
+            const obj = payload.result ?? payload ?? {};
+            const candidates = ['docs', 'documents', 'photos', 'images', 'files', 'attachments'];
+            for (const c of candidates) {
+              if (Array.isArray(obj[c])) { docsArr = obj[c]; break; }
+            }
+          }
+
+          if (!Array.isArray(docsArr)) docsArr = [];
+
+          // Normalize to array of url strings where possible
+          const normalized = (docsArr || []).map((item) => {
+            if (!item) return null;
+            if (typeof item === 'string') return item;
+            if (typeof item === 'object') return item.url ?? item.link ?? item.path ?? item.file ?? item.src ?? item.location ?? null;
+            return null;
+          }).filter(Boolean);
+
+          return normalized;
+        } catch (innerErr) {
+          console.warn(`fetchVerificationDocs candidate failed (${url}):`, innerErr?.message || innerErr);
+          continue; // try next
+        }
+      }
+
+      return [];
+    } catch (err) {
+      console.error('fetchVerificationDocs error', err);
+      setError(err.message || 'Failed to fetch docs');
+      return [];
+    } finally {
+      setDocsModalLoading(false);
     }
   }
 
-  // helper: find building for plot
   function findBuildingForPlot() {
     if (!plot || buildings.length === 0) return null;
     const idsToMatch = new Set([
-      String(plot.plotId ?? ''),
-      String(plot.buildingId ?? ''),
-      String(plot._id ?? ''),
-      String(plot.id ?? ''),
-      String(plot.familyId ?? '')
+      String(plot.plotId ?? ''), String(plot.buildingId ?? ''), String(plot._id ?? ''), String(plot.id ?? ''), String(plot.familyId ?? '')
     ]);
     const match = buildings.find(b => {
       const candidateIds = [b.buildingId, b._id, b.id, b.plotId, b.plot_id, b.familyId].map(x => x == null ? '' : String(x));
@@ -444,7 +418,6 @@ export default function PlotStagesPage() {
     return plot?.typeName ?? plot?.type ?? plot?.typeId ?? '';
   }
 
-  // derive stages either from building map or from verifications (plot.docs)
   function getStagesMap() {
     const building = findBuildingForPlot();
     if (building) {
@@ -457,7 +430,6 @@ export default function PlotStagesPage() {
         return { id: s.id ?? s.stageId ?? s.currentStage ?? `s-${idx}`, name: s.name ?? s.label ?? s.currentStage ?? `Stage ${idx + 1}`, order: idx };
       }) : [];
     }
-
     const docs = Array.isArray(plot?.docs) ? plot.docs : [];
     const seen = new Map();
     for (const d of docs) {
@@ -490,7 +462,6 @@ export default function PlotStagesPage() {
 
   const stagesMap = useMemo(() => getStagesMap(), [buildings, plot]);
   const completed = Array.isArray(plot?.stagesCompleted) ? plot.stagesCompleted : [];
-
   const timeline = useMemo(() => stagesMap.map((st, idx) => {
     const name = st.name ?? st.label ?? String(st.id ?? `Stage ${idx + 1}`);
     const isCompleted = completed.includes(name) || completed.includes(st.id) || completed.includes(String(idx));
@@ -501,7 +472,6 @@ export default function PlotStagesPage() {
   const completedCount = timeline.filter(t => t.isCompleted).length;
   const pct = stagesMap.length ? Math.round((completedCount / stagesMap.length) * 100) : 0;
 
-  // filter cards by search (client-side) applied over the server-fetched page of verifications
   const filteredStages = useMemo(() => {
     const q = (search || '').trim().toLowerCase();
     let items = Array.isArray(verifications) ? verifications : [];
@@ -509,73 +479,37 @@ export default function PlotStagesPage() {
     return items.filter(d => (d.name || d.currentStage || '').toLowerCase().includes(q) || (d.insertedBy || '').toLowerCase().includes(q) || (d.notes || '').toLowerCase().includes(q));
   }, [search, verifications]);
 
-  // auto-scroll to a card when timeline click sets expandedStage (we reuse that for scroll target)
   const [expandedStage, setExpandedStage] = useState(null);
   useEffect(() => {
     if (!expandedStage) return undefined;
     const t = setTimeout(() => {
       const el = stageRefs.current[expandedStage];
       if (el && typeof el.scrollIntoView === 'function') {
-        try {
-          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          if (typeof el.focus === 'function') el.focus();
-        } catch (e) {}
+        try { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); if (typeof el.focus === 'function') el.focus(); } catch (e) {}
       }
     }, 180);
     return () => clearTimeout(t);
   }, [expandedStage]);
 
-  // click timeline: perform server-side filtering by currentStage and fetch page 1
   async function onTimelineClick(t) {
     if (!t || !t.id) {
-      // clear server-side filter
-      setFilteredStage(null);
-      setPage(1);
-      // fetch verifications only (this will show the local cards loading indicator)
-      await fetchFieldVerifications(1, limit, null);
-      setExpandedStage(null);
-      return;
+      setFilteredStage(null); setPage(1); await fetchFieldVerifications(1, limit, null); setExpandedStage(null); return;
     }
     const stageId = t.id;
     const same = String(filteredStage) === String(stageId);
-    if (same) {
-      // clear filter
-      setFilteredStage(null);
-      setPage(1);
-      await fetchFieldVerifications(1, limit, null);
-      setExpandedStage(null);
-    } else {
-      // set server-side filter and fetch page 1
-      setFilteredStage(stageId);
-      setPage(1);
-      // fetch results for this stage — fetchFieldVerifications will flip verifLoading only
-      await fetchFieldVerifications(1, limit, stageId);
-      // after fetch, scroll to first matching verification if any
-      const docs = Array.isArray(verifications) ? verifications : [];
-      let first = null;
-      for (let i = 0; i < docs.length; i += 1) {
-        const d = docs[i];
-        const st = d.currentStage ?? d.stageId ?? d.current_stage ?? '';
-        if (String(st) === String(stageId)) {
-          first = d.verificationId ?? d.verification ?? d.verification_id ?? d._id ?? null;
-          break;
-        }
-      }
-      if (first) setExpandedStage(first);
-      else setExpandedStage(null);
+    if (same) { setFilteredStage(null); setPage(1); await fetchFieldVerifications(1, limit, null); setExpandedStage(null); }
+    else { setFilteredStage(stageId); setPage(1); await fetchFieldVerifications(1, limit, stageId);
+      const docs = Array.isArray(verifications) ? verifications : []; let first = null;
+      for (let i = 0; i < docs.length; i += 1) { const d = docs[i]; const st = d.currentStage ?? d.stageId ?? d.current_stage ?? ''; if (String(st) === String(stageId)) { first = d.verificationId ?? d.verification ?? d.verification_id ?? d._id ?? null; break; } }
+      if (first) setExpandedStage(first); else setExpandedStage(null);
     }
   }
 
-  function closeModal() {
-    setModalOpen(false);
-    setModalVerification(null);
-  }
+  function closeModal() { setModalOpen(false); setModalVerification(null); }
 
-  // clicking the "Status history" button fetches and opens modal
   async function openHistoryModalById(e, verificationId) {
-    e.stopPropagation?.();
-    setModalLoading(true);
-    setModalVerification(null);
+    e?.stopPropagation?.();
+    setModalLoading(true); setModalVerification(null);
     try {
       const data = await fetchVerification(verificationId);
       if (data) setModalVerification(data);
@@ -589,45 +523,54 @@ export default function PlotStagesPage() {
     }
   }
 
-  // pagination controls// Pagination helpers
-  const totalPages = Math.max(1, Math.ceil((totalCount || 0) / (limit || 1)));
-  function gotoPage(p) {
-    const np = Math.max(1, Math.min(totalPages, Number(p) || 1));
-    if (np === page) return;
-    setPage(np);
-    window.scrollTo({ top: 0, behavior: "smooth" });
+  /**
+   * Open docs modal by fetching verification docs only and passing normalized list of URLs to DocumentModal.
+   */
+  async function openDocsModalById(e, verificationId) {
+    e?.stopPropagation?.();
+    setDocsModalLoading(true);
+    setDocsModalDocs([]);
+    setDocsModalTitle('Documents');
+    setDocsModalOpen(true);
+    try {
+      const docsList = await fetchVerificationDocs(verificationId);
+      setDocsModalDocs(docsList || []);
+
+      // try to set a useful title using the verification's name if possible (non-blocking)
+      try {
+        const maybe = await fetchVerification(verificationId);
+        const title = (maybe && (maybe.name ?? maybe.currentStage ?? maybe.title)) || 'Documents';
+        setDocsModalTitle(title);
+      } catch (e) {
+        // ignore
+      }
+    } catch (err) {
+      console.error('openDocsModalById error', err);
+      setDocsModalDocs([]);
+      setDocsModalTitle('Documents');
+    } finally {
+      setDocsModalLoading(false);
+    }
   }
+
+  const totalPages = Math.max(1, Math.ceil((totalCount || 0) / (limit || 1)));
+  function gotoPage(p) { const np = Math.max(1, Math.min(totalPages, Number(p) || 1)); if (np === page) return; setPage(np); window.scrollTo({ top: 0, behavior: "smooth" }); }
   function renderPageButtons() {
-    const maxButtons = 7;
-    const pages = [];
-    if (totalPages <= maxButtons) {
-      for (let i = 1; i <= totalPages; i++) pages.push(i);
-    } else {
-      const left = Math.max(2, page - 1);
-      const right = Math.min(totalPages - 1, page + 1);
-      pages.push(1);
-      if (left > 2) pages.push("left-ellipsis");
+    const maxButtons = 7; const pages = [];
+    if (totalPages <= maxButtons) { for (let i = 1; i <= totalPages; i++) pages.push(i); }
+    else {
+      const left = Math.max(2, page - 1); const right = Math.min(totalPages - 1, page + 1);
+      pages.push(1); if (left > 2) pages.push("left-ellipsis");
       for (let i = left; i <= right; i++) pages.push(i);
-      if (right < totalPages - 1) pages.push("right-ellipsis");
-      pages.push(totalPages);
+      if (right < totalPages - 1) pages.push("right-ellipsis"); pages.push(totalPages);
     }
     return pages.map((p, idx) => {
       if (p === "left-ellipsis" || p === "right-ellipsis") return <span key={`e-${idx}`} className="px-3 py-1">…</span>;
-      return (
-        <button key={p} onClick={() => gotoPage(p)} className={`px-3 py-1 rounded ${p === page ? "bg-indigo-600 text-white" : "bg-white border hover:bg-gray-50"}`}>
-          {p}
-        </button>
-      );
+      return (<button key={p} onClick={() => gotoPage(p)} className={`px-3 py-1 rounded ${p === page ? "bg-indigo-600 text-white" : "bg-white border hover:bg-gray-50"}`}>{p}</button>);
     });
   }
 
-  // When user changes page via UI
-  async function goToPage(nextPage) {
-    if (nextPage < 1 || nextPage > totalPages) return;
-    setPage(nextPage);
-    // fetchFieldVerifications will be triggered by the effect above
-    await fetchFieldVerifications(nextPage, limit, filteredStage);
-  }
+  async function goToPage(nextPage) { if (nextPage < 1 || nextPage > totalPages) return; setPage(nextPage); await fetchFieldVerifications(nextPage, limit, filteredStage); }
 
   if (loading) return (
     <div className="min-h-screen bg-[#f8f0dc] font-sans">
@@ -660,6 +603,9 @@ export default function PlotStagesPage() {
 
   const typeName = getTypeName();
 
+  const applyFilters = async () => { setPage(1); await fetchFieldVerifications(1, limit, filteredStage); };
+  const clearFilters = async () => { setStatusFilter(''); setFromDateFilter(''); setToDateFilter(''); setFilteredStage(null); setPage(1); await fetchFieldVerifications(1, limit, null); };
+
   return (
     <div className="min-h-screen bg-[#f8f0dc] font-sans">
       <MainNavbar showVillageInNavbar={true} />
@@ -669,14 +615,13 @@ export default function PlotStagesPage() {
             <button onClick={() => navigate(-1)} className="px-3 py-2 border rounded bg-white flex items-center gap-2 text-sm text-slate-700"><ArrowLeft size={16}/> Back</button>
           </div>
 
-          <h1 className="text-2xl font-semibold text-slate-800">{plot.name ?? plot.plotId}  <span className="text-sm text-slate-600">{typeName ? `( ${typeName} )` : ''} </span></h1>
-
-          <div className="flex items-center gap-2">
-            <button onClick={() => { setFilteredStage(null); setPage(1); loadAll(); }} className="px-3 py-2 border rounded bg-white flex items-center gap-2 text-sm text-slate-700"><RefreshCw size={16}/> Refresh</button>
+          <div className="flex items-center  flex-col ">
+            <h1 className="text-2xl font-semibold text-slate-800">{plot.name ?? plot.plotId} </h1>
+             <div className="text-sm text-slate-600">{typeName ? `( ${typeName} )` : ''} </div>
           </div>
         </div>
 
-        {/* TIMELINE */}
+        {/* Timeline */}
         <div className="bg-white rounded-xl shadow p-4 mb-6">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-3">
@@ -697,10 +642,7 @@ export default function PlotStagesPage() {
               <div className="relative">
                 <div className="absolute left-4 right-4 top-0 h-12 flex items-center pointer-events-none" aria-hidden="true">
                   <div className="w-full h-0.5 bg-slate-200 rounded relative">
-                    <div
-                      className="absolute left-0 top-1/2 transform -translate-y-1/2 h-0.5 rounded"
-                      style={{ width: `${pct}%`, backgroundColor: '#1e40af', maxWidth: '100%' }}
-                    />
+                    <div className="absolute left-0 top-1/2 transform -translate-y-1/2 h-0.5 rounded" style={{ width: `${pct}%`, backgroundColor: '#1e40af', maxWidth: '100%' }} />
                   </div>
                 </div>
 
@@ -710,33 +652,16 @@ export default function PlotStagesPage() {
                     const isCompleted = !!t.isCompleted;
                     const isFiltered = String(filteredStage) === String(stageKey);
                     return (
-                      <div
-                        key={String(stageKey)}
-                        className="flex flex-col items-center cursor-pointer"
-                        style={{ width: `${100 / Math.max(1, timeline.length)}%`, maxWidth: 180 }}
-                        onClick={() => onTimelineClick(t)}
-                      >
+                      <div key={String(stageKey)} className="flex flex-col items-center cursor-pointer" style={{ width: `${100 / Math.max(1, timeline.length)}%`, maxWidth: 180 }} onClick={() => onTimelineClick(t)}>
                         <div className="h-12 flex items-center justify-center">
-                          <button
-                            type="button"
-                            onClick={(e) => { e.stopPropagation(); onTimelineClick(t); }}
-                            className={`relative z-20 flex items-center justify-center w-12 h-12 rounded-full focus:outline-none transition
-                              ${isCompleted ? 'bg-blue-700 text-white border-blue-700' : isFiltered ? 'bg-white text-blue-700 border-2 border-blue-700' : 'bg-white text-gray-400 border border-gray-300'}`}
-                            aria-pressed={isFiltered}
-                            aria-label={`${t.name} ${isCompleted ? 'completed' : isFiltered ? 'filtered' : 'upcoming'}`}
-                            title={t.name}
-                          >
+                          <button type="button" onClick={(e) => { e.stopPropagation(); onTimelineClick(t); }} className={`relative z-20 flex items-center justify-center w-12 h-12 rounded-full focus:outline-none transition ${isCompleted ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-lg' : isFiltered ? 'bg-white text-blue-700 border-2 border-blue-700' : 'bg-white text-gray-400 border border-gray-300'}`} aria-pressed={isFiltered} aria-label={`${t.name} ${isCompleted ? 'completed' : isFiltered ? 'filtered' : 'upcoming'}`} title={t.name}>
                             {isCompleted ? '✓' : String(i + 1)}
                           </button>
                         </div>
 
-                        <div className={`mt-2 text-center text-sm truncate ${isCompleted || isFiltered ? 'text-slate-800' : 'text-gray-400'}`}>
-                          {t.name}
-                        </div>
+                        <div className={`mt-2 text-center text-sm truncate ${isCompleted || isFiltered ? 'text-slate-800' : 'text-gray-400'}`}>{t.name}</div>
 
-                        {t.completionDate && (
-                          <div className="text-xs text-slate-500 mt-1">{fmtDate(t.completionDate)}</div>
-                        )}
+                        {t.completionDate && (<div className="text-xs text-slate-500 mt-1">{fmtDate(t.completionDate)}</div>)}
                       </div>
                     );
                   })}
@@ -746,40 +671,59 @@ export default function PlotStagesPage() {
           )}
         </div>
 
-        {/* STAGE CARDS */}
+        {/* Stage cards */}
         <div className="space-y-4">
           <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }} className="space-y-4">
             <div className="flex items-center justify-between">
-              <h3 className="text-lg font-medium text-slate-800">Stage cards</h3>
+              <h3 className="text-lg font-medium text-slate-800">Verifications</h3>
 
               <div className="flex items-center gap-3">
                 <div className="text-sm text-slate-500 mr-3">Showing: <span className="font-medium">{filteredStage ? `${filteredStages.length} for selected stage (page ${page})` : `${filteredStages.length} total (page ${page})`}</span></div>
-                <div className="relative">
-                  <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filter verifications or inserted by..." className="pl-9 pr-3 py-2 border rounded w-64 focus:outline-none focus:ring" />
-                  <div className="absolute left-3 top-2.5 text-slate-400"><Search size={16} /></div>
-                </div>
-                {filteredStage && (
-                  <button onClick={() => { setFilteredStage(null); setPage(1); fetchFieldVerifications(1, limit, null); }} className="px-3 py-2 text-sm bg-white border rounded">Show all</button>
-                )}
+                <div className="relative"></div>
+                {filteredStage && (<button onClick={() => { setFilteredStage(null); setPage(1); fetchFieldVerifications(1, limit, null); }} className="px-3 py-2 text-sm bg-white border rounded">Show all</button>)}
               </div>
             </div>
-            {/* Pagination UI */}
+
+            {/* Filters */}
+            <div className="bg-yellow-100 from-white via-slate-50 to-white border rounded-xl p-4 shadow-sm flex flex-wrap gap-3 items-end">
+              <div className="flex flex-col">
+                <label className="text-xs text-slate-600">Status</label>
+                <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="mt-1 px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring">
+                  <option value="">ALL</option>
+                  <option value="1">Forest Guard</option>
+                  <option value="2">Range Assistant</option>
+                  <option value="3">Range Officer</option>
+                  <option value="4">Assistant Director</option>
+                </select>
+              </div>
+
+              <div className="flex flex-col">
+                <label className="text-xs text-slate-600">From date</label>
+                <input type="date" value={fromDateFilter} onChange={(e) => setFromDateFilter(e.target.value)} className="mt-1 px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring" />
+              </div>
+
+              <div className="flex flex-col">
+                <label className="text-xs text-slate-600">To date</label>
+                <input type="date" value={toDateFilter} onChange={(e) => setToDateFilter(e.target.value)} className="mt-1 px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring" />
+              </div>
+              <div className="relative">
+                <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filter verifications or inserted by..." className="pl-9 pr-3 py-2 border rounded w-64 focus:outline-none focus:ring" />
+                <div className="absolute left-3 top-2.5 text-slate-400"><Search size={16} /></div>
+              </div>
+
+              <div className="ml-auto flex items-center gap-2">
+                <button onClick={applyFilters} className="px-4 py-2 bg-gradient-to-br from-sky-600 to-indigo-600 text-white rounded-md shadow hover:scale-[1.01]">Apply</button>
+                <button onClick={clearFilters} className="px-4 py-2 bg-white border rounded-md">Clear</button>
+              </div>
+            </div>
+
+            {/* Pagination */}
             <div className="flex items-center justify-between mt-2">
               <div className="text-sm text-slate-600">
                 <span className="text-sm px-3">Per page  :  </span>
-                <select
-                  value={limit}
-                  onChange={async (e) => {
-                    const newLimit = Number(e.target.value) || 15;
-                    setLimit(newLimit);
-                    setPage(1);
-                    await fetchFieldVerifications(1, newLimit, filteredStage);
-                  }}
-                  className="border rounded px-2 py-1"
-                >
+                <select value={limit} onChange={async (e) => { const newLimit = Number(e.target.value) || 15; setLimit(newLimit); setPage(1); await fetchFieldVerifications(1, newLimit, filteredStage); }} className="border rounded px-2 py-1">
                   <option value={5}>5</option>
                   <option value={15}>15</option>
-
                   <option value={30}>30</option>
                   <option value={50}>50</option>
                   <option value={100}>100</option>
@@ -787,32 +731,9 @@ export default function PlotStagesPage() {
               </div>
 
               <div className="flex items-center gap-2">
-                
-
-                <button
-      onClick={() => gotoPage(page - 1)}
-      disabled={page <= 1}
-      className={`px-3 py-1 rounded ${
-        page <= 1
-          ? "bg-gray-100 text-gray-400"
-          : "bg-white border hover:bg-gray-50"
-      }`}
-    >
-      Prev
-    </button>
-                
-    <div className="flex items-center gap-1">{renderPageButtons()}</div>
-                <button
-      onClick={() => gotoPage(page + 1)}
-      disabled={page >= totalPages}
-      className={`px-3 py-1 rounded ${
-        page >= totalPages
-          ? "bg-gray-100 text-gray-400"
-          : "bg-white border hover:bg-gray-50"
-      }`}
-    >
-      Next
-    </button>
+                <button onClick={() => gotoPage(page - 1)} disabled={page <= 1} className={`px-3 py-1 rounded ${page <= 1 ? "bg-gray-100 text-gray-400" : "bg-white border hover:bg-gray-50"}`}>Prev</button>
+                <div className="flex items-center gap-1">{renderPageButtons()}</div>
+                <button onClick={() => gotoPage(page + 1)} disabled={page >= totalPages} className={`px-3 py-1 rounded ${page >= totalPages ? "bg-gray-100 text-gray-400" : "bg-white border hover:bg-gray-50"}`}>Next</button>
               </div>
             </div>
 
@@ -826,12 +747,7 @@ export default function PlotStagesPage() {
               const shortNotes = (s.notes || '').replace(/\s+/g, ' ').slice(0, 500);
 
               return (
-                <motion.div
-                  ref={el => { if (el) stageRefs.current[refKey] = el; }}
-                  tabIndex={0}
-                  key={key}
-                  className={`relative overflow-hidden rounded-xl p-4 bg-blue-100 border border-slate-200 hover:shadow-lg transition transform hover:-translate-y-0.5 ${s.deleted ? 'opacity-60' : ''}`}
-                >
+                <motion.div ref={el => { if (el) stageRefs.current[refKey] = el; }} tabIndex={0} key={key} className={`relative overflow-hidden rounded-xl p-4 bg-blue-100 border border-slate-200 hover:shadow-lg transition transform hover:-translate-y-0.5 ${s.deleted ? 'opacity-60' : ''}`}>
                   <div className="flex gap-4">
                     <div className="flex-1">
                       <div className="flex items-start justify-between gap-3">
@@ -841,30 +757,19 @@ export default function PlotStagesPage() {
                             <div className="flex-shrink-0"><StatusBadge status={s.status ?? 0} /></div>
                           </div>
 
-                          <div className="mt-2 text-sm text-slate-700 leading-relaxed max-h-28 overflow-hidden">
-                            {shortNotes}{(s.notes || '').length > 500 ? '…' : ''}
-                          </div>
+                          <div className="mt-2 text-sm text-slate-700 leading-relaxed max-h-28 overflow-hidden">{shortNotes}{(s.notes || '').length > 500 ? '…' : ''}</div>
 
-                          <div className="mt-3 text-xs text-slate-600">
-                            Inserted by <span className="font-medium">{s.insertedBy ?? '—'}</span>
-                            <span className="mx-2">•</span>
-                            <span>{fmtDate(s.insertedAt)}</span>
-                          </div>
+                          <div className="mt-3 text-xs text-slate-600">Inserted by <span className="font-medium">{s.insertedBy ?? '—'}</span><span className="mx-2">•</span><span>{fmtDate(s.insertedAt)}</span></div>
 
-                          <div className="mt-2 text-xs text-slate-600">
-                            Verification: <span className="font-medium">{s.verifiedBy ?? '—'}</span>
-                            <span className="mx-2">•</span>
-                            <span>{fmtDate(s.verifiedAt)}</span>
-                          </div>
+                          <div className="mt-2 text-xs text-slate-600">Verification: <span className="font-medium">{s.verifiedBy ?? '—'}</span><span className="mx-2">•</span><span>{fmtDate(s.verifiedAt)}</span></div>
                         </div>
 
                         <div className="flex flex-col items-end gap-2">
                           <div className="flex items-center gap-2">
-                            <button
-                              onClick={(e) => { e.stopPropagation(); openHistoryModalById(e, s.verificationId ?? s.verification_id ?? s.verification ?? s._id); }}
-                              className="inline-flex items-center gap-2 px-3 py-1.5 bg-sky-600 text-white rounded-lg text-sm hover:bg-sky-700 focus:outline-none"
-                            >
-                              Status history
+                            <button onClick={(e) => { e.stopPropagation(); openHistoryModalById(e, s.verificationId ?? s.verification_id ?? s.verification ?? s._id); }} className="inline-flex items-center gap-2 px-3 py-1.5 bg-gradient-to-br from-sky-600 to-indigo-600 text-white rounded-lg text-sm hover:scale-[1.01] focus:outline-none">Status history</button>
+
+                            <button onClick={(e) => { e.stopPropagation(); openDocsModalById(e, s.verificationId ?? s.verification_id ?? s.verification ?? s._id); }} className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border rounded-lg text-sm hover:shadow-sm">
+                              <ImageIcon size={16} /> <span>Docs</span>
                             </button>
                           </div>
 
@@ -876,12 +781,10 @@ export default function PlotStagesPage() {
                 </motion.div>
               );
             })}
-
-            
           </motion.div>
         </div>
 
-        {/* Centered modal for verification + status history */}
+        {/* Modal: Status history */}
         {modalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div className="absolute inset-0 bg-black opacity-40" onClick={closeModal} />
@@ -889,7 +792,7 @@ export default function PlotStagesPage() {
               <div className="bg-[#f8f0dc] rounded-lg shadow-lg overflow-hidden">
                 <div className="flex items-center justify-between p-4 border-b">
                   <div>
-                    <div className="text-lg  font-semibold">Status history</div>
+                    <div className="text-lg font-semibold">Status history</div>
                     <div className="text-xs text-slate-500">{modalLoading ? 'Loading…' : (modalVerification?.name ?? modalVerification?.currentStage ?? 'Verification')}</div>
                   </div>
                   <button onClick={closeModal} aria-label="Close" className="px-3 py-1 rounded bg-gray-100">Close</button>
@@ -925,7 +828,10 @@ export default function PlotStagesPage() {
                             {modalVerification.docs.map((d, ii) => (
                               <div key={ii} className="flex items-center justify-between border rounded p-2">
                                 <div className="flex items-center gap-2 text-slate-700 text-sm"><FileText size={16} /> <div className="truncate max-w-[360px]">{typeof d === 'string' ? d.split('/').pop() : (d.name ?? `Document ${ii + 1}`)}</div></div>
-                                <a href={typeof d === 'string' ? d : d.url} target="_blank" rel="noreferrer" className="text-sm text-sky-600 underline">Open</a>
+                                <div className="flex items-center gap-2">
+                                  <a href={typeof d === 'string' ? d : d.url} target="_blank" rel="noreferrer" className="text-sm text-sky-600 underline">Open</a>
+                                  <button onClick={(e) => { e.stopPropagation(); openDocsModalById(e, modalVerification.verificationId ?? modalVerification._id ?? modalVerification.verificationId ?? modalVerification.id); }} className="px-2 py-1 text-sm bg-white border rounded">View</button>
+                                </div>
                               </div>
                             ))}
                           </div>
@@ -940,6 +846,15 @@ export default function PlotStagesPage() {
             </div>
           </div>
         )}
+
+        {/* Document modal (reusable) */}
+        <DocumentModal
+          open={docsModalOpen}
+          onClose={() => { setDocsModalOpen(false); setDocsModalDocs([]); setDocsModalTitle('Documents'); }}
+          docs={docsModalDocs}
+          title={docsModalTitle}
+          loading={docsModalLoading}
+        />
 
       </div>
     </div>
