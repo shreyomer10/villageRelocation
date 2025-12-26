@@ -21,6 +21,8 @@ from routes.app.optionStageVerification import option_verification_BP
 from routes.options import options_BP
 from routes.admin.villageStages import villageStages_BP
 from routes.admin.employee import emp_bp
+from routes.admin.admin import admin_BP
+
 from routes.admin.analytics import analytics_BP
 from routes.complaints import feedback_bp
 from routes.admin.material import materials_bp
@@ -74,6 +76,7 @@ app.register_blueprint(materials_bp,url_prefix="/")
 app.register_blueprint(material_updates_bp,url_prefix="/")
 app.register_blueprint(facility_verifications_bp,url_prefix="/")
 app.register_blueprint(facilities_bp,url_prefix="/")
+app.register_blueprint(admin_BP,url_prefix="/admin")
 
 
 @app.errorhandler(RateLimitExceeded)

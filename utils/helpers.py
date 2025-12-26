@@ -133,3 +133,14 @@ def is_time_past(time_str1, time_str2):
     dt1 = str_to_ist_datetime(time_str1)
     dt2 = str_to_ist_datetime(time_str2)
     return dt1 > dt2
+
+def detect_system_from_ua(user_agent: str):
+    ua = user_agent.lower()
+
+    if "android" in ua:
+        return "android"
+    if "iphone" in ua or "ios" in ua:
+        return "ios"
+    if "mozilla" in ua or "chrome" in ua or "brave" in ua or "edge" in ua:
+        return "web"
+    return None

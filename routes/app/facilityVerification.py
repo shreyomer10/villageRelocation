@@ -172,7 +172,7 @@ def get_facility_verifications_all(decoded_data,villageId,facilityId):
         # --- Extract query parameters ---
         args = request.args
         status = args.get("status")
-
+        name=args.get("name")
         user_role = decoded_data.get("role")  # Optional user role/status
         from_date = args.get("fromDate")
         to_date = args.get("toDate")
@@ -185,7 +185,8 @@ def get_facility_verifications_all(decoded_data,villageId,facilityId):
             query["status"] = int(status)
         elif user_role in STATUS_TRANSITIONS:
             query["status"] = STATUS_TRANSITIONS[user_role]
-
+        if name:
+            query["name"] = {"$regex": name, "$options": "i"}
         # --- Date Range Filtering ---
         if from_date or to_date:
             date_filter = {}

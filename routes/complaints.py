@@ -197,6 +197,7 @@ def get_all_feedbacks(decoded_data,villageId):
         familyId = args.get("familyId")
         plotId = args.get("plotId")
         feedbackType = args.get("feedbackType")
+        name = args.get("name")
 
         from_date = args.get("fromDate")
         to_date = args.get("toDate")
@@ -204,7 +205,8 @@ def get_all_feedbacks(decoded_data,villageId):
         limit = int(args.get("limit", 15))
         query = {"villageId":villageId}
 
-
+        if name:
+            query["name"] = {"$regex": name, "$options": "i"}
         if familyId:
             query["familyId"] = familyId
         if plotId:

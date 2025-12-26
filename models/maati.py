@@ -48,3 +48,14 @@ class FAQModel(BaseModel):
     def from_mongo(cls, doc: dict):
         doc.pop("_id", None)
         return cls.model_validate(doc)
+
+
+class SystemType(BaseModel):
+    system:str
+    maintenance:bool
+    version:str
+    updatedAt:str
+    message:str
+
+class Config(BaseModel):
+    config:List[SystemType]

@@ -397,6 +397,7 @@ def get_field_verifications(decoded_data,villageId,plotId):
         current_stage = args.get("currentStage")
         home_id = args.get("homeId")
         status = args.get("status")
+        name = args.get("name")
 
         user_role = decoded_data.get("role")  # Optional user role/status
         from_date = args.get("fromDate")
@@ -408,6 +409,8 @@ def get_field_verifications(decoded_data,villageId,plotId):
 
         if current_stage:
             query["currentStage"] = current_stage
+        if name:
+            query["name"] = {"$regex": name, "$options": "i"}
         if home_id:
             query["homeId"] = home_id
         if status:

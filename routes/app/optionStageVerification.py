@@ -364,7 +364,7 @@ def get_updates(decoded_data, villageId, familyId):
         from_date = args.get("fromDate")
         to_date = args.get("toDate")
         user_role = decoded_data.get("role")
-
+        name=args.get("name")
         page = int(args.get("page", 1))
         limit = int(args.get("limit", 15))
 
@@ -373,6 +373,8 @@ def get_updates(decoded_data, villageId, familyId):
 
         if current_stage:
             query["currentStage"] = current_stage
+        if name:
+            query["name"] = {"$regex": name, "$options": "i"}
         if status:
             query["status"] = int(status)
         elif user_role and user_role.lower() in STATUS_TRANSITIONS:
