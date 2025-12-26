@@ -11,12 +11,9 @@ import { FileText, ArrowLeft, ArrowRight, X } from 'lucide-react';
  *  - title: optional string
  *  - loading: optional boolean (shows spinner while parent is fetching)
  *
- * Behavior improvements in this version:
- *  - more robust normalizeDocs (parses JSON strings, extracts nested url fields)
- *  - avoids nesting <a> inside <button>; uses a safe window.open call for "Open"
- *  - handles missing/empty urls gracefully
- *  - exposes keyboard navigation (ArrowLeft/ArrowRight/Escape)
- *  - shows a small error message when viewer fails to load
+ * Behavior:
+ *  - If no docs: show a small centered box.
+ *  - If docs exist: show a large modal that covers most of the page (big viewer).
  */
 
 function isPdf(url = '') {
@@ -120,6 +117,7 @@ export default function DocumentModal({ open, onClose, docs = [], title = 'Docum
   }, [open]);
 
   const current = items[selectedIndex] || null;
+  const hasDocs = items.length > 0;
 
   const handleSelect = useCallback((i) => {
     if (i < 0 || i >= items.length) return;
@@ -130,7 +128,6 @@ export default function DocumentModal({ open, onClose, docs = [], title = 'Docum
 
   const handleOpenInNewTab = useCallback((url) => {
     if (!url) return;
-    // prefer window.open with noopener to avoid opener access
     try { window.open(url, '_blank', 'noopener,noreferrer'); }
     catch (e) { /* ignore */ }
   }, []);
@@ -149,11 +146,19 @@ export default function DocumentModal({ open, onClose, docs = [], title = 'Docum
 
   if (!open) return null;
 
+  // Outer wrapper sizes: small centered card when no docs; large modal when docs exist
+  const wrapperMaxWidth = hasDocs ? 'max-w-8xl mx-7' : 'max-w-md mx-auto';
+  const contentHeightClass = hasDocs ? 'h-[90vh]' : 'auto';
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      {/* Overlay */}
       <div className="absolute inset-0 bg-black opacity-40" onClick={onClose} />
-      <div role="dialog" aria-modal="true" className="relative z-10 w-full max-w-5xl mx-4">
-        <div className="bg-[#f8f0dc] rounded-lg shadow-lg overflow-hidden">
+
+      {/* Modal container */}
+      <div role="dialog" aria-modal="true" className={`relative z-10 w-full ${wrapperMaxWidth}`}>
+        <div className={`bg-[#f8f0dc] rounded-lg shadow-lg overflow-hidden ${hasDocs ? 'flex flex-col' : ''}`} style={{ height: contentHeightClass === 'auto' ? undefined : 'auto' }}>
+          {/* Header */}
           <div className="flex items-center justify-between p-4 border-b">
             <div>
               <div className="text-lg font-semibold">{title}</div>
@@ -161,117 +166,135 @@ export default function DocumentModal({ open, onClose, docs = [], title = 'Docum
             </div>
 
             <div className="flex items-center gap-2">
-              <button onClick={() => handleSelect(Math.max(0, selectedIndex - 1))} disabled={selectedIndex <= 0} className="px-2 py-1 rounded bg-white border hover:bg-gray-50">
-                <ArrowLeft size={16} />
-              </button>
-              <button onClick={() => handleSelect(Math.min(items.length - 1, selectedIndex + 1))} disabled={selectedIndex >= items.length - 1} className="px-2 py-1 rounded bg-white border hover:bg-gray-50">
-                <ArrowRight size={16} />
-              </button>
+              {hasDocs && (
+                <>
+                  <button onClick={() => handleSelect(Math.max(0, selectedIndex - 1))} disabled={selectedIndex <= 0} className="px-2 py-1 rounded bg-white border hover:bg-gray-50">
+                    <ArrowLeft size={16} />
+                  </button>
+                  <button onClick={() => handleSelect(Math.min(items.length - 1, selectedIndex + 1))} disabled={selectedIndex >= items.length - 1} className="px-2 py-1 rounded bg-white border hover:bg-gray-50">
+                    <ArrowRight size={16} />
+                  </button>
+                </>
+              )}
               <button onClick={onClose} aria-label="Close" className="px-3 py-1 rounded bg-gray-100">
                 <X size={16} />
               </button>
             </div>
           </div>
 
-          <div className="p-4 max-h-[75vh] overflow-hidden grid grid-cols-1 lg:grid-cols-4 gap-4">
-            <div className="lg:col-span-3 bg-white rounded border p-3 flex items-center justify-center relative">
-              {/* Viewer area */}
-              {loading && (
-                <div className="absolute inset-0 flex items-center justify-center bg-white/60 z-20">
+          {/* Body: small center card when no docs; large split view when docs exist */}
+          {!hasDocs ? (
+            <div className="p-6 flex flex-col items-center justify-center gap-3 text-center">
+              {loading ? (
+                <div className="flex items-center gap-3">
                   <div className="animate-spin h-6 w-6 text-slate-600" style={{ border: '3px solid rgba(0,0,0,0.1)', borderTopColor: 'rgba(0,0,0,0.6)', borderRadius: '50%' }} />
+                  <div className="text-sm text-slate-700">Loading documents…</div>
                 </div>
-              )}
-
-              {!current ? (
-                <div className="text-sm text-slate-600">No document selected.</div>
-              ) : current.url ? (
+              ) : (
                 <>
-                  {(viewerLoading || loading) && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-white/30 z-10">
-                      <div className="animate-spin h-6 w-6 text-slate-600" style={{ border: '3px solid rgba(0,0,0,0.1)', borderTopColor: 'rgba(0,0,0,0.6)', borderRadius: '50%' }} />
-                    </div>
-                  )}
-
-                  {viewerError && (
-                    <div className="absolute top-4 left-4 z-30 bg-red-50 text-red-700 px-3 py-1 rounded">Failed to load document</div>
-                  )}
-
-                  {isPdf(current.url) ? (
-                    <iframe
-                      title={current.name}
-                      src={current.url}
-                      onLoad={() => { setViewerLoading(false); setViewerError(null); }}
-                      onError={() => { setViewerLoading(false); setViewerError('error'); }}
-                      className="w-full h-[60vh] border rounded"
-                      style={{ minHeight: 420 }}
-                    />
-                  ) : isImage(current.url) ? (
-                    <img
-                      src={current.url}
-                      alt={current.name}
-                      onLoad={() => { setViewerLoading(false); setViewerError(null); }}
-                      onError={() => { setViewerLoading(false); setViewerError('error'); }}
-                      className="max-h-[60vh] object-contain"
-                    />
-                  ) : (
-                    <iframe
-                      title={current.name}
-                      src={current.url}
-                      onLoad={() => { setViewerLoading(false); setViewerError(null); }}
-                      onError={() => { setViewerLoading(false); setViewerError('error'); }}
-                      className="w-full h-[60vh] border rounded"
-                      style={{ minHeight: 420 }}
-                    />
-                  )}
+                  <div className="text-sm text-slate-700">No documents available.</div>
+                  <div className="text-xs text-slate-500">Upload documents or select another item to preview.</div>
+                  <div className="pt-2">
+                    <button onClick={onClose} className="px-3 py-1 rounded bg-slate-100 border">Close</button>
+                  </div>
                 </>
-              ) : (
-                <div className="text-sm text-slate-600">Document has no URL to preview. Use Open to open in a new tab (if available).</div>
               )}
             </div>
+          ) : (
+            /* Large viewer layout */
+            <div className="p-4 max-h-[90vh] overflow-hidden grid grid-cols-1 lg:grid-cols-4 gap-4" style={{ height: '90vh' }}>
+              <div className="lg:col-span-3 bg-white rounded border p-3 flex items-center justify-center relative">
+                {/* Viewer area */}
+                {(viewerLoading || loading) && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-white/30 z-10">
+                    <div className="animate-spin h-6 w-6 text-slate-600" style={{ border: '3px solid rgba(0,0,0,0.1)', borderTopColor: 'rgba(0,0,0,0.6)', borderRadius: '50%' }} />
+                  </div>
+                )}
 
-            <div className="bg-white rounded border p-3 overflow-y-auto max-h-[60vh]">
-              {items.length === 0 ? (
-                <div className="text-sm text-slate-600">No documents available.</div>
-              ) : (
-                <div className="space-y-2">
-                  {items.map((d, i) => (
-                    <div key={`${d.url || '__no_url__'}-${i}`}>
-                      <button
-                        type="button"
-                        onClick={() => handleSelect(i)}
-                        className={`w-full text-left flex items-center gap-3 p-2 rounded hover:bg-gray-50 ${i === selectedIndex ? 'bg-slate-100 border' : ''}`}
-                      >
-                        <div className="flex-shrink-0 w-12 h-8 flex items-center justify-center bg-white border rounded overflow-hidden">
-                          {isImage(d.url) ? (
-                            <img src={d.url} alt={d.name} className="w-full h-full object-cover" loading="lazy" />
-                          ) : (
-                            <FileText size={18} />
-                          )}
-                        </div>
+                {!current ? (
+                  <div className="text-sm text-slate-600">No document selected.</div>
+                ) : current.url ? (
+                  <>
+                    {viewerError && (
+                      <div className="absolute top-4 left-4 z-30 bg-red-50 text-red-700 px-3 py-1 rounded">Failed to load document</div>
+                    )}
 
-                        <div className="truncate">
-                          <div className="text-sm font-medium text-slate-800 truncate">{d.name || d.url || 'Document'}</div>
-                          <div className="text-xs text-slate-500">{d.url ? (isPdf(d.url) ? 'PDF' : (isImage(d.url) ? 'Image' : 'File')) : 'No URL'}</div>
-                        </div>
+                    {isPdf(current.url) ? (
+                      <iframe
+                        title={current.name}
+                        src={current.url}
+                        onLoad={() => { setViewerLoading(false); setViewerError(null); }}
+                        onError={() => { setViewerLoading(false); setViewerError('error'); }}
+                        className="w-full h-[80vh] border rounded"
+                        style={{ minHeight: 480 }}
+                      />
+                    ) : isImage(current.url) ? (
+                      <img
+                        src={current.url}
+                        alt={current.name}
+                        onLoad={() => { setViewerLoading(false); setViewerError(null); }}
+                        onError={() => { setViewerLoading(false); setViewerError('error'); }}
+                        className="max-h-[80vh] object-contain"
+                      />
+                    ) : (
+                      <iframe
+                        title={current.name}
+                        src={current.url}
+                        onLoad={() => { setViewerLoading(false); setViewerError(null); }}
+                        onError={() => { setViewerLoading(false); setViewerError('error'); }}
+                        className="w-full h-[80vh] border rounded"
+                        style={{ minHeight: 480 }}
+                      />
+                    )}
+                  </>
+                ) : (
+                  <div className="text-sm text-slate-600">Document has no URL to preview. Use Open to open in a new tab (if available).</div>
+                )}
+              </div>
 
-                        <div className="ml-auto text-xs">
-                          <button
-                            type="button"
-                            onClick={(e) => { e.stopPropagation(); if (d.url) handleOpenInNewTab(d.url); }}
-                            disabled={!d.url}
-                            className={`text-sky-600 underline ${!d.url ? 'opacity-40 pointer-events-none' : ''}`}
-                          >
-                            Open
-                          </button>
-                        </div>
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
+              <div className="bg-white rounded border p-3 overflow-y-auto max-h-[80vh]">
+                {items.length === 0 ? (
+                  <div className="text-sm text-slate-600">No documents available.</div>
+                ) : (
+                  <div className="space-y-2">
+                    {items.map((d, i) => (
+                      <div key={`${d.url || '__no_url__'}-${i}`}>
+                        <button
+                          type="button"
+                          onClick={() => handleSelect(i)}
+                          className={`w-full text-left flex items-center gap-3 p-2 rounded hover:bg-gray-50 ${i === selectedIndex ? 'bg-slate-100 border' : ''}`}
+                        >
+                          <div className="flex-shrink-0 w-12 h-8 flex items-center justify-center bg-white border rounded overflow-hidden">
+                            {isImage(d.url) ? (
+                              <img src={d.url} alt={d.name} className="w-full h-full object-cover" loading="lazy" />
+                            ) : (
+                              <FileText size={18} />
+                            )}
+                          </div>
+
+                          <div className="truncate">
+                            <div className="text-sm font-medium text-slate-800 truncate">{d.name || d.url || 'Document'}</div>
+                            <div className="text-xs text-slate-500">{d.url ? (isPdf(d.url) ? 'PDF' : (isImage(d.url) ? 'Image' : 'File')) : 'No URL'}</div>
+                          </div>
+
+                          <div className="ml-auto text-xs">
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); if (d.url) handleOpenInNewTab(d.url); }}
+                              disabled={!d.url}
+                              className={`text-sky-600 underline ${!d.url ? 'opacity-40 pointer-events-none' : ''}`}
+                            >
+                              Open
+                            </button>
+                          </div>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-
+          )}
         </div>
       </div>
     </div>
