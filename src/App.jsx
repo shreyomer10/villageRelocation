@@ -95,7 +95,7 @@ export default function App() {
 
       {/* Protected family detail (admin/staff view) */}
       <Route
-        path="/families/:familyId"
+        path="/families"
         element={
           <PrivateRoute>
             <FamilyDetails />

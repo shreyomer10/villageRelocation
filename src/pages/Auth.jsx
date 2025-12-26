@@ -2,7 +2,7 @@
 import { useNavigate } from "react-router-dom";
 import { AuthContext } from "../context/AuthContext";
 import { API_BASE } from "../config/Api";
-import { Menu, X, User, Lock, Phone, Key, Eye, EyeOff } from "lucide-react";
+import { Menu, X, Phone, Lock, Key, Eye, EyeOff } from "lucide-react";
 
 export default function Auth() {
   // modes: "login" | "forgot"
@@ -114,21 +114,54 @@ export default function Auth() {
         localStorage.setItem("auth_payload", JSON.stringify(payload));
       } catch {}
 
+      // let context handle most of login processing (token, user, etc.)
       const okLogin = await auth.login(payload);
       if (!okLogin) {
         setError("Login succeeded but client could not process server response.");
         return;
       }
 
-      const providedToken = payload.token ?? payload.accessToken ?? payload.access_token ?? null;
-      const providedExpiry =
-        payload.expiresIn ?? payload.expires_in ?? payload.expiresAt ?? payload.expires_at ?? null;
-      if (!providedToken && !providedExpiry) {
+      // BEST-EFFORT: extract userId from payload (if context didn't already)
+      const extractUserIdFromPayload = (p) => {
+        if (!p) return null;
+        // check payload.user first
+        const u = p.user ?? null;
+        const candidates = [
+          u?.id,
+          u?.userId,
+          u?.user_id,
+          u?._id,
+          p?.userId,
+          p?.user_id,
+          p?.id,
+          p?._id,
+        ];
+        for (const c of candidates) {
+          if (c !== undefined && c !== null) return String(c);
+        }
+        // try parse token if present
+        const token = p.token ?? p.accessToken ?? p.access_token ?? null;
+        if (token && typeof token === "string") {
+          try {
+            const parts = token.split(".");
+            if (parts.length > 1) {
+              const payload = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
+              const tCandidates = [payload?.sub, payload?.userId, payload?.user_id, payload?.id];
+              for (const t of tCandidates) if (t !== undefined && t !== null) return String(t);
+            }
+          } catch {}
+        }
+        return null;
+      };
+
+      const userId = extractUserIdFromPayload(payload);
+      if (userId && typeof auth.setUserId === "function") {
         try {
-          auth.setToken(null, { expiresIn: 2 * 3600 });
+          auth.setUserId(userId);
         } catch {}
       }
 
+      // fallback token expiry handling already done by context; navigate to dashboard
       navigate("/dashboard");
     } catch (err) {
       if (mountedRef.current) setError(err?.message || "Login failed.");
@@ -264,6 +297,12 @@ export default function Auth() {
 
         await auth.login(lJson ?? {});
         const payload = lJson ?? {};
+        // ensure userId gets stored if available
+        try {
+          const extracted = (payload?.user?.id ?? payload?.user?.userId ?? payload?.userId ?? payload?.id ?? payload?._id) ?? null;
+          if (extracted && typeof auth.setUserId === "function") auth.setUserId(String(extracted));
+        } catch {}
+
         const providedToken = payload.token ?? payload.accessToken ?? payload.access_token ?? null;
         const providedExpiry =
           payload.expiresIn ?? payload.expires_in ?? payload.expiresAt ?? payload.expires_at ?? null;

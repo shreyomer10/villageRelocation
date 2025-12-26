@@ -172,13 +172,16 @@ export default function MaterialDetails() {
   const [updates, setUpdates] = useState([]);
   const [updatesLoading, setUpdatesLoading] = useState(false);
 
-  // filters
-  const [nameFilter, setNameFilter] = useState("");
+  // filters (server-side)
+  const [nameFilter, setNameFilter] = useState(""); // this is the server-side name filter
   const [typeFilter, setTypeFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [fromDateFilter, setFromDateFilter] = useState("");
   const [toDateFilter, setToDateFilter] = useState("");
+
+  // UI-only search input (debounced -> nameFilter)
   const [search, setSearch] = useState("");
+  const searchDebounceRef = useRef(null);
 
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(15);
@@ -198,11 +201,30 @@ export default function MaterialDetails() {
   const updateRefs = useRef({});
 
   useEffect(() => {
+    // debounce search -> setNameFilter (server param)
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+    }
+    searchDebounceRef.current = setTimeout(() => {
+      const trimmed = (search || "").trim();
+      if (trimmed !== nameFilter) {
+        setNameFilter(trimmed);
+        setPage(1);
+      }
+    }, 400);
+    return () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
+
+  useEffect(() => {
     loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [materialId, villageId]);
 
   useEffect(() => {
+    // fetch when any server-side filter or pagination changes
     fetchUpdates(page, limit);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, limit, nameFilter, typeFilter, statusFilter, fromDateFilter, toDateFilter]);
@@ -504,17 +526,6 @@ export default function MaterialDetails() {
     });
   }
 
-  const filtered = useMemo(() => {
-    const q = (search || "").trim().toLowerCase();
-    if (!q) return updates;
-    return (updates || []).filter((u) => {
-      const name = (u.name || u.updateName || u.title || "").toString().toLowerCase();
-      const notes = (u.notes || u.description || "").toString().toLowerCase();
-      const by = (u.insertedBy || u.user || "").toString().toLowerCase();
-      return name.includes(q) || notes.includes(q) || by.includes(q);
-    });
-  }, [search, updates]);
-
   if (loading) return (
     <div className="min-h-screen bg-[#f8f0dc] font-sans">
       <MainNavbar showVillageInNavbar={true} />
@@ -555,11 +566,9 @@ export default function MaterialDetails() {
 
         {/* Filters */}
         <div className="bg-yellow-100 border rounded-xl p-4 shadow-sm flex flex-wrap gap-3 items-end mb-4">
-          
-
           <div className="flex flex-col">
             <label className="text-xs text-slate-600">Status</label>
-            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="mt-1 px-3 py-2 border rounded-md shadow-sm">
+            <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }} className="mt-1 px-3 py-2 border rounded-md shadow-sm">
               <option value="">ALL</option>
               <option value="1">Forest Guard</option>
               <option value="2">Range Assistant</option>
@@ -570,12 +579,12 @@ export default function MaterialDetails() {
 
           <div className="flex flex-col">
             <label className="text-xs text-slate-600">From date</label>
-            <input type="date" value={fromDateFilter} onChange={(e) => setFromDateFilter(e.target.value)} className="mt-1 px-3 py-2 border rounded-md shadow-sm" />
+            <input type="date" value={fromDateFilter} onChange={(e) => { setFromDateFilter(e.target.value); setPage(1); }} className="mt-1 px-3 py-2 border rounded-md shadow-sm" />
           </div>
 
           <div className="flex flex-col">
             <label className="text-xs text-slate-600">To date</label>
-            <input type="date" value={toDateFilter} onChange={(e) => setToDateFilter(e.target.value)} className="mt-1 px-3 py-2 border rounded-md shadow-sm" />
+            <input type="date" value={toDateFilter} onChange={(e) => { setToDateFilter(e.target.value); setPage(1); }} className="mt-1 px-3 py-2 border rounded-md shadow-sm" />
           </div>
 
           <div className="relative">
@@ -585,7 +594,7 @@ export default function MaterialDetails() {
 
           <div className="ml-auto flex items-center gap-2">
             <button onClick={() => { setPage(1); fetchUpdates(1, limit); }} className="px-4 py-2 bg-gradient-to-br from-sky-600 to-indigo-600 text-white rounded-md">Apply</button>
-            <button onClick={() => { setNameFilter(""); setTypeFilter(""); setStatusFilter(""); setFromDateFilter(""); setToDateFilter(""); setPage(1); fetchUpdates(1, limit); }} className="px-4 py-2 bg-white border rounded-md">Clear</button>
+            <button onClick={() => { setSearch(""); setNameFilter(""); setTypeFilter(""); setStatusFilter(""); setFromDateFilter(""); setToDateFilter(""); setPage(1); fetchUpdates(1, limit); }} className="px-4 py-2 bg-white border rounded-md">Clear</button>
           </div>
         </div>
 
@@ -611,14 +620,14 @@ export default function MaterialDetails() {
 
         {pageError && <div className="mb-3 text-sm text-red-600">Error: {pageError}</div>}
 
-        {/* List */}
+        {/* List (server-side filtered) */}
         {updatesLoading ? (
           <div className="text-sm text-slate-500">Loading updates…</div>
-        ) : (filtered || []).length === 0 ? (
+        ) : (updates || []).length === 0 ? (
           <div className="text-sm text-slate-500">No updates found.</div>
         ) : (
           <div className="space-y-4">
-            {filtered.map((u, idx) => {
+            {updates.map((u, idx) => {
               const key = u.updateId ?? u._id ?? u.id ?? `upd-${idx}`;
               const rawNotes = (u.notes || u.description || "");
               const shortNotes = rawNotes.replace(/\s+/g, " ").slice(0, 400);

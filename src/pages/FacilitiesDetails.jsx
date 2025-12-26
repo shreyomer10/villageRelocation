@@ -1,9 +1,10 @@
-import React, { useEffect, useMemo, useState, useRef, useContext } from "react";
+// src/pages/FacilityDetails.jsx
+import React, { useEffect, useState, useRef, useContext } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import MainNavbar from "../component/MainNavbar";
 import { API_BASE } from "../config/Api.js";
 import { motion } from "framer-motion";
-import { FileText, Image as ImageIcon, ArrowLeft, Search } from "lucide-react";
+import { Image as ImageIcon, ArrowLeft, Search } from "lucide-react";
 import { AuthContext } from "../context/AuthContext";
 import DocumentModal from "../component/DocsModal";
 
@@ -36,7 +37,7 @@ export default function FacilityDetails() {
   const navigate = useNavigate();
   const authCtx = useContext(AuthContext);
 
-  // resolve facilityId / villageId from route, location.state, authCtx or localStorage (same pattern as MaterialDetails)
+  // resolve facilityId / villageId from route, location.state, authCtx or localStorage
   const resolveFacilityIdFromStorage = () => {
     try {
       const byKey = localStorage.getItem("facilityId") || localStorage.getItem("FACILITY_ID");
@@ -164,11 +165,15 @@ export default function FacilityDetails() {
   const [verifications, setVerifications] = useState([]);
   const [verificationsLoading, setVerificationsLoading] = useState(false);
 
-  // filters
+  // filters (server-side)
+  const [nameFilter, setNameFilter] = useState(""); // server-side name filter
   const [statusFilter, setStatusFilter] = useState("");
   const [fromDateFilter, setFromDateFilter] = useState("");
   const [toDateFilter, setToDateFilter] = useState("");
+
+  // UI-only search input (debounced -> nameFilter)
   const [search, setSearch] = useState("");
+  const searchDebounceRef = useRef(null);
 
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(15);
@@ -188,14 +193,31 @@ export default function FacilityDetails() {
   const verifRefs = useRef({});
 
   useEffect(() => {
+    // debounce search input to update server-side nameFilter
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = setTimeout(() => {
+      const trimmed = (search || "").trim();
+      if (trimmed !== nameFilter) {
+        setNameFilter(trimmed);
+        setPage(1);
+      }
+    }, 400);
+    return () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
+
+  useEffect(() => {
     loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [facilityId, villageId]);
 
   useEffect(() => {
+    // fetch when any server-side filter or pagination changes
     fetchVerifications(page, limit);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, limit, statusFilter, fromDateFilter, toDateFilter]);
+  }, [page, limit, nameFilter, statusFilter, fromDateFilter, toDateFilter]);
 
   function authFetch(url, opts = {}) {
     return fetch(url, { credentials: "include", headers: { "Content-Type": "application/json", ...(opts.headers || {}) }, ...opts });
@@ -241,6 +263,7 @@ export default function FacilityDetails() {
       const qs = new URLSearchParams();
       qs.set("page", String(pageArg || 1));
       qs.set("limit", String(limitArg || 15));
+      if (nameFilter) qs.set("name", nameFilter);
       if (statusFilter) qs.set("status", statusFilter);
       if (fromDateFilter) qs.set("fromDate", dateStartOfDay(fromDateFilter));
       if (toDateFilter) qs.set("toDate", dateEndOfDay(toDateFilter));
@@ -463,17 +486,6 @@ export default function FacilityDetails() {
     });
   }
 
-  const filtered = useMemo(() => {
-    const q = (search || "").trim().toLowerCase();
-    if (!q) return verifications;
-    return (verifications || []).filter((v) => {
-      const name = (v.name || v.title || "").toString().toLowerCase();
-      const notes = (v.notes || v.description || "").toString().toLowerCase();
-      const by = (v.insertedBy || v.user || "").toString().toLowerCase();
-      return name.includes(q) || notes.includes(q) || by.includes(q);
-    });
-  }, [search, verifications]);
-
   if (loading) return (
     <div className="min-h-screen bg-[#f8f0dc] font-sans">
       <MainNavbar showVillageInNavbar={true} />
@@ -516,7 +528,11 @@ export default function FacilityDetails() {
         <div className="bg-yellow-100 border rounded-xl p-4 shadow-sm flex flex-wrap gap-3 items-end mb-4">
           <div className="flex flex-col">
             <label className="text-xs text-slate-600">Status</label>
-            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="mt-1 px-3 py-2 border rounded-md shadow-sm">
+            <select
+              value={statusFilter}
+              onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
+              className="mt-1 px-3 py-2 border rounded-md shadow-sm"
+            >
               <option value="">ALL</option>
               <option value="1">Forest Guard</option>
               <option value="2">Range Assistant</option>
@@ -527,22 +543,45 @@ export default function FacilityDetails() {
 
           <div className="flex flex-col">
             <label className="text-xs text-slate-600">From date</label>
-            <input type="date" value={fromDateFilter} onChange={(e) => setFromDateFilter(e.target.value)} className="mt-1 px-3 py-2 border rounded-md shadow-sm" />
+            <input
+              type="date"
+              value={fromDateFilter}
+              onChange={(e) => { setFromDateFilter(e.target.value); setPage(1); }}
+              className="mt-1 px-3 py-2 border rounded-md shadow-sm"
+            />
           </div>
 
           <div className="flex flex-col">
             <label className="text-xs text-slate-600">To date</label>
-            <input type="date" value={toDateFilter} onChange={(e) => setToDateFilter(e.target.value)} className="mt-1 px-3 py-2 border rounded-md shadow-sm" />
+            <input
+              type="date"
+              value={toDateFilter}
+              onChange={(e) => { setToDateFilter(e.target.value); setPage(1); }}
+              className="mt-1 px-3 py-2 border rounded-md shadow-sm"
+            />
           </div>
 
           <div className="relative">
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filter name/notes/inserted by..." className="pl-9 pr-3 py-2 border rounded w-64" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Filter name/notes/inserted by..."
+              className="pl-9 pr-3 py-2 border rounded w-64"
+            />
             <div className="absolute left-3 top-2.5 text-slate-400"><Search size={16} /></div>
           </div>
 
           <div className="ml-auto flex items-center gap-2">
             <button onClick={() => { setPage(1); fetchVerifications(1, limit); }} className="px-4 py-2 bg-gradient-to-br from-sky-600 to-indigo-600 text-white rounded-md">Apply</button>
-            <button onClick={() => { setStatusFilter(""); setFromDateFilter(""); setToDateFilter(""); setPage(1); fetchVerifications(1, limit); }} className="px-4 py-2 bg-white border rounded-md">Clear</button>
+            <button onClick={() => {
+              setSearch("");
+              setNameFilter("");
+              setStatusFilter("");
+              setFromDateFilter("");
+              setToDateFilter("");
+              setPage(1);
+              fetchVerifications(1, limit);
+            }} className="px-4 py-2 bg-white border rounded-md">Clear</button>
           </div>
         </div>
 
@@ -550,7 +589,11 @@ export default function FacilityDetails() {
         <div className="flex items-center justify-between mb-3">
           <div className="text-sm text-slate-600">
             <span className="text-sm px-3">Per page :</span>
-            <select value={limit} onChange={async (e) => { const newLimit = Number(e.target.value) || 15; setLimit(newLimit); setPage(1); await fetchVerifications(1, newLimit); }} className="border rounded px-2 py-1">
+            <select
+              value={limit}
+              onChange={async (e) => { const newLimit = Number(e.target.value) || 15; setLimit(newLimit); setPage(1); await fetchVerifications(1, newLimit); }}
+              className="border rounded px-2 py-1"
+            >
               <option value={5}>5</option>
               <option value={15}>15</option>
               <option value={30}>30</option>
@@ -568,14 +611,14 @@ export default function FacilityDetails() {
 
         {pageError && <div className="mb-3 text-sm text-red-600">Error: {pageError}</div>}
 
-        {/* List */}
+        {/* List (server-side filtered) */}
         {verificationsLoading ? (
           <div className="text-sm text-slate-500">Loading verifications…</div>
-        ) : (filtered || []).length === 0 ? (
+        ) : (verifications || []).length === 0 ? (
           <div className="text-sm text-slate-500">No verifications found.</div>
         ) : (
           <div className="space-y-4">
-            {filtered.map((v, idx) => {
+            {(verifications || []).map((v, idx) => {
               const key = v.verificationId ?? v._id ?? v.id ?? `ver-${idx}`;
               const rawNotes = (v.notes || v.description || "");
               const shortNotes = rawNotes.replace(/\s+/g, " ").slice(0, 400);

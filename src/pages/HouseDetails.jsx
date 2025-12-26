@@ -6,6 +6,7 @@ import { API_BASE } from '../config/Api.js';
 import { motion } from 'framer-motion';
 import { FileText, RefreshCw, ArrowLeft, Search } from 'lucide-react';
 import { AuthContext } from '../context/AuthContext';
+import DocsModal from '../component/DocsModal';
 
 function fmtDate(iso) {
   if (!iso) return '—';
@@ -124,11 +125,19 @@ export default function HomeDetailsPage() {
   const [toDateFilter, setToDateFilter] = useState('');
   // optional homeId filter (keeps compatibility if you want it)
   const [homeIdFilter, setHomeIdFilter] = useState('');
+  // server-side name/search filter
+  const [nameFilter, setNameFilter] = useState('');
+  const searchDebounceRef = useRef(null);
 
-  // modal
+  // modal (status history)
   const [modalOpen, setModalOpen] = useState(false);
   const [modalVerification, setModalVerification] = useState(null);
   const [modalLoading, setModalLoading] = useState(false);
+
+  // modal (docs)
+  const [docsModalOpen, setDocsModalOpen] = useState(false);
+  const [docsModalDocs, setDocsModalDocs] = useState(null);
+  const [docsModalLoading, setDocsModalLoading] = useState(false);
 
   // abort controllers
   const fetchAbortRef = useRef(null);
@@ -206,8 +215,8 @@ export default function HomeDetailsPage() {
     }
   }
 
-  // Core: fetch verifications (page, limit, optional homeId, currentStage, status, fromDate, toDate)
-  async function fetchFieldVerifications({ page: pageArg = 1, limit: limitArg = 15, currentStage = null, status = null, fromDate = null, toDate = null, homeId = null } = {}) {
+  // Core: fetch verifications (page, limit, optional homeId, currentStage, status, fromDate, toDate, name)
+  async function fetchFieldVerifications({ page: pageArg = 1, limit: limitArg = 15, currentStage = null, status = null, fromDate = null, toDate = null, homeId = null, name = null } = {}) {
     // abort previous
     if (fetchAbortRef.current) {
       try { fetchAbortRef.current.abort(); } catch {}
@@ -235,11 +244,12 @@ export default function HomeDetailsPage() {
       if (fromDate) qs.set('fromDate', String(fromDate));
       if (toDate) qs.set('toDate', String(toDate));
       if (homeId) qs.set('homeId', String(homeId));
+      if (name) qs.set('name', String(name));
       // cache-busting
       qs.set('_t', String(Date.now()));
 
       const url = `${API_BASE}/field_verification/${encodeURIComponent(resolvedVillageId)}/${encodeURIComponent(resolvedPlotId)}?${qs.toString()}`;
-      console.debug('[fetchFieldVerifications] starting', { url, pageArg, limitArg, currentStage, status, fromDate, toDate, homeId });
+      console.debug('[fetchFieldVerifications] starting', { url, pageArg, limitArg, currentStage, status, fromDate, toDate, homeId, name });
 
       const { ok, status: st, json, text } = await fetchWithSignal(url, signal);
 
@@ -378,34 +388,22 @@ export default function HomeDetailsPage() {
   const completedCount = timeline.filter(t => t.isCompleted).length;
   const pct = stagesMap.length ? Math.round((completedCount / stagesMap.length) * 100) : 0;
 
-  const displayItems = useMemo(() => {
-    let items = Array.isArray(verifications) ? verifications.slice() : [];
-    if (filteredStage) {
-      items = items.filter(d => {
-        const st = d.currentStage ?? d.stageId ?? d.current_stage ?? '';
-        return String(st) === String(filteredStage) || String(d.name ?? '').toLowerCase().includes(String(filteredStage).toLowerCase());
-      });
-    }
-    if (search && search.trim()) {
-      const q = search.trim().toLowerCase();
-      items = items.filter(d => (d.name ?? '').toLowerCase().includes(q) || (d.insertedBy ?? '').toLowerCase().includes(q) || (d.notes ?? '').toLowerCase().includes(q));
-    }
-    return items;
-  }, [verifications, filteredStage, search]);
+  // displayItems now directly reflects server returned verifications (no client-side filtering/searching)
+  const displayItems = useMemo(() => Array.isArray(verifications) ? verifications : [], [verifications]);
 
   // user actions
   async function onTimelineClick(t) {
     const stageId = t?.id ?? null;
-    if (!stageId) { setFilteredStage(null); setPage(1); await fetchFieldVerifications({ page: 1, limit, currentStage: null, status: statusFilter || null, fromDate: fromDateFilter || null, toDate: toDateFilter || null, homeId: homeIdFilter || null }); return; }
+    if (!stageId) { setFilteredStage(null); setPage(1); await fetchFieldVerifications({ page: 1, limit, currentStage: null, status: statusFilter || null, fromDate: fromDateFilter || null, toDate: toDateFilter || null, homeId: homeIdFilter || null, name: nameFilter || null }); return; }
     const same = String(filteredStage) === String(stageId);
     if (same) {
       setFilteredStage(null);
       setPage(1);
-      await fetchFieldVerifications({ page: 1, limit, currentStage: null, status: statusFilter || null, fromDate: fromDateFilter || null, toDate: toDateFilter || null, homeId: homeIdFilter || null });
+      await fetchFieldVerifications({ page: 1, limit, currentStage: null, status: statusFilter || null, fromDate: fromDateFilter || null, toDate: toDateFilter || null, homeId: homeIdFilter || null, name: nameFilter || null });
     } else {
       setFilteredStage(stageId);
       setPage(1);
-      await fetchFieldVerifications({ page: 1, limit, currentStage: stageId, status: statusFilter || null, fromDate: fromDateFilter || null, toDate: toDateFilter || null, homeId: homeIdFilter || null });
+      await fetchFieldVerifications({ page: 1, limit, currentStage: stageId, status: statusFilter || null, fromDate: fromDateFilter || null, toDate: toDateFilter || null, homeId: homeIdFilter || null, name: nameFilter || null });
     }
   }
 
@@ -416,7 +414,7 @@ export default function HomeDetailsPage() {
       setSelectedHome(null);
       setFilteredStage(null);
       setPage(1);
-      await fetchFieldVerifications({ page: 1, limit, currentStage: null, status: statusFilter || null, fromDate: fromDateFilter || null, toDate: toDateFilter || null, homeId: null });
+      await fetchFieldVerifications({ page: 1, limit, currentStage: null, status: statusFilter || null, fromDate: fromDateFilter || null, toDate: toDateFilter || null, homeId: null, name: nameFilter || null });
       return;
     }
 
@@ -424,7 +422,7 @@ export default function HomeDetailsPage() {
     setFilteredStage(null);
     setPage(1);
     setSearch('');
-    await fetchFieldVerifications({ page: 1, limit, currentStage: null, status: statusFilter || null, fromDate: fromDateFilter || null, toDate: toDateFilter || null, homeId: hid });
+    await fetchFieldVerifications({ page: 1, limit, currentStage: null, status: statusFilter || null, fromDate: fromDateFilter || null, toDate: toDateFilter || null, homeId: hid, name: nameFilter || null });
   }
 
   async function gotoPage(p) {
@@ -433,7 +431,7 @@ export default function HomeDetailsPage() {
     if (np === page) return;
     setPage(np);
     const hid = selectedHome ? (selectedHome.homeId ?? selectedHome.home_id ?? selectedHome.home) : null;
-    await fetchFieldVerifications({ page: np, limit, currentStage: filteredStage, status: statusFilter || null, fromDate: fromDateFilter || null, toDate: toDateFilter || null, homeId: hid });
+    await fetchFieldVerifications({ page: np, limit, currentStage: filteredStage, status: statusFilter || null, fromDate: fromDateFilter || null, toDate: toDateFilter || null, homeId: hid, name: nameFilter || null });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -442,7 +440,7 @@ export default function HomeDetailsPage() {
     setLimit(n);
     setPage(1);
     const hid = selectedHome ? (selectedHome.homeId ?? selectedHome.home_id ?? selectedHome.home) : null;
-    await fetchFieldVerifications({ page: 1, limit: n, currentStage: filteredStage, status: statusFilter || null, fromDate: fromDateFilter || null, toDate: toDateFilter || null, homeId: hid });
+    await fetchFieldVerifications({ page: 1, limit: n, currentStage: filteredStage, status: statusFilter || null, fromDate: fromDateFilter || null, toDate: toDateFilter || null, homeId: hid, name: nameFilter || null });
   }
 
   async function openHistoryModalById(e, verificationId) {
@@ -462,11 +460,51 @@ export default function HomeDetailsPage() {
       setModalLoading(false);
     }
   }
+
+  async function openDocsModalById(e, verificationId) {
+    e.stopPropagation?.();
+    setDocsModalLoading(true);
+    setDocsModalDocs(null);
+    try {
+      const data = await fetchVerification(verificationId);
+      // try common fields for docs
+      const docs = (data && (data.docs || data.documents || data.photos || data.files)) ?? [];
+      setDocsModalDocs(Array.isArray(docs) ? docs : []);
+      setDocsModalOpen(true);
+    } catch (err) {
+      console.error('openDocsModalById error', err);
+      setDocsModalDocs([]);
+      setDocsModalOpen(true);
+    } finally {
+      setDocsModalLoading(false);
+    }
+  }
+
   function closeModal() {
     setModalOpen(false);
     setModalVerification(null);
     if (modalAbortRef.current) try { modalAbortRef.current.abort(); } catch {}
   }
+
+  function closeDocsModal() {
+    setDocsModalOpen(false);
+    setDocsModalDocs(null);
+    if (modalAbortRef.current) try { modalAbortRef.current.abort(); } catch {}
+  }
+
+  // search debounce -> set nameFilter (server-side) and refetch
+  useEffect(() => {
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = setTimeout(async () => {
+      const trimmed = (search || '').trim();
+      setNameFilter(trimmed);
+      setPage(1);
+      const hid = selectedHome ? (selectedHome.homeId ?? selectedHome.home_id ?? selectedHome.home) : null;
+      await fetchFieldVerifications({ page: 1, limit, currentStage: filteredStage, status: statusFilter || null, fromDate: fromDateFilter || null, toDate: toDateFilter || null, homeId: hid, name: trimmed || null });
+    }, 450);
+    return () => { if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
 
   // initial load
   useEffect(() => {
@@ -480,7 +518,7 @@ export default function HomeDetailsPage() {
         setPage(1);
         setFilteredStage(null);
         const hid = selectedHome ? (selectedHome.homeId ?? selectedHome.home_id ?? selectedHome.home) : null;
-        await fetchFieldVerifications({ page: 1, limit, currentStage: null, status: statusFilter || null, fromDate: fromDateFilter || null, toDate: toDateFilter || null, homeId: hid });
+        await fetchFieldVerifications({ page: 1, limit, currentStage: null, status: statusFilter || null, fromDate: fromDateFilter || null, toDate: toDateFilter || null, homeId: hid, name: nameFilter || null });
       } catch (e) {
         if (e && e.name === 'AbortError') { /* ignore */ }
         else {
@@ -500,10 +538,10 @@ export default function HomeDetailsPage() {
     (async () => {
       if (!resolvedVillageId || !resolvedPlotId) return;
       const hid = selectedHome ? (selectedHome.homeId ?? selectedHome.home_id ?? selectedHome.home) : null;
-      await fetchFieldVerifications({ page, limit, currentStage: filteredStage, status: statusFilter || null, fromDate: fromDateFilter || null, toDate: toDateFilter || null, homeId: hid });
+      await fetchFieldVerifications({ page, limit, currentStage: filteredStage, status: statusFilter || null, fromDate: fromDateFilter || null, toDate: toDateFilter || null, homeId: hid, name: nameFilter || null });
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, limit, selectedHome, filteredStage, statusFilter, fromDateFilter, toDateFilter]);
+  }, [page, limit, selectedHome, filteredStage, statusFilter, fromDateFilter, toDateFilter, nameFilter]);
 
   useEffect(() => {
     return () => {
@@ -572,7 +610,7 @@ export default function HomeDetailsPage() {
   const applyFilters = async () => {
     setPage(1);
     const hid = selectedHome ? (selectedHome.homeId ?? selectedHome.home_id ?? selectedHome.home) : null;
-    await fetchFieldVerifications({ page: 1, limit, currentStage: filteredStage, status: statusFilter || null, fromDate: fromDateFilter || null, toDate: toDateFilter || null, homeId: homeIdFilter || hid });
+    await fetchFieldVerifications({ page: 1, limit, currentStage: filteredStage, status: statusFilter || null, fromDate: fromDateFilter || null, toDate: toDateFilter || null, homeId: homeIdFilter || hid, name: nameFilter || null });
   };
 
   const clearFilters = async () => {
@@ -583,7 +621,9 @@ export default function HomeDetailsPage() {
     setFilteredStage(null);
     setPage(1);
     const hid = selectedHome ? (selectedHome.homeId ?? selectedHome.home_id ?? selectedHome.home) : null;
-    await fetchFieldVerifications({ page: 1, limit, currentStage: null, status: null, fromDate: null, toDate: null, homeId: hid });
+    setNameFilter('');
+    setSearch('');
+    await fetchFieldVerifications({ page: 1, limit, currentStage: null, status: null, fromDate: null, toDate: null, homeId: hid, name: null });
   };
 
   return (
@@ -596,7 +636,7 @@ export default function HomeDetailsPage() {
           </div>
 
           <div className="flex items-center gap-2">
-            <button onClick={async () => { setFilteredStage(null); setPage(1); setSelectedHome(null); await fetchFieldVerifications({ page: 1, limit, currentStage: null }); }} className="px-3 py-2 border rounded bg-white text-sm flex items-center gap-2 text-slate-700"><RefreshCw size={16} /> Refresh</button>
+            <button onClick={async () => { setFilteredStage(null); setPage(1); setSelectedHome(null); await fetchFieldVerifications({ page: 1, limit, currentStage: null, name: nameFilter || null }); }} className="px-3 py-2 border rounded bg-white text-sm flex items-center gap-2 text-slate-700"><RefreshCw size={16} /> Refresh</button>
           </div>
         </div>
 
@@ -704,13 +744,12 @@ export default function HomeDetailsPage() {
                   <h3 className="text-lg font-medium text-slate-800">Verifications</h3>
 
                   <div className="flex items-center gap-3">
-                    <div className="text-sm text-slate-500 mr-3">Showing: <span className="font-medium">{filteredStage ? `${displayItems.length} (stage filtered)` : `${displayItems.length} on page ${page}`}</span></div>
+                    <div className="text-sm text-slate-500 mr-3">Showing: <span className="font-medium">{`${displayItems.length} on page ${page}`}</span></div>
                     <div className="relative">
-                      
                       
                     </div>
                     {filteredStage && (
-                      <button onClick={async () => { setFilteredStage(null); setPage(1); await fetchFieldVerifications({ page: 1, limit, currentStage: null }); }} className="px-3 py-2 text-sm bg-white border rounded">Clear stage filter</button>
+                      <button onClick={async () => { setFilteredStage(null); setPage(1); await fetchFieldVerifications({ page: 1, limit, currentStage: null, name: nameFilter || null }); }} className="px-3 py-2 text-sm bg-white border rounded">Clear stage filter</button>
                     )}
                   </div>
                 </div>
@@ -807,6 +846,9 @@ export default function HomeDetailsPage() {
                             <div className="flex flex-col items-end gap-2">
                               <div className="flex items-center gap-2">
                                 <button onClick={(e) => { e.stopPropagation(); openHistoryModalById(e, s.verificationId ?? s.verification_id ?? s.verification ?? s._id); }} className="inline-flex items-center gap-2 px-3 py-1.5 bg-sky-600 text-white rounded-lg text-sm hover:bg-sky-700 focus:outline-none">Status history</button>
+
+                                {/* NEW: Documents button (calls same API but extracts docs and opens DocsModal) */}
+                                <button onClick={(e) => { e.stopPropagation(); openDocsModalById(e, s.verificationId ?? s.verification_id ?? s.verification ?? s._id); }} className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border text-slate-700 rounded-lg text-sm hover:bg-gray-50 focus:outline-none"><FileText size={16} />Docs</button>
                               </div>
 
                               <div className="text-xs text-slate-500">{s.deleted ? 'Deleted' : ''}</div>
@@ -823,7 +865,7 @@ export default function HomeDetailsPage() {
           </div>
         </div>
 
-        {/* Modal */}
+        {/* Modal: Status history */}
         {modalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div className="absolute inset-0 bg-black opacity-40" onClick={closeModal} />
@@ -881,6 +923,16 @@ export default function HomeDetailsPage() {
               </div>
             </div>
           </div>
+        )}
+
+        {/* Docs Modal (opened by "View documents" button) */}
+        {docsModalOpen && (
+          <DocsModal
+            open={docsModalOpen}
+            onClose={closeDocsModal}
+            docs={docsModalDocs ?? []}
+            loading={docsModalLoading}
+          />
         )}
 
       </div>

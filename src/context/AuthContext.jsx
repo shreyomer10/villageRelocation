@@ -3,6 +3,8 @@
 export const AuthContext = createContext({
   user: null,
   setUser: () => {},
+  userId: null,
+  setUserId: () => {},
   villageId: null,
   setVillageId: () => {},
   village: null,
@@ -48,6 +50,7 @@ export const AuthContext = createContext({
 });
 
 const STORAGE_KEYS = {
+  USERID: "userId",
   USER: "user",
   VILLAGE: "villageId",
   SELECTED_VILLAGE: "selectedVillage",
@@ -72,16 +75,13 @@ const STORAGE_KEYS = {
   SELECTED_FAMILY: "selectedFamily",
 };
 
-// Aliases
+// (aliases and normalizers unchanged — keep full set from your original file)
 const MATERIAL_ID_ALIASES = ["materialId", "MATERIAL_ID", "MATERIAL", "MATERIALID"];
 const SELECTED_MATERIAL_ALIASES = ["selectedMaterial", "SELECTED_MATERIAL", "SELECTED_MATERIALS"];
 const PLOT_ID_ALIASES = ["plotId", "PLOT_ID", "PLOT", "PLOTID"];
 const SELECTED_PLOT_ALIASES = ["selectedPlot", "SELECTED_PLOT", "SELECTED_PLOTS"];
-// facility aliases
 const FACILITY_ID_ALIASES = ["facilityId", "FACILITY_ID", "FACILITY", "FACILITYID"];
 const SELECTED_FACILITY_ALIASES = ["selectedFacility", "SELECTED_FACILITY", "SELECTED_FACILITIES"];
-
-// family aliases (ADDED)
 const FAMILY_ID_ALIASES = ["familyId", "FAMILY_ID", "FAMILY", "FAMILYID"];
 const SELECTED_FAMILY_ALIASES = ["selectedFamily", "SELECTED_FAMILY", "SELECTED_FAMILIES"];
 
@@ -238,6 +238,7 @@ function parseJwt(token) {
 
 export function AuthProvider({ children }) {
   const [user, setUserState] = useState(null);
+  const [userId, setUserIdState] = useState(null); // NEW: store canonical userId
   const [villageId, setVillageIdState] = useState(null);
   const [village, setVillageState] = useState(null);
   const [villageName, setVillageNameState] = useState(null);
@@ -276,6 +277,9 @@ export function AuthProvider({ children }) {
         if (parsed?.name) setUserState({ name: parsed.name, role: parsed.role, email: parsed.email });
       }
     } catch {}
+
+    const savedUserId = localStorage.getItem(STORAGE_KEYS.USERID);
+    if (savedUserId) setUserIdState(savedUserId);
 
     const sv = localStorage.getItem(STORAGE_KEYS.VILLAGE);
     if (sv) setVillageIdState(sv);
@@ -345,6 +349,7 @@ export function AuthProvider({ children }) {
           setRefreshTokenString(normalizeRefreshToken(parsed.refreshToken ?? parsed.refresh_token));
         }
 
+        // set user and userId if present
         if (parsed?.user) {
           try {
             const u = parsed.user;
@@ -352,6 +357,14 @@ export function AuthProvider({ children }) {
             try {
               localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify({ name: u.name ?? u.fullName ?? null, role: u.role ?? null, email: u.email ?? null }));
             } catch {}
+            // try extract user id from user object
+            const uid = u.id ?? u.userId ?? u.user_id ?? u._id ?? null;
+            if (uid) {
+              setUserIdState(String(uid));
+              try {
+                localStorage.setItem(STORAGE_KEYS.USERID, String(uid));
+              } catch {}
+            }
             const vidRawFromUser = u.villageID ?? u.villageId ?? u.village_id ?? u.villageIDList ?? null;
             const normalizedFromUser = normalizeVillageId(vidRawFromUser);
             if (normalizedFromUser) {
@@ -364,6 +377,14 @@ export function AuthProvider({ children }) {
               } catch {}
             }
           } catch {}
+        } else if (parsed?.userId || parsed?.user_id) {
+          const uid = parsed.userId ?? parsed.user_id;
+          if (uid) {
+            setUserIdState(String(uid));
+            try {
+              localStorage.setItem(STORAGE_KEYS.USERID, String(uid));
+            } catch {}
+          }
         }
 
         // restore selectedPlot/plotId from auth payload if present
@@ -569,7 +590,7 @@ export function AuthProvider({ children }) {
         if (normalized) {
           const sfam = normalizeSelectedFamily(normalized);
           setSelectedFamilyState(sfam);
-          const fid = normalizeFamilyId(sfam);
+          const fid = normalizeFamilyId(sfam.familyId ?? sfam.id ?? sfam._id);
           if (fid) setFamilyIdState(String(fid));
         } else if (typeof parsed === "string") {
           const sfam = normalizeSelectedFamily(parsed);
@@ -581,13 +602,21 @@ export function AuthProvider({ children }) {
     } catch {}
   }, []);
 
-  // persisters
+  // persist user
   useEffect(() => {
     try {
       if (user && user.name) localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(user));
       else localStorage.removeItem(STORAGE_KEYS.USER);
     } catch {}
   }, [user]);
+
+  // persist userId
+  useEffect(() => {
+    try {
+      if (userId) localStorage.setItem(STORAGE_KEYS.USERID, String(userId));
+      else localStorage.removeItem(STORAGE_KEYS.USERID);
+    } catch {}
+  }, [userId]);
 
   useEffect(() => {
     try {
@@ -771,7 +800,7 @@ export function AuthProvider({ children }) {
     } catch {}
   }, [selectedFamily]);
 
-  // persist full raw payload (include selectedVillage + selectedPlot + selectedMaterial + selectedFacility + selectedFamily)
+  // persist full raw payload (include selectedVillage + selectedPlot + selectedMaterial + selectedFacility + selectedFamily + userId)
   useEffect(() => {
     try {
       const raw = {
@@ -779,6 +808,7 @@ export function AuthProvider({ children }) {
         expiresAt: tokenExpiresAt ?? undefined,
         refreshToken: refreshTokenString ?? undefined,
         user: user ?? undefined,
+        userId: userId ?? undefined,
         selectedVillage: village ?? undefined,
         selectedPlot: selectedPlot ?? undefined,
         selectedMaterial: selectedMaterial ?? undefined,
@@ -796,7 +826,7 @@ export function AuthProvider({ children }) {
         } catch {}
       }
     } catch {}
-  }, [token, tokenExpiresAt, refreshTokenString, user, village, selectedPlot, selectedMaterial, selectedFacility, selectedFamily]);
+  }, [token, tokenExpiresAt, refreshTokenString, user, userId, village, selectedPlot, selectedMaterial, selectedFacility, selectedFamily]);
 
   // storage sync across tabs (robust with aliases)
   useEffect(() => {
@@ -810,6 +840,7 @@ export function AuthProvider({ children }) {
       } catch {
         setUserState(null);
       }
+      if (e.key === STORAGE_KEYS.USERID) setUserIdState(e.newValue);
       if (e.key === STORAGE_KEYS.VILLAGE) setVillageIdState(e.newValue);
       if (e.key === STORAGE_KEYS.SELECTED_VILLAGE) {
         try {
@@ -931,6 +962,7 @@ export function AuthProvider({ children }) {
             if (parsed.expiresAt) setTokenExpiresAt(Number(parsed.expiresAt));
             if (parsed.refreshToken) setRefreshTokenString(normalizeRefreshToken(parsed.refreshToken));
             if (parsed.user) setUserState(parsed.user && parsed.user.name ? { name: parsed.user.name, role: parsed.user.role, email: parsed.user.email } : null);
+            if (parsed.userId) setUserIdState(parsed.userId);
             if (parsed.selectedVillage) setVillageState(parsed.selectedVillage);
 
             // selectedPlot in auth payload
@@ -971,6 +1003,7 @@ export function AuthProvider({ children }) {
             setTokenExpiresAt(null);
             setRefreshTokenString(null);
             setUserState(null);
+            setUserIdState(null);
             setVillageState(null);
             setVillageIdState(null);
             setVillageNameState(null);
@@ -1040,6 +1073,7 @@ export function AuthProvider({ children }) {
         logout(); // logout defined later, still works
       } catch {
         setUserState(null);
+        setUserIdState(null);
         setVillageIdState(null);
         setVillageState(null);
         setVillageNameState(null);
@@ -1054,6 +1088,7 @@ export function AuthProvider({ children }) {
         setFamilyIdState(null);
         try {
           localStorage.removeItem(STORAGE_KEYS.USER);
+          localStorage.removeItem(STORAGE_KEYS.USERID);
           localStorage.removeItem(STORAGE_KEYS.VILLAGE);
           localStorage.removeItem(STORAGE_KEYS.SELECTED_VILLAGE);
           localStorage.removeItem(STORAGE_KEYS.VILLAGE_NAME);
@@ -1160,6 +1195,24 @@ export function AuthProvider({ children }) {
               setUserState({ name: parsed.name ?? parsed.sub ?? null, role: parsed.role ?? null, email: parsed.email ?? null });
               try {
                 localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify({ name: parsed.name ?? parsed.sub ?? null, role: parsed.role ?? null, email: parsed.email ?? null }));
+              } catch {}
+            }
+          }
+
+          // set userId if present in payload.user or in parsed token
+          if (payload.user && (payload.user.id || payload.user.userId || payload.user._id)) {
+            const uid = payload.user.id ?? payload.user.userId ?? payload.user._id;
+            setUserIdState(String(uid));
+            try {
+              localStorage.setItem(STORAGE_KEYS.USERID, String(uid));
+            } catch {}
+          } else if (newToken) {
+            const parsed = parseJwt(newToken);
+            const maybeUid = parsed?.sub ?? parsed?.userId ?? parsed?.user_id ?? parsed?.id ?? null;
+            if (maybeUid) {
+              setUserIdState(String(maybeUid));
+              try {
+                localStorage.setItem(STORAGE_KEYS.USERID, String(maybeUid));
               } catch {}
             }
           }
@@ -1275,6 +1328,15 @@ export function AuthProvider({ children }) {
 
   const setUser = useCallback((u) => setUserState(u ? { name: u.name, role: u.role, email: u.email } : null), []);
 
+  const setUserId = useCallback((id) => {
+    const normalized = id == null ? null : String(id);
+    setUserIdState(normalized);
+    try {
+      if (normalized) localStorage.setItem(STORAGE_KEYS.USERID, normalized);
+      else localStorage.removeItem(STORAGE_KEYS.USERID);
+    } catch {}
+  }, []);
+
   const setVillageId = useCallback((id) => {
     const normalized = normalizeVillageId(id);
     setVillageIdState(normalized ?? null);
@@ -1365,19 +1427,10 @@ export function AuthProvider({ children }) {
           } catch {}
         }
 
-        if (userObj) {
-          const vidRawFromUser = userObj.villageID ?? userObj.villageId ?? userObj.village_id ?? userObj.villageIDList ?? null;
-          const normalizedFromUser = normalizeVillageId(vidRawFromUser);
-          if (normalizedFromUser) {
-            setVillageIdState(normalizedFromUser);
-            const minimalSv = { villageId: normalizedFromUser };
-            setVillageState(minimalSv);
-            try {
-              localStorage.setItem(STORAGE_KEYS.VILLAGE, normalizedFromUser);
-              localStorage.setItem(STORAGE_KEYS.SELECTED_VILLAGE, JSON.stringify(minimalSv));
-            } catch {}
-          }
-        }
+        // set userId if available in payload.user or top-level
+        const uidFromUser = userObj ? (userObj.id ?? userObj.userId ?? userObj.user_id ?? userObj._id ?? null) : null;
+        const uidTop = p.userId ?? p.user_id ?? p.id ?? p._id ?? null;
+        let finalUserId = uidFromUser ?? uidTop ?? null;
 
         const tok = p.token ?? p.accessToken ?? p.access_token ?? null;
         if (tok) {
@@ -1394,6 +1447,10 @@ export function AuthProvider({ children }) {
           if (!absExpiry) {
             const parsed = parseJwt(tok);
             if (parsed && parsed.exp) absExpiry = Number(parsed.exp) * 1000;
+            // attempt to get user id from token if not found already
+            if (!finalUserId && parsed) {
+              finalUserId = parsed.sub ?? parsed.userId ?? parsed.user_id ?? parsed.id ?? finalUserId;
+            }
           }
           if (!absExpiry) absExpiry = Date.now() + 2 * 3600 * 1000;
           setTokenExpiresAt(absExpiry);
@@ -1520,6 +1577,14 @@ export function AuthProvider({ children }) {
           }
         }
 
+        // if an explicit userId was present earlier, set it now
+        if (finalUserId) {
+          setUserIdState(String(finalUserId));
+          try {
+            localStorage.setItem(STORAGE_KEYS.USERID, String(finalUserId));
+          } catch {}
+        }
+
         try {
           localStorage.setItem(STORAGE_KEYS.AUTH_PAYLOAD, JSON.stringify(p));
         } catch {}
@@ -1539,6 +1604,7 @@ export function AuthProvider({ children }) {
 
   const logout = useCallback(() => {
     setUserState(null);
+    setUserIdState(null);
     setVillageIdState(null);
     setVillageState(null);
     setVillageNameState(null);
@@ -1565,6 +1631,7 @@ export function AuthProvider({ children }) {
 
     try {
       localStorage.removeItem(STORAGE_KEYS.USER);
+      localStorage.removeItem(STORAGE_KEYS.USERID);
       localStorage.removeItem(STORAGE_KEYS.VILLAGE);
       localStorage.removeItem(STORAGE_KEYS.SELECTED_VILLAGE);
       localStorage.removeItem(STORAGE_KEYS.VILLAGE_NAME);
@@ -1870,6 +1937,8 @@ export function AuthProvider({ children }) {
   const value = {
     user,
     setUser,
+    userId,
+    setUserId,
     villageId,
     setVillageId,
     village,

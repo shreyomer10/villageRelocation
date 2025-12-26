@@ -4,7 +4,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import MainNavbar from '../component/MainNavbar';
 import { API_BASE } from '../config/Api.js';
 import { motion } from 'framer-motion';
-import { FileText, RefreshCw, ArrowLeft, Search, Image as ImageIcon } from 'lucide-react';
+import { FileText, ArrowLeft, Search, Image as ImageIcon } from 'lucide-react';
 import { AuthContext } from '../context/AuthContext';
 import DocumentModal from '../component/DocsModal';
 
@@ -153,19 +153,19 @@ export default function PlotStagesPage() {
   const [error, setError] = useState(null);
   const [plot, setPlot] = useState(null);
   const [buildings, setBuildings] = useState([]);
-  const [search, setSearch] = useState('');
 
-  // verifications state
+  // verifications state (server returns filtered results)
   const [verifications, setVerifications] = useState([]);
   const [verifLoading, setVerifLoading] = useState(false);
 
   // server-side filter state
   const [filteredStage, setFilteredStage] = useState(null);
 
-  // FILTERS (homeId removed)
+  // FILTERS (homeId used as server-side search key)
   const [statusFilter, setStatusFilter] = useState('');
   const [fromDateFilter, setFromDateFilter] = useState('');
   const [toDateFilter, setToDateFilter] = useState('');
+  const [search, setSearch] = useState(''); // will be sent to server as `homeId` (or change if backend expects `q`)
 
   // pagination
   const [page, setPage] = useState(1);
@@ -188,9 +188,10 @@ export default function PlotStagesPage() {
   useEffect(() => { loadAll(); }, [resolvedVillageId, resolvedPlotId]); // load plot + buildings
 
   useEffect(() => {
-    fetchFieldVerifications(page, limit, filteredStage);
+    // whenever filters/pagination change, fetch from server
+    fetchFieldVerifications(page, limit, filteredStage).catch(e => console.warn(e));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolvedVillageId, resolvedPlotId, page, limit, filteredStage, statusFilter, fromDateFilter, toDateFilter]);
+  }, [resolvedVillageId, resolvedPlotId, page, limit, filteredStage, statusFilter, fromDateFilter, toDateFilter, search]);
 
   async function fetchWithCreds(url, opts = {}) {
     try {
@@ -277,11 +278,20 @@ export default function PlotStagesPage() {
     } catch (e) { console.error(e); setBuildings([]); }
   }
 
-  // fetch verifications — status/fromDate/toDate supported
+  /**
+   * fetchFieldVerifications
+   * - sends all filter params to server (server does all filtering)
+   * - returns { items, count } for callers who need the immediate server result
+   */
   async function fetchFieldVerifications(pageArg = page, limitArg = limit, currentStage = filteredStage) {
     setVerifLoading(true);
     try {
-      if (!resolvedVillageId || !resolvedPlotId) { setVerifications([]); setPlot(prev => prev ? { ...prev, docs: [] } : prev); setTotalCount(0); return; }
+      if (!resolvedVillageId || !resolvedPlotId) {
+        setVerifications([]);
+        setPlot(prev => prev ? { ...prev, docs: [] } : prev);
+        setTotalCount(0);
+        return { items: [], count: 0 };
+      }
 
       const qs = new URLSearchParams();
       qs.set('page', String(pageArg || 1));
@@ -290,14 +300,16 @@ export default function PlotStagesPage() {
       if (statusFilter) qs.set('status', String(statusFilter));
       if (fromDateFilter) qs.set('fromDate', String(fromDateFilter));
       if (toDateFilter) qs.set('toDate', String(toDateFilter));
+      // server-side search parameter: homeId (change if backend uses different name)
+      if (search) qs.set('name', String(search));
 
       const url = `${API_BASE}/field_verification/${encodeURIComponent(resolvedVillageId)}/${encodeURIComponent(resolvedPlotId)}?${qs.toString()}`;
       const { ok, status, json, text } = await fetchWithCreds(url, { method: 'GET' });
 
       if (!ok) {
-        if (status === 401) { const msg = (json && (json.message || json.error)) || text || 'Unauthorized — please sign in'; setError(msg); setVerifications([]); setPlot(prev => prev ? { ...prev, docs: [] } : prev); setTotalCount(0); return; }
+        if (status === 401) { const msg = (json && (json.message || json.error)) || text || 'Unauthorized — please sign in'; setError(msg); setVerifications([]); setPlot(prev => prev ? { ...prev, docs: [] } : prev); setTotalCount(0); return { items: [], count: 0 }; }
         console.warn('Failed to fetch verifications', status, text);
-        setVerifications([]); setPlot(prev => prev ? { ...prev, docs: [] } : prev); setTotalCount(0); return;
+        setVerifications([]); setPlot(prev => prev ? { ...prev, docs: [] } : prev); setTotalCount(0); return { items: [], count: 0 };
       }
 
       const payload = json ?? {};
@@ -306,12 +318,17 @@ export default function PlotStagesPage() {
       else if (Array.isArray(payload)) { items = payload; count = items.length; }
       else { items = payload.items ?? []; count = payload.count ?? 0; }
       items = Array.isArray(items) ? items : [];
+
       setVerifications(items);
+      // keep plot.docs in sync with verifications so UI that expects plot.docs continues to work
       setPlot(prev => ({ ...(prev || {}), docs: items }));
       setTotalCount(Number(count) || 0);
+
+      return { items, count: Number(count) || 0 };
     } catch (e) {
       console.error('fetchFieldVerifications error', e);
       setVerifications([]); setPlot(prev => prev ? { ...prev, docs: [] } : prev); setTotalCount(0);
+      return { items: [], count: 0 };
     } finally { setVerifLoading(false); }
   }
 
@@ -322,13 +339,12 @@ export default function PlotStagesPage() {
       const { ok, status, json, text } = await fetchWithCreds(url, { method: 'GET' });
       if (!ok) { console.warn('Failed to fetch verification', status, text); return null; }
       const payload = json ?? {};
-      // payload shape example provided by you: { result: { ... } }
       const result = payload.result ?? payload;
       return result;
     } catch (e) { console.error('fetchVerification error', e); return null; }
   }
 
-  // New: fetch only docs for a verification. Tries docs-only endpoints first and falls back to the full "one" endpoint.
+  // fetch only docs for a verification. Tries docs-only endpoints first and falls back to the full "one" endpoint.
   async function fetchVerificationDocs(verificationId) {
     if (!verificationId) return [];
     setDocsModalLoading(true);
@@ -365,7 +381,6 @@ export default function PlotStagesPage() {
           } else if (payload.files && Array.isArray(payload.files)) {
             docsArr = payload.files;
           } else {
-            // If it's the full verification object, try candidate fields
             const obj = payload.result ?? payload ?? {};
             const candidates = ['docs', 'documents', 'photos', 'images', 'files', 'attachments'];
             for (const c of candidates) {
@@ -472,13 +487,7 @@ export default function PlotStagesPage() {
   const completedCount = timeline.filter(t => t.isCompleted).length;
   const pct = stagesMap.length ? Math.round((completedCount / stagesMap.length) * 100) : 0;
 
-  const filteredStages = useMemo(() => {
-    const q = (search || '').trim().toLowerCase();
-    let items = Array.isArray(verifications) ? verifications : [];
-    if (!q) return items;
-    return items.filter(d => (d.name || d.currentStage || '').toLowerCase().includes(q) || (d.insertedBy || '').toLowerCase().includes(q) || (d.notes || '').toLowerCase().includes(q));
-  }, [search, verifications]);
-
+  // NOTE: client-side filtering removed — server returns filtered `verifications`.
   const [expandedStage, setExpandedStage] = useState(null);
   useEffect(() => {
     if (!expandedStage) return undefined;
@@ -491,17 +500,43 @@ export default function PlotStagesPage() {
     return () => clearTimeout(t);
   }, [expandedStage]);
 
+  /**
+   * Timeline click:
+   * - request server filtered results for the clicked stage
+   * - setFilteredStage accordingly (server will filter)
+   * - inspect server result to find an initial verification to expand
+   */
   async function onTimelineClick(t) {
     if (!t || !t.id) {
-      setFilteredStage(null); setPage(1); await fetchFieldVerifications(1, limit, null); setExpandedStage(null); return;
+      setFilteredStage(null);
+      setPage(1);
+      await fetchFieldVerifications(1, limit, null);
+      setExpandedStage(null);
+      return;
     }
     const stageId = t.id;
     const same = String(filteredStage) === String(stageId);
-    if (same) { setFilteredStage(null); setPage(1); await fetchFieldVerifications(1, limit, null); setExpandedStage(null); }
-    else { setFilteredStage(stageId); setPage(1); await fetchFieldVerifications(1, limit, stageId);
-      const docs = Array.isArray(verifications) ? verifications : []; let first = null;
-      for (let i = 0; i < docs.length; i += 1) { const d = docs[i]; const st = d.currentStage ?? d.stageId ?? d.current_stage ?? ''; if (String(st) === String(stageId)) { first = d.verificationId ?? d.verification ?? d.verification_id ?? d._id ?? null; break; } }
-      if (first) setExpandedStage(first); else setExpandedStage(null);
+    if (same) {
+      setFilteredStage(null);
+      setPage(1);
+      await fetchFieldVerifications(1, limit, null);
+      setExpandedStage(null);
+    } else {
+      setFilteredStage(stageId);
+      setPage(1);
+      // fetch server results and use returned items to compute first expandedStage
+      const { items } = await fetchFieldVerifications(1, limit, stageId);
+      let first = null;
+      for (let i = 0; i < (items || []).length; i += 1) {
+        const d = items[i];
+        const st = d.currentStage ?? d.stageId ?? d.current_stage ?? '';
+        if (String(st) === String(stageId)) {
+          first = d.verificationId ?? d.verification ?? d.verification_id ?? d._id ?? null;
+          if (first) break;
+        }
+      }
+      if (first) setExpandedStage(first);
+      else setExpandedStage(null);
     }
   }
 
@@ -604,7 +639,7 @@ export default function PlotStagesPage() {
   const typeName = getTypeName();
 
   const applyFilters = async () => { setPage(1); await fetchFieldVerifications(1, limit, filteredStage); };
-  const clearFilters = async () => { setStatusFilter(''); setFromDateFilter(''); setToDateFilter(''); setFilteredStage(null); setPage(1); await fetchFieldVerifications(1, limit, null); };
+  const clearFilters = async () => { setStatusFilter(''); setFromDateFilter(''); setToDateFilter(''); setSearch(''); setFilteredStage(null); setPage(1); await fetchFieldVerifications(1, limit, null); };
 
   return (
     <div className="min-h-screen bg-[#f8f0dc] font-sans">
@@ -678,7 +713,7 @@ export default function PlotStagesPage() {
               <h3 className="text-lg font-medium text-slate-800">Verifications</h3>
 
               <div className="flex items-center gap-3">
-                <div className="text-sm text-slate-500 mr-3">Showing: <span className="font-medium">{filteredStage ? `${filteredStages.length} for selected stage (page ${page})` : `${filteredStages.length} total (page ${page})`}</span></div>
+                <div className="text-sm text-slate-500 mr-3">Showing: <span className="font-medium">{filteredStage ? `${verifications.length} for selected stage (page ${page})` : `${verifications.length} total (page ${page})`}</span></div>
                 <div className="relative"></div>
                 {filteredStage && (<button onClick={() => { setFilteredStage(null); setPage(1); fetchFieldVerifications(1, limit, null); }} className="px-3 py-2 text-sm bg-white border rounded">Show all</button>)}
               </div>
@@ -706,8 +741,9 @@ export default function PlotStagesPage() {
                 <label className="text-xs text-slate-600">To date</label>
                 <input type="date" value={toDateFilter} onChange={(e) => setToDateFilter(e.target.value)} className="mt-1 px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring" />
               </div>
+
               <div className="relative">
-                <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filter verifications or inserted by..." className="pl-9 pr-3 py-2 border rounded w-64 focus:outline-none focus:ring" />
+                <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search " className="pl-9 pr-3 py-2 border rounded w-64 focus:outline-none focus:ring" />
                 <div className="absolute left-3 top-2.5 text-slate-400"><Search size={16} /></div>
               </div>
 
@@ -739,9 +775,9 @@ export default function PlotStagesPage() {
 
             {verifLoading ? (
               <div className="text-sm text-slate-500">Loading verifications…</div>
-            ) : filteredStages.length === 0 ? (
+            ) : verifications.length === 0 ? (
               <div className="text-sm text-slate-500">No verification found.</div>
-            ) : filteredStages.map((s, idx) => {
+            ) : verifications.map((s, idx) => {
               const key = s.verificationId ?? s.stageId ?? s._id ?? `stage-${idx}`;
               const refKey = s.verificationId ?? s.verification_id ?? s.verification ?? key;
               const shortNotes = (s.notes || '').replace(/\s+/g, ' ').slice(0, 500);
