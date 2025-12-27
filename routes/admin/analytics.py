@@ -4,7 +4,6 @@ import logging
 
 from flask import Blueprint, logging,request, jsonify
 from pydantic import ValidationError
-from models.emp import UserCounters
 from utils.tokenAuth import auth_required
 from models.village import FamilyCount
 from utils.helpers import authorizationDD, make_response
@@ -18,6 +17,8 @@ houses=db.house
 families = db.testing
 options = db.options
 users= db.users
+logs = db.logs
+
 analytics_BP = Blueprint("analytics",__name__)
 
 
@@ -223,117 +224,115 @@ def get_family_count(decoded_data,village_id):
         }), 500
 
 
-
-@analytics_BP.route("/analytics/performance", methods=["GET"])
+@analytics_BP.route("/analytics/activity", methods=["GET"])
 @auth_required
-def employee_performance(decoded_data):
+def peak_activity(decoded_data):
     try:
         error = authorizationDD(decoded_data)
         if error:
             return make_response(True, message=error["message"], status=error["status"])
-        userId = request.args.get("userId")
-        villageId = request.args.get("villageId")
+        args = request.args
 
-        # -----------------------
-        #  MUST HAVE at least 1
-        # -----------------------
-        if not userId and not villageId:
-            return make_response(True, "Provide at least userId or villageId", status=400)
+        granularity = args.get("granularity")  # day | month
+        villageId = args.get("villageId")
+        userId = args.get("userId")
+        from_date = args.get("fromDate")
+        to_date = args.get("toDate")
 
-        # ======================================================
-        #  CASE 1: userId + villageId (fetch specific village counters)
-        # ======================================================
-        if userId and villageId:
-            emp_doc = users.find_one(
-                {"userId": userId, "deleted": False},
-                {"_id": 0, "name": 1, "role": 1, "userCounters": 1}
-            )
-            if not emp_doc:
-                return make_response(True, "Employee not found", status=404)
+        if granularity not in ["day", "month"]:
+            return make_response(True, "granularity must be day or month", status=400)
 
-            counters = emp_doc.get("userCounters", {})
-            village_counter = counters.get(villageId, UserCounters().model_dump())
+        match = {}
 
-            return make_response(
-                False,
-                "User village performance fetched",
-                result={
-                    "userId": userId,
-                    "villageId": villageId,
-                    "name": emp_doc["name"],
-                    "role": emp_doc["role"],
-                    "counters": village_counter
-                },
-                status=200
-            )
+        if villageId:
+            match["villageId"] = villageId
+        if userId:
+            match["userId"] = userId
 
-        # ======================================================
-        #  CASE 2: userId ONLY → return all village counters
-        # ======================================================
-        if userId and not villageId:
-            emp_doc = users.find_one(
-                {"userId": userId, "deleted": False},
-                {"_id": 0, "name": 1, "role": 1, "villageID": 1, "userCounters": 1}
-            )
-            if not emp_doc:
-                return make_response(True, "Employee not found", status=404)
+        if from_date or to_date:
+            date_filter = {}
+            if from_date:
+                date_filter["$gte"] = from_date
+            if to_date:
+                date_filter["$lte"] = to_date
+            match["updateTime"] = date_filter
 
-            return make_response(
-                False,
-                "User full performance fetched",
-                result={
-                    "userId": userId,
-                    "name": emp_doc["name"],
-                    "role": emp_doc["role"],
-                    "villages": emp_doc["villageID"],
-                    "counters": emp_doc.get("userCounters", {})
-                },
-                status=200
-            )
+        substr_len = 10 if granularity == "day" else 7  # YYYY-MM-DD / YYYY-MM
 
-        # ======================================================
-        #  CASE 3: villageId ONLY → return performance for ALL employees
-        # ======================================================
-        if villageId and not userId:
+        pipeline = [
+            {"$match": match},
+            {
+                "$group": {
+                    "_id": { "$substr": ["$updateTime", 0, substr_len] },
+                    "count": { "$sum": 1 }
+                }
+            },
+            {"$sort": {"_id": 1}}
+        ]
 
-            village_doc = villages.find_one(
-                {"villageId": villageId, "deleted": False},
-                {"_id": 0, "emp": 1}
-            )
-            if not village_doc:
-                return make_response(True, "Village not found", status=404)
+        data = list(logs.aggregate(pipeline))
 
-            emp_ids = village_doc.get("emp", [])
-            results = []
-
-            for uid in emp_ids:
-                emp_doc = users.find_one(
-                    {"userId": uid, "deleted": False},
-                    {"_id": 0, "name": 1, "role": 1, "userCounters": 1}
-                )
-                if not emp_doc:
-                    continue
-
-                counters = emp_doc.get("userCounters", {})
-                vc = counters.get(villageId, UserCounters().model_dump())
-
-                results.append({
-                    "userId": uid,
-                    "name": emp_doc["name"],
-                    "role": emp_doc["role"],
-                    "villageId": villageId,
-                    "counters": vc
-                })
-
-            return make_response(
-                False,
-                "Village-wide performance fetched",
-                result={
-                    "villageId": villageId,
-                    "performance": results
-                },
-                status=200
-            )
+        return make_response(
+            False,
+            "Peak activity data",
+            result=data
+        )
 
     except Exception as e:
-        return make_response(True, f"Internal server error: {str(e)}", status=500)
+        return make_response(True, f"Error generating peak activity: {str(e)}", status=500)
+
+
+@analytics_BP.route("/analytics/user", methods=["GET"])
+@auth_required
+def user_breakdown(decoded_data):
+    try:
+        error = authorizationDD(decoded_data)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
+        args = request.args
+
+        userId = args.get("userId")
+        granularity = args.get("granularity")  # day | month
+
+        if not userId:
+            return make_response(True, "userId required", status=400)
+        if granularity not in ["day", "month"]:
+            return make_response(True, "granularity must be day or month", status=400)
+
+        substr_len = 10 if granularity == "day" else 7
+        time_key = "day" if granularity == "day" else "month"
+
+        pipeline = [
+            {"$match": {"userId": userId}},
+            {
+                "$group": {
+                    "_id": {
+                        time_key: { "$substr": ["$updateTime", 0, substr_len] },
+                        "type": "$type",
+                        "action": "$action"
+                    },
+                    "count": { "$sum": 1 }
+                }
+            },
+            {
+                "$project": {
+                    "_id": 0,
+                    time_key: f"$_id.{time_key}",
+                    "type": "$_id.type",
+                    "action": "$_id.action",
+                    "count": 1
+                }
+            },
+            {"$sort": {time_key: 1}}
+        ]
+
+        data = list(logs.aggregate(pipeline))
+
+        return make_response(
+            False,
+            "User activity breakdown",
+            result=data
+        )
+
+    except Exception as e:
+        return make_response(True, f"Error generating breakdown: {str(e)}", status=500)

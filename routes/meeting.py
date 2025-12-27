@@ -5,10 +5,11 @@ from flask import Flask, Blueprint, logging,request, jsonify
 from flask_cors import CORS
 from pydantic import ValidationError
 from pymongo import  ASCENDING, DESCENDING
+from models.village import Logs
 from utils.tokenAuth import auth_required
 from models.counters import get_next_meeting_id
 from models.meeting import Meeting, MeetingInsert, MeetingUpdate
-from utils.helpers import authorization, make_response
+from utils.helpers import authorization, make_response, nowIST
 from models.family import Family, FamilyCard, FamilyUpdate
 from config import JWT_EXPIRE_MIN, db
 
@@ -16,10 +17,12 @@ from pymongo import errors
 
 
 meetings=db.meetings
+logs=db.logs
 
 meeting_bp = Blueprint("meetings",__name__)
 
 @meeting_bp.route("/meetings/insert", methods=["POST"])
+@auth_required
 def insert_meeting(decoded_data):
     try:
         payload = request.get_json(force=True)
@@ -47,9 +50,19 @@ def insert_meeting(decoded_data):
             meetingId=new_id,
             **meeting_obj.model_dump(exclude_none=True)
         )
+        log=Logs(
+            userId=userId,
+            updateTime=nowIST(),
+            type='Meeting',
+            action='Insert',
+            comments="Meeting Inserted Successfully",
+            relatedId=new_id,
+            villageId=meeting_obj.villageId
+        )
 
         # Insert into DB
-        db.meetings.insert_one(meeting_record.model_dump(exclude_none=True))
+        meetings.insert_one(meeting_record.model_dump(exclude_none=True))
+        logs.insert_one(log.model_dump())
 
         return make_response(
             False,
@@ -96,6 +109,17 @@ def delete_meeting(decoded_data,meeting_id):
             return make_response(True, msg, status=404)
 
         # ✅ Successful deletion
+        log=Logs(
+            userId=userId,
+            updateTime=nowIST(),
+            type='Meeting',
+            action='Delete',
+            comments="Meeting Deleted Successfully",
+            relatedId=meeting_id,
+            villageId=""
+        )
+        logs.insert_one(log.model_dump())
+
         return make_response(False, f"Meeting {meeting_id} deleted successfully", status=200)
 
     except errors.PyMongoError as e:
@@ -143,6 +167,16 @@ def update_meeting(decoded_data,meeting_id):
                 f"Meeting {meeting_id} not found or not held by '{held_by}'",
                 status=404
             )
+        log=Logs(
+            userId=userId,
+            updateTime=nowIST(),
+            type='Meeting',
+            action='Edited',
+            comments="Meeting Edited Successfully",
+            relatedId=meeting_id,
+            villageId=""
+        )
+        logs.insert_one(log.model_dump())
 
         return make_response(
             False,
@@ -187,7 +221,7 @@ def get_meetings(decoded_data, villageId):
                 date_filter["$lte"] = to_date
             query["time"] = date_filter
 
-        projection = {"_id": 0, "photos": 0, "docs": 0}
+        projection = {"_id": 0}
         skip = (page - 1) * limit
 
         cursor = (

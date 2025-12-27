@@ -3,6 +3,7 @@ from email.mime.text import MIMEText
 import smtplib
 from flask import Blueprint, request, jsonify
 from pydantic import ValidationError
+from models.village import Logs
 from utils.tokenAuth import auth_required
 from models.complaints import STATUS, FeedbackInsert, Type, StatusHistory
 from models.counters import get_next_feedback_id
@@ -17,7 +18,7 @@ villages = db.villages
 stages = db.stages
 plots = db.plots
 families = db.testing
-
+logs =db.logs
 feedback_bp = Blueprint("feedback", __name__)
 
 
@@ -168,7 +169,7 @@ def take_action(decoded_data,feedbackId):
         fb = feedback.find_one({"feedbackId": feedbackId})
         if not fb:
             return make_response(True, "Feedback not found", result={"feedbackId": feedbackId}, status=404)
-
+        villageId=fb.get("villageId")
         now = nowIST()
         status_history = StatusHistory(status=status, comments=comments, time=now, verifier=verifier)
 
@@ -179,7 +180,18 @@ def take_action(decoded_data,feedbackId):
                 "$push": {"statusHistory": status_history.dict()},
             },
         )
+        log=Logs(
+            userId=userId,
+            updateTime=now,
+            type='Feedback',
+            action='Action',
+            comments=comments,
+            relatedId=feedbackId,
+            villageId=villageId
+        )
 
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         return make_response(False, "Feedback status updated successfully", result={"feedbackId": feedbackId, "newStatus": status}, status=200)
 
     except Exception as e:

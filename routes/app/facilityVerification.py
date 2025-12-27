@@ -2,6 +2,7 @@
 
 from flask import Blueprint, request
 from pydantic import ValidationError
+from models.village import Logs
 from models.complaints import StatusHistory
 from models.facilities import FacilityVerification, FacilityVerificationInsert, FacilityVerificationUpdate
 from utils.tokenAuth import auth_required
@@ -15,7 +16,7 @@ facility_verifications_bp = Blueprint("facility_verification", __name__)
 facility_updates = db.facilityUpdates
 facilities = db.facilities  # reference to main materials collection
 
-
+logs=db.logs
 
 @facility_verifications_bp.route("/facility_verification/insert", methods=["POST"])
 @auth_required
@@ -72,6 +73,18 @@ def insert_facility_verification(decoded_data):
         )
 
         facility_updates.insert_one(verification_doc.model_dump(exclude_none=True))
+        log=Logs(
+            userId=userId,
+            updateTime=nowIST(),
+            type='Facilities',
+            action='Verification Insert',
+            comments="",
+            relatedId=verification_id,
+            villageId=villageId
+        )
+
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         return make_response(False, "Facility verification inserted successfully", result=verification_doc.model_dump(exclude_none=True))
 
     except Exception as e:
@@ -99,9 +112,10 @@ def update_facility_verification(decoded_data, verificationId):
             return validation_error_response(ve)
 
         existing = facility_updates.find_one({"verificationId": verificationId})
+
         if not existing:
             return make_response(True, "Facility verification not found", status=404)
-
+        villageId=existing.get("villageId")
         update_dict = update_obj.model_dump(exclude_none=True)
         if not update_dict:
             return make_response(True, "No valid fields to update", status=400)
@@ -118,7 +132,18 @@ def update_facility_verification(decoded_data, verificationId):
             {"verificationId": verificationId},
             {"$set": update_dict, "$push": {"statusHistory": history.model_dump(exclude_none=True)}}
         )
+        log=Logs(
+            userId=userId,
+            updateTime=nowIST(),
+            type='Facilities',
+            action='Verification Edited',
+            comments="",
+            relatedId=verificationId,
+            villageId=villageId
+        )
 
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         return make_response(False, "Facility verification updated successfully", result=update_dict)
 
     except Exception as e:
@@ -143,10 +168,22 @@ def delete_facility_verification(decoded_data, verificationId):
         existing = facility_updates.find_one({"verificationId": verificationId})
         if not existing:
             return make_response(True, "Facility verification not found", status=404)
+        villageId=existing.get("villageId")
 
         # Hard delete
         facility_updates.delete_one({"verificationId": verificationId})
+        log=Logs(
+            userId=userId,
+            updateTime=nowIST(),
+            type='Facilities',
+            action='Verification Deleted',
+            comments="",
+            relatedId=verificationId,
+            villageId=villageId
+        )
 
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         return make_response(False, "Facility verification deleted successfully")
 
     except Exception as e:
@@ -272,6 +309,8 @@ def verify_verification(decoded_data):
         if not update:
             return make_response(True, "Update not found", status=404)
         previous_status = update.get("status", 1) 
+        villageId=update.get("villageId")
+
         
         required_status = STATUS_TRANSITIONS.get(user_role)
         if not required_status or previous_status != required_status:
@@ -301,6 +340,18 @@ def verify_verification(decoded_data):
             },
             upsert=False
         )
+        log=Logs(
+            userId=userId,
+            updateTime=nowIST(),
+            type='Facilities',
+            action='Action',
+            comments=comments,
+            relatedId=verificationId,
+            villageId=villageId
+        )
+
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         return make_response(False, "Verification status updated successfully", result=new_history.model_dump())
 
     except Exception as e:

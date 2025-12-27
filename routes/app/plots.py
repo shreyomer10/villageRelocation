@@ -2,6 +2,7 @@
 import datetime as dt
 from flask import Blueprint,request, jsonify
 from pydantic import ValidationError
+from models.village import Logs
 from utils.tokenAuth import auth_required
 from models.stages import FieldLevelVerification, FieldLevelVerificationInsert, FieldLevelVerificationUpdate, House, HouseInsert, HouseUpdate, Plots, PlotsInsert, PlotsUpdate, statusHistory
 from models.counters import get_next_house_id, get_next_plot_id, get_next_verification_id
@@ -18,18 +19,24 @@ plots = db.plots
 families = db.testing
 
 updates=db.plotUpdates
-
+logs=db.logs
 plots_BP= Blueprint("plots",__name__)
 
 
 
 # ------------------ PLOTS ----  --------------
 @plots_BP.route("/plots/insert", methods=["POST"])
-def insert_plot():
+@auth_required
+def insert_plot(decoded_data):
     try:
         payload = request.get_json(force=True)
-        if not payload:
-            return make_response(True, "Missing request body", status=400)
+        userId = decoded_data.get("userId")
+        if not payload or not userId:
+            return make_response(True, "Missing request body or userId", status=400)
+        
+        # error = authorization(decoded_data, userId)
+        # if error:
+        #     return make_response(True, error["message"], status=error["status"])
 
         # Validate input
         try:
@@ -73,7 +80,18 @@ def insert_plot():
         plot_dict = plot_complete.model_dump(exclude_none=True)
         plots.insert_one(plot_dict)
         plot_dict.pop("_id", None)
+        log=Logs(
+            userId=userId,
+            updateTime=nowIST(),
+            type='Community Facilities',
+            action='Insert',
+            comments="",
+            relatedId=new_plot_id,
+            villageId=plot_obj.villageId
+        )
 
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         # # If familyId exists, update family with this plotId
         # if plot_obj.familyId:
         #     families.update_one(
@@ -88,11 +106,17 @@ def insert_plot():
 
 
 @plots_BP.route("/house/insert", methods=["POST"])
-def insert_house():
+@auth_required
+def insert_house(decoded_data):
     try:
         payload = request.get_json(force=True)
-        if not payload:
-            return make_response(True, "Missing request body", status=400)
+        userId = decoded_data.get("userId")
+        if not payload or not userId:
+            return make_response(True, "Missing request body or userId", status=400)
+        
+        # error = authorization(decoded_data, userId)
+        # if error:
+        #     return make_response(True, error["message"], status=error["status"])
         try:
 
             house_obj = HouseInsert(**payload)
@@ -159,7 +183,18 @@ def insert_house():
                 if bulk_ops:
                     families.bulk_write(bulk_ops, ordered=True, session=session)
         plot_dict.pop("_id", None)
+        log=Logs(
+            userId=userId,
+            updateTime=nowIST(),
+            type='Houses',
+            action='Insert',
+            comments="",
+            relatedId=new_plot_id,
+            villageId=house_obj.villageId
+        )
 
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         return make_response(False, "House inserted successfully", result=plot_dict, status=200)
 
     except ValidationError as ve:
@@ -170,13 +205,17 @@ def insert_house():
 
 
 @plots_BP.route("/plots/<plotId>", methods=["PUT"])
-def update_plot(plotId):
+@auth_required
+def update_plot(decoded_data,plotId):
     try:
         payload = request.get_json(force=True)
-        if not payload:
-            return make_response(True, "Missing request body", status=400)
-
-
+        userId = decoded_data.get("userId")
+        if not payload or not userId:
+            return make_response(True, "Missing request body or userId", status=400)
+        
+        # error = authorization(decoded_data, userId)
+        # if error:
+        #     return make_response(True, error["message"], status=error["status"])
         try:
             update_obj = PlotsUpdate(**payload)
         except ValidationError as ve:
@@ -185,7 +224,7 @@ def update_plot(plotId):
         plot = plots.find_one({"plotId": plotId, "deleted": False})
         if not plot:
             return make_response(True, "Plot not found", status=404)
-
+        villageId=plot.get("villageId")
         # Validate typeId and villageId if provided
         if update_obj.typeId:
             type_exists = buildings.find_one({
@@ -208,19 +247,35 @@ def update_plot(plotId):
             return make_response(True, "No valid fields to update", status=400)
 
         plots.update_one({"plotId": plotId}, {"$set": update_dict})
+        log=Logs(
+            userId=userId,
+            updateTime=nowIST(),
+            type='Community Facilities',
+            action='Edited',
+            comments="",
+            relatedId=plotId,
+            villageId=villageId
+        )
 
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         return make_response(False, "Plot updated successfully", result=update_dict)
 
     except Exception as e:
         return make_response(True, f"Error updating plot: {str(e)}", status=500)
 
 @plots_BP.route("/house/<plotId>", methods=["PUT"])
-def update_house(plotId):
+@auth_required
+def update_house(decoded_data,plotId):
     try:
         payload = request.get_json(force=True)
-        if not payload:
-            return make_response(True, "Missing request body", status=400)
-
+        userId = decoded_data.get("userId")
+        if not payload or not userId:
+            return make_response(True, "Missing request body or userId", status=400)
+        
+        # error = authorization(decoded_data, userId)
+        # if error:
+        #     return make_response(True, error["message"], status=error["status"])
         try:
             update_obj = HouseUpdate(**payload)
         except ValidationError as ve:
@@ -229,6 +284,7 @@ def update_house(plotId):
         house = houses.find_one({"plotId": plotId, "deleted": False})
         if not house:
             return make_response(True, "House not found", status=404)
+        villageId=house.get("villageId")
 
         # Prepare update dict only for top-level fields
         update_dict = update_obj.model_dump(
@@ -291,7 +347,18 @@ def update_house(plotId):
                         upsert=False,
                         session=session
                     )
+        log=Logs(
+            userId=userId,
+            updateTime=nowIST(),
+            type='Houses',
+            action='Edited',
+            comments="",
+            relatedId=plotId,
+            villageId=villageId
+        )
 
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         return make_response(False, "House updated successfully", result=update_dict)
 
     except ValidationError as ve:
@@ -304,22 +371,65 @@ def update_house(plotId):
 
 
 @plots_BP.route("/plots/<plotId>", methods=["DELETE"])
-def delete_plot(plotId):
+@auth_required
+def delete_plot(decoded_data,plotId):
     try:
-        result = plots.update_one({"plotId": plotId}, {"$set": {"deleted": True}})
-        if result.matched_count == 0:
+        userId = decoded_data.get("userId")
+        if not userId:
+            return make_response(True, "Missing userId", status=400)
+        plot = plots.find_one({"plotId": str(plotId), "deleted": False})
+        if not plot:
             return make_response(True, "Plot not found", status=404)
+        villageId=plot.get("villageId")
+
+        plots.update_one({"plotId": plotId}, {"$set": {"deleted": True}})
+        # if result.matched_count == 0:
+        #     return make_response(True, "Plot not found", status=404)
+        log=Logs(
+            userId=userId,
+            updateTime=nowIST(),
+            type='Community Facilities',
+            action='Delete',
+            comments="",
+            relatedId=plotId,
+            villageId=villageId
+        )
+
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         return make_response(False, "Plot deleted successfully")
+    
     except Exception as e:
         return make_response(True, f"Error deleting plot: {str(e)}", status=500)
 
 
 @plots_BP.route("/house/<plotId>", methods=["DELETE"])
-def delete_house(plotId):
+@auth_required
+def delete_house(decoded_data,plotId):
     try:
-        result = houses.update_one({"plotId": plotId}, {"$set": {"deleted": True}})
-        if result.matched_count == 0:
+        userId = decoded_data.get("userId")
+        if not userId:
+            return make_response(True, "Missing userId", status=400)
+        house = houses.find_one({"plotId": str(plotId), "deleted": False})
+        if not house:
             return make_response(True, "house not found", status=404)
+        villageId=house.get("villageId")
+
+        houses.update_one({"plotId": plotId}, {"$set": {"deleted": True}})
+        # if result.matched_count == 0:
+        #     return make_response(True, "house not found", status=404)
+        log=Logs(
+            userId=userId,
+            updateTime=nowIST(),
+            type='Houses',
+            action='Delete',
+            comments="",
+            relatedId=plotId,
+            villageId=villageId
+        )
+
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         return make_response(False, "House deleted successfully")
     except Exception as e:
         return make_response(True, f"Error deleting house: {str(e)}", status=500)

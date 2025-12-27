@@ -31,6 +31,7 @@ from routes.app.facilityVerification import facility_verifications_bp
 from routes.app.materialUpdates import material_updates_bp
 from routes.admin.facilities import facilities_bp
 from utils.rate_limiting import limiter
+from routes.logs import logs_bp
 from datetime import datetime
 
 app = Flask(__name__)
@@ -77,6 +78,7 @@ app.register_blueprint(material_updates_bp,url_prefix="/")
 app.register_blueprint(facility_verifications_bp,url_prefix="/")
 app.register_blueprint(facilities_bp,url_prefix="/")
 app.register_blueprint(admin_BP,url_prefix="/admin")
+app.register_blueprint(logs_bp,url_prefix="/")
 
 
 @app.errorhandler(RateLimitExceeded)

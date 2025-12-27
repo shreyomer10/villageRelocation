@@ -1,6 +1,8 @@
 from flask import Blueprint, request
 from pydantic import ValidationError
-from utils.helpers import make_response, validation_error_response
+from models.village import Logs
+from utils.tokenAuth import auth_required
+from utils.helpers import authorizationDD, make_response, nowIST, validation_error_response
 from config import db
 from models.constructionMaterial import MaterialInsert, MaterialUpdate, Material  # your Pydantic models
 from models.counters import get_next_material_id
@@ -8,15 +10,18 @@ from models.counters import get_next_material_id
 materials_bp = Blueprint("materials", __name__)
 materials = db.materials
 
-
+logs = db.logs
 # ================= CREATE MATERIAL =================
 @materials_bp.route("/materials", methods=["POST"])
-def insert_material():
+@auth_required
+def insert_material(decoded_data):
     try:
         payload = request.get_json(force=True)
         if not payload:
             return make_response(True, "Missing request body", status=400)
-
+        error = authorizationDD(decoded_data)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
         # Validate
         try:
             material_obj = MaterialInsert(**payload)
@@ -32,7 +37,18 @@ def insert_material():
         )
 
         materials.insert_one(material_complete.model_dump(exclude_none=True))
+        log=Logs(
+            userId=decoded_data.get("userId"),
+            updateTime=nowIST(),
+            type='Materials',
+            action='Insert',
+            comments="",
+            relatedId=new_material_id,
+            villageId="Admin"
+        )
 
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         return make_response(False, "Material inserted successfully", result=material_complete.model_dump(exclude_none=True), status=200)
     except Exception as e:
         return make_response(True, f"Error inserting material: {str(e)}", status=500)
@@ -40,12 +56,15 @@ def insert_material():
 
 # ================= UPDATE MATERIAL =================
 @materials_bp.route("/materials/<materialId>", methods=["PUT"])
-def update_material(materialId):
+@auth_required
+def update_material(decoded_data,materialId):
     try:
         payload = request.get_json(force=True)
         if not payload:
             return make_response(True, "Missing request body", status=400)
-
+        error = authorizationDD(decoded_data)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
         try:
             update_obj = MaterialUpdate(**payload)
         except ValidationError as ve:
@@ -60,7 +79,18 @@ def update_material(materialId):
             return make_response(True, "Material not found", status=404)
 
         materials.update_one({"materialId": str(materialId)}, {"$set": update_dict})
+        log=Logs(
+            userId=decoded_data.get("userId"),
+            updateTime=nowIST(),
+            type='Materials',
+            action='Edited',
+            comments="",
+            relatedId=materialId,
+            villageId="Admin"
+        )
 
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         return make_response(False, "Material updated successfully", result=update_dict)
     except Exception as e:
         return make_response(True, f"Error updating material: {str(e)}", status=500)
@@ -68,15 +98,30 @@ def update_material(materialId):
 
 # ================= DELETE MATERIAL =================
 @materials_bp.route("/materials/<materialId>", methods=["DELETE"])
-def delete_material(materialId):
+@auth_required
+def delete_material(decoded_data,materialId):
     try:
+        error = authorizationDD(decoded_data)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
         material = materials.find_one({"materialId": str(materialId)})
         if not material:
             return make_response(True, "Material not found", status=404)
 
         # Hard delete
         materials.delete_one({"materialId": str(materialId)})
+        log=Logs(
+            userId=decoded_data.get("userId"),
+            updateTime=nowIST(),
+            type='Materials',
+            action='Delete',
+            comments="",
+            relatedId=materialId,
+            villageId="Admin"
+        )
 
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         return make_response(False, "Material deleted successfully")
     except Exception as e:
         return make_response(True, f"Error deleting material: {str(e)}", status=500)

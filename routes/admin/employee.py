@@ -5,7 +5,7 @@ from pydantic import ValidationError
 from pymongo import  ASCENDING, DESCENDING, ReturnDocument,errors as mongo_errors
 from utils.helpers import hash_password, make_response, validation_error_response
 from models.counters import get_next_user_id
-from models.emp import UserCounters, UserInsert, UserUpdate, Users
+from models.emp import  UserInsert, UserUpdate, Users
 from config import JWT_EXPIRE_MIN, db
 from pymongo.errors import DuplicateKeyError
 
@@ -27,9 +27,6 @@ def validate_village_ids(village_ids: list):
     invalid_ids = [vid for vid in village_ids if vid not in valid_villages]
     
     return len(invalid_ids) == 0, invalid_ids
-
-
-
 
 @emp_bp.route("/employee/add", methods=["POST"])
 def add_employee():
@@ -57,7 +54,7 @@ def add_employee():
             activated=True,
             verified=False,
             password="",
-            userCounters = {v: UserCounters().model_dump() for v in emp.villageID},
+            #userCounters = {v: UserCounters().model_dump() for v in emp.villageID},
              **emp_dict
                     
         )
@@ -86,7 +83,6 @@ def add_employee():
     
     except Exception as e:
         return make_response(True, "Unexpected error", result=str(e), status=500)
-
 
 @emp_bp.route("/employee/bulk_add", methods=["POST"])
 def bulk_add_employees():
@@ -136,7 +132,7 @@ def bulk_add_employees():
                     verified=False,
 
                     password="",
-                    userCounters = {v: UserCounters().model_dump() for v in emp.villageID},
+                    #userCounters = {v: UserCounters().model_dump() for v in emp.villageID},
                     **emp_dict
                 )
 
@@ -173,7 +169,6 @@ def bulk_add_employees():
     except Exception as e:
         return make_response(True, f"Unexpected error: {str(e)}", status=500)
 
-    
 @emp_bp.route("/employee/update/<emp_id>", methods=["PUT"])
 def update_employee(emp_id):
     try:
@@ -194,18 +189,6 @@ def update_employee(emp_id):
             is_valid, invalid_ids = validate_village_ids(update_data["villageID"])
             if not is_valid:
                 return make_response(True, f"Invalid villageIDs: {invalid_ids}", status=400)
-            new_villages = update_data["villageID"]
-            current_counters = emp.get("userCounters", {})
-
-            # Add counters only for newly added villages
-            for v in new_villages:
-                if v not in current_counters:
-                    current_counters[v] = UserCounters().model_dump()
-
-            # IMPORTANT: do NOT delete counters for removed villages
-
-            # Reassign updated counters back
-            update_data["userCounters"] = current_counters
 
         if not update_data:
             return make_response(True, "No valid fields to update", status=400)
@@ -271,7 +254,6 @@ def deactivate_employee(emp_id):
     except Exception as e:
         return make_response(True, "Unexpected error", result=str(e), status=500)
 
-
 @emp_bp.route("/employee/delete/<emp_id>", methods=["DELETE"])
 def delete_employee(emp_id):
     try:
@@ -287,7 +269,6 @@ def delete_employee(emp_id):
     except Exception as e:
         return make_response(True, "Unexpected error", result=str(e), status=500)
 
-
 @emp_bp.route("/employee/delete_all", methods=["DELETE"])
 def delete_all_employees():
     try:
@@ -302,7 +283,6 @@ def delete_all_employees():
 
     except Exception as e:
         return make_response(True, "Unexpected error", result=str(e), status=500)
-
 
 @emp_bp.route("/employee/all", methods=["GET"])
 def get_all_employees():
@@ -326,8 +306,6 @@ def get_all_employees():
 
     except Exception as e:
         return make_response(True, "Unexpected error", message=str(e), result={"count": 0, "items": []},status=500)
-
-
 
 @emp_bp.route("/employee/ids", methods=["GET"])
 def get_emp_ids():

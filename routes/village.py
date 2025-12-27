@@ -6,7 +6,7 @@ from pydantic import ValidationError
 from pymongo import  ASCENDING, DESCENDING
 from models.counters import get_next_village_id
 from utils.helpers import make_response, nowIST, validation_error_response
-from models.village import FamilyCount, SubStage, Village, VillageCard, VillageDocComplete, VillageDocInsert, VillageDocUpdate, VillageLog
+from models.village import FamilyCount, SubStage, Village, VillageCard, VillageDocComplete, VillageDocInsert, VillageDocUpdate
 from config import JWT_EXPIRE_MIN, db
 
 import logging
@@ -15,6 +15,8 @@ users = db.users
 villages = db.villages
 stages = db.stages
 families = db.families
+
+logs= db.logs
 
 village_bp = Blueprint("village",__name__)
 
@@ -141,13 +143,12 @@ def add_village():
         village_id = get_next_village_id(db)
         now = nowIST()
 
-        log = [VillageLog(name="Village Insert", updateTime=now, updateBy=userId)]
+       # log = [VillageLog(name="Village Insert", updateTime=now, updateBy=userId)]
         complete_doc = VillageDocComplete(
             **validated.model_dump(),
             villageId=village_id,
             currentStage="",
             currentSubStage="",
-            logs=log,
             updates=[],
             completed_substages=[],
             delete=False
@@ -192,16 +193,15 @@ def update_village(village_id):
                 return make_response(True, f"Invalid UserIDs: {invalid_ids}", status=400)
         # append log entry
         now = nowIST()
-        log_entry = VillageLog(
-            name="Village Update",
-            updateTime=now,
-            updateBy=userId
-        ).model_dump()
+        # log_entry = VillageLog(
+        #     name="Village Update",
+        #     updateTime=now,
+        #     updateBy=userId
+        # ).model_dump()
 
         # add logs and updates
         update_doc = {
             "$set": update_fields,
-            "$push": {"logs": log_entry}
         }
 
         result = villages.update_one(
@@ -232,15 +232,10 @@ def soft_delete_village(village_id):
             return make_response(True, "Missing request body", status=400)
 
         now = nowIST()
-        log_entry = VillageLog(
-            name="Village Soft Delete",
-            updateTime=now,
-            updateBy=userId
-        ).model_dump()
+
 
         update_doc = {
             "$set": {"delete": True},
-            "$push": {"logs": log_entry}
         }
 
         result = villages.update_one({"villageId": village_id, "delete": False}, update_doc)

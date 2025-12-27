@@ -1,5 +1,6 @@
 from flask import Blueprint, request
 from pydantic import ValidationError
+from models.village import Logs
 from models.complaints import StatusHistory
 from utils.tokenAuth import auth_required
 from models.stages import statusHistory
@@ -12,7 +13,7 @@ from datetime import datetime
 material_updates_bp = Blueprint("material_updates", __name__)
 material_updates = db.materialUpdates
 materials = db.materials  # reference to main materials collection
-
+logs=db.logs
 
 # ================= ADD MATERIAL UPDATE =================
 @material_updates_bp.route("/material_update/insert", methods=["POST"])
@@ -65,6 +66,18 @@ def insert_material_update(decoded_data):
         )
 
         material_updates.insert_one(update_doc.model_dump(exclude_none=True))
+        log=Logs(
+            userId=userId,
+            updateTime=nowIST(),
+            type='Materials',
+            action='Verification Insert',
+            comments="",
+            relatedId=update_id,
+            villageId=update_obj.villageId
+        )
+
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         return make_response(False, "Material update inserted successfully", result=update_doc.model_dump(exclude_none=True))
 
     except Exception as e:
@@ -91,7 +104,7 @@ def update_material_update(decoded_data,updateId):
         existing = material_updates.find_one({"updateId": updateId})
         if not existing:
             return make_response(True, "Material update not found", status=404)
-
+        villageId=existing.get("villageId")
         update_dict = update_obj.model_dump(exclude_none=True)
         if not update_dict:
             return make_response(True, "No valid fields to update", status=400)
@@ -107,6 +120,19 @@ def update_material_update(decoded_data,updateId):
             {"updateId": updateId},
             {"$set": update_dict,
             "$push": {"statusHistory": history.model_dump(exclude_none=True)}})
+        
+        log=Logs(
+            userId=userId,
+            updateTime=nowIST(),
+            type='Materials',
+            action='Verification Edited',
+            comments="",
+            relatedId=updateId,
+            villageId=villageId
+        )
+
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         return make_response(False, "Material update updated successfully", result=update_dict)
 
     except Exception as e:
@@ -130,9 +156,23 @@ def delete_material_update(decoded_data,updateId):
         existing = material_updates.find_one({"updateId": updateId})
         if not existing:
             return make_response(True, "Material update not found", status=404)
+        villageId=existing.get("villageId")
+
 
         # Hard delete
         material_updates.delete_one({"updateId": updateId})
+        log=Logs(
+            userId=userId,
+            updateTime=nowIST(),
+            type='Materials',
+            action='Verification Deleted',
+            comments="",
+            relatedId=updateId,
+            villageId=villageId
+        )
+
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         return make_response(False, "Material update deleted successfully")
 
     except Exception as e:
@@ -252,6 +292,7 @@ def verify_update(decoded_data):
 
         if not update:
             return make_response(True, "Update not found", status=404)
+        villageId=update.get("villageId")
         previous_status = update.get("status", 1) 
         
         required_status = STATUS_TRANSITIONS.get(user_role)
@@ -282,6 +323,19 @@ def verify_update(decoded_data):
             },
             upsert=False
         )
+
+        log=Logs(
+            userId=userId,
+            updateTime=nowIST(),
+            type='Materials',
+            action='Action',
+            comments=comments,
+            relatedId=updateId,
+            villageId=villageId
+        )
+
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         return make_response(False, "Verification status updated successfully", result=new_history.model_dump())
 
     except Exception as e:

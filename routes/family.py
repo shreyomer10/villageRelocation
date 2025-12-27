@@ -6,8 +6,10 @@ from flask import Flask, Blueprint, logging,request, jsonify
 from flask_cors import CORS
 from pydantic import ValidationError
 from pymongo import  ASCENDING, DESCENDING
+from models.village import Logs
+from utils.tokenAuth import auth_required
 from models.counters import get_next_family_id, get_next_family_update_id, get_next_member_update_id
-from utils.helpers import make_response, validation_error_response
+from utils.helpers import authorizationDD, make_response, nowIST, validation_error_response
 from models.family import Family, FamilyCard, FamilyComplete, FamilyUpdate, Member, StatusHistory, Updates, UpdatesInsert, UpdatesUpdate
 from config import JWT_EXPIRE_MIN, db
 
@@ -22,7 +24,7 @@ families = db.testing
 options = db.options
 updates=db.optionUpdates
 
-
+logs = db.logs
 family_bp = Blueprint("family",__name__)
 
 
@@ -100,13 +102,16 @@ def get_family_data(family_id):
 
 
 @family_bp.route("/families/insertbulk", methods=["POST"])
-def bulk_insert_families():
+@auth_required
+def bulk_insert_families(decoded_data):
     try:
         payload = request.get_json(force=True)
 
         if not payload or "families" not in payload:
             return make_response(True, "Missing 'families' in request body", status=400)
-
+        error = authorizationDD(decoded_data)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
         families_data = payload["families"]
         if not isinstance(families_data, list):
             return make_response(True, "'families' must be a list", status=400)
@@ -165,6 +170,18 @@ def bulk_insert_families():
             "skipped_existing": skipped,
             "validation_errors": errors_list
         }
+        log=Logs(
+            userId=decoded_data.get("userId"),
+            updateTime=nowIST(),
+            type='Families',
+            action='Insert',
+            comments="",
+            relatedId="",
+            villageId=""
+        )
+
+        # Insert into DB
+        logs.insert_one(log.model_dump())
 
         return make_response(False, "Bulk insert completed", result=summary, status=200)
 
@@ -174,13 +191,16 @@ def bulk_insert_families():
         return make_response(True, f"Unexpected error: {str(e)}", status=500)
     
 @family_bp.route("/families/insert", methods=["POST"])
-def insert_family():
+@auth_required
+def insert_family(decoded_data):
     try:
         payload = request.get_json(force=True)
 
         if not payload:
             return make_response(True, "Missing request body", status=400)
-
+        error = authorizationDD(decoded_data)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
 
         forbidden_fields = { "currentStage", "statusHistory","stagesCompleted"}
         if any(f in payload for f in forbidden_fields):
@@ -214,7 +234,18 @@ def insert_family():
 
         # ✅ Insert into MongoDB
         families.insert_one(fam_complete.model_dump(exclude_none=True))
+        log=Logs(
+            userId=decoded_data.get("userId"),
+            updateTime=nowIST(),
+            type='Families',
+            action='Insert',
+            comments="",
+            relatedId=new_family_id,
+            villageId=""
+        )
 
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         return make_response(
             False,
             f"Family {new_family_id} inserted successfully",
@@ -228,25 +259,60 @@ def insert_family():
         return make_response(True, f"Unexpected error: {str(e)}", status=500)
 
 @family_bp.route("/families/deleteall", methods=["DELETE"])
-def delete_all_families():
+@auth_required
+def delete_all_families(decoded_data):
     try:
+        error = authorizationDD(decoded_data)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
+
         result = families.delete_many({})
+        log=Logs(
+            userId=decoded_data.get("userId"),
+            updateTime=nowIST(),
+            type='Families',
+            action='Delete',
+            comments="",
+            relatedId="",
+            villageId=""
+        )
+
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         return make_response(
             False,
             f"Deleted {result.deleted_count} families",
             status=200
         )
+    
     except errors.PyMongoError as e:
         return make_response(True, f"Database error: {str(e)}", status=500)
     except Exception as e:
         return make_response(True, f"Unexpected error: {str(e)}", status=500)
 
 @family_bp.route("/families/delete/<family_id>", methods=["DELETE"])
-def delete_family(family_id):
+@auth_required
+def delete_family(decoded_data,family_id):
     try:
+        error = authorizationDD(decoded_data)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
+
         result = families.delete_one({"familyId": family_id})
         if result.deleted_count == 0:
             return make_response(True, f"Family {family_id} not found", status=404)
+        log=Logs(
+            userId=decoded_data.get("userId"),
+            updateTime=nowIST(),
+            type='Families',
+            action='Delete',
+            comments="",
+            relatedId=family_id,
+            villageId=""
+        )
+
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         return make_response(False, f"Family {family_id} deleted successfully", status=200)
     except errors.PyMongoError as e:
         return make_response(True, f"Database error: {str(e)}", status=500)
@@ -254,12 +320,16 @@ def delete_family(family_id):
         return make_response(True, f"Unexpected error: {str(e)}", status=500)
 
 @family_bp.route("/families/update/<family_id>", methods=["PUT"])
-def update_family(family_id):
+@auth_required
+def update_family(decoded_data,family_id):
     try:
         payload = request.get_json(force=True)
         if not payload:
             return make_response(True, "Missing request body", status=400)
-        
+        error = authorizationDD(decoded_data)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
+
         forbidden_fields = {"currentStage", "statusHistory", "familyId","stagesCompleted"}
         if any(f in payload for f in forbidden_fields):
             return make_response(True, f"Fields {forbidden_fields} are not allowed here", status=400)
@@ -284,7 +354,18 @@ def update_family(family_id):
 
         if result.matched_count == 0:
             return make_response(True, f"Family {family_id} not found", status=404)
+        log=Logs(
+            userId=decoded_data.get("userId"),
+            updateTime=nowIST(),
+            type='Families',
+            action='Edited',
+            comments="",
+            relatedId=family_id,
+            villageId=""
+        )
 
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         return make_response(
             False,
             f"Family {family_id} updated successfully",

@@ -6,6 +6,7 @@ import logging
 from flask import  Blueprint, logging,request, jsonify
 from pydantic import ValidationError
 from pymongo import  ASCENDING, DESCENDING
+from models.village import Logs
 from utils.tokenAuth import auth_required
 from models.counters import get_next_family_update_id, get_next_member_update_id
 from utils.helpers import STATUS_TRANSITIONS, authorization, make_response, nowIST, validation_error_response
@@ -18,7 +19,7 @@ from pymongo import errors
 families = db.testing
 options = db.options
 updates=db.optionUpdates
-
+logs=db.logs
 option_verification_BP = Blueprint("optionsVerification",__name__)
 
 
@@ -115,6 +116,18 @@ def insert_family_update(decoded_data,familyId):
         updates.insert_one(
             fam_update.model_dump(exclude_none=True)
         )
+        log=Logs(
+            userId=userId,
+            updateTime=nowIST(),
+            type='Families',
+            action='Verification Insert',
+            comments="",
+            relatedId=update_id,
+            villageId=fam.get("villageId")
+        )
+
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         return make_response(
             False,
             f"Family update {update_id} inserted successfully",
@@ -154,6 +167,7 @@ def update_family_update(decoded_data,familyId, updateId):
 
         if not update_item:
             return make_response(True, "Update not found", status=404)
+        villageId=update_item.get("villageId")
         # if update_item.get("deleted", False):
         #     return make_response(True, "Cannot update deleted update", status=400)
         previous_status = update_item.get("status", 1) 
@@ -190,7 +204,18 @@ def update_family_update(decoded_data,familyId, updateId):
         # Optional: Recompute currentStage if needed
         # If the update being modified changes its status, you may want to recompute
         # family_doc["currentStage"] = max of all verified updates in order of option stages
+        log=Logs(
+            userId=userId,
+            updateTime=nowIST(),
+            type='Families',
+            action='Verification Edited',
+            comments="",
+            relatedId=updateId,
+            villageId=villageId
+        )
 
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         return make_response(
             False,
             f"Family update {updateId} modified successfully",
@@ -226,6 +251,7 @@ def delete_update(decoded_data):
 
         if not update_item:
             return make_response(True, "Update not found", status=404)
+        villageId=update_item.get("villageId")
         previous_status = update_item.get("status", 1) 
         if previous_status >=2:
             return make_response(True, "Cannot delete freezed verifications.", status=400)
@@ -264,6 +290,18 @@ def delete_update(decoded_data):
         updates.delete_one(
             {"updateId": updateId}
         )
+        log=Logs(
+            userId=userId,
+            updateTime=nowIST(),
+            type='Families',
+            action='Verification Deleted',
+            comments="",
+            relatedId=updateId,
+            villageId=villageId
+        )
+
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         return make_response(False, f" update {updateId} deleted successfully")
 
     except Exception as e:
@@ -293,6 +331,7 @@ def verify_update(decoded_data):
 
         if not update:
             return make_response(True, "Update not found", status=404)
+        villageId=update.get("villageId")
         previous_status = update.get("status", 1) 
         
         required_status = STATUS_TRANSITIONS.get(user_role)
@@ -323,6 +362,18 @@ def verify_update(decoded_data):
             },
             upsert=False
         )
+        log=Logs(
+            userId=userId,
+            updateTime=nowIST(),
+            type='Families',
+            action='Action',
+            comments=comments,
+            relatedId=updateId,
+            villageId=villageId
+        )
+
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         return make_response(False, "Verification status updated successfully", result=new_history.model_dump())
 
     except Exception as e:

@@ -2,6 +2,7 @@
 import datetime as dt
 from flask import Blueprint,request, jsonify
 from pydantic import ValidationError
+from models.village import Logs
 from models.complaints import StatusHistory
 from utils.tokenAuth import auth_required
 from models.stages import FieldLevelVerification, FieldLevelVerificationInsert, FieldLevelVerificationUpdate, House, HouseInsert, Plots, PlotsInsert, PlotsUpdate, statusHistory
@@ -17,7 +18,7 @@ buildings = db.buildings
 villages = db.villages
 plots = db.plots
 families = db.testing
-
+logs=db.logs
 updates=db.plotUpdates
 
 plots_verification_BP = Blueprint("plots_verification",__name__)
@@ -148,7 +149,18 @@ def insert_verification(decoded_data, plotId):
                 },
             )
         #print("OK")
+        log=Logs(
+            userId=userId,
+            updateTime=nowIST(),
+            type='Community Facilities',
+            action='Verification Insert',
+            comments="",
+            relatedId=new_verification_id,
+            villageId=villageId
+        )
 
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         return make_response(
             False,
             f"Verification for {type_} inserted successfully",
@@ -195,7 +207,7 @@ def update_verification(decoded_data,plotId, verificationId):
 
         if not update_item:
             return make_response(True, "Update not found", status=404)
-
+        villageId=update_item.get("villageId")
         previous_status = update_item.get("status", 1) 
         if previous_status >=3:
             return make_response(True, "Cannot update freezed", status=400)
@@ -216,6 +228,18 @@ def update_verification(decoded_data,plotId, verificationId):
             {"$set":update_dict,
             "$push": {"statusHistory": history.model_dump(exclude_none=True)}}
         )
+        log=Logs(
+            userId=userId,
+            updateTime=nowIST(),
+            type='Community Facilities',
+            action='Verification Edited',
+            comments="",
+            relatedId=verificationId,
+            villageId=villageId
+        )
+
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         return make_response(False, "Verification updated successfully", result=update_dict)
     except Exception as e:
         return make_response(True, f"Error updating verification: {str(e)}", status=500)
@@ -245,6 +269,7 @@ def verify_verification(decoded_data):
         if not verification:
             return make_response(True, "verification not found", status=404)
         previous_status = verification.get("status", 1) 
+        villageId=verification.get("villageId")
         
         required_status = STATUS_TRANSITIONS.get(user_role)
         if not required_status or previous_status != required_status:
@@ -274,7 +299,18 @@ def verify_verification(decoded_data):
             upsert=False
 
         )
+        log=Logs(
+            userId=userId,
+            updateTime=now,
+            type='Community Facilities',
+            action='Action',
+            comments=comments,
+            relatedId=verificationId,
+            villageId=villageId
+        )
 
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         return make_response(False, "Verification status updated successfully", result=new_history.model_dump())
 
     except Exception as e:
@@ -312,6 +348,7 @@ def delete_verification(decoded_data,plotId, verificationId):
         verification = updates.find_one({"plotId":plotId,"verificationId":verificationId}, {"_id": 0})
         if not verification:
             return make_response(True, "Verification not found", status=404)
+        villageId=verification.get("villageId")
         previous_status = verification.get("status", 1) 
         if previous_status >=2:
             return make_response(True, "Cannot update freezed verifications.", status=400)
@@ -367,7 +404,18 @@ def delete_verification(decoded_data,plotId, verificationId):
         updates.delete_one(
             {"verificationId": verificationId}
         )
+        log=Logs(
+            userId=userId,
+            updateTime=nowIST(),
+            type='Community Facilities',
+            action='Delete',
+            comments=comments,
+            relatedId=verificationId,
+            villageId=villageId
+        )
 
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         return make_response(False, "Verification deleted successfully")
 
     except Exception as e:

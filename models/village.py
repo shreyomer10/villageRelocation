@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, HttpUrl, ValidationError, field_validator
-from typing import Optional, List
+from typing import Literal, Optional, List
 
 
 from utils.helpers import s3_url_pattern
@@ -151,11 +151,7 @@ class VillageCard(BaseModel):
 
 
 
-class VillageLog(BaseModel):
-    name:str #new        meeting / family stage/community facility / family house
-    updateTime: str
-    updateBy: str
-    comments: Optional[str] = None
+
 class Documents(BaseModel):
     name:str
     url:str
@@ -194,7 +190,6 @@ class Village(BaseModel):
     # longUpdated: float
     docs: List[Documents] = Field(default_factory=list)
     photos: List[str] = Field(default_factory=list)
-    logs: Optional[List[VillageLog]] = Field(default_factory=list)
     familyMasterList:str
 
     currentStage:str
@@ -335,7 +330,6 @@ class VillageDocComplete(VillageDocInsert):
     villageId: str
     currentStage:str
     currentSubStage: str
-    logs: Optional[List[VillageLog]] = Field(default_factory=list)
     updates:Optional[List[VillageUpdates]]= Field(default_factory=list)
     completed_substages:Optional[List[str]]=Field(default_factory=list)
     delete:bool=False
@@ -356,3 +350,29 @@ class FamilyCount(BaseModel):
             familiesOption1=counts.get("option1", 0),
             familiesOption2=counts.get("option2", 0),
         )
+    
+class Logs(BaseModel):
+    userId:str #new        meeting / family stage/community facility / family house
+    updateTime: str
+    comments: Optional[str] = None
+    villageId:str
+    type: Literal[
+        'Village',
+        'Community Facilities',
+        'Meeting',
+        'Houses',
+        'Materials',
+        'Facilities',
+        'Feedback',
+        'Families'
+    ]
+    action:Literal[
+        'Insert',
+        'Delete',
+        'Edited',
+        'Verification Insert',
+        'Verification Edited',
+        'Verification Deleted',
+        'Action',
+    ]
+    relatedId:str #based on type and action
