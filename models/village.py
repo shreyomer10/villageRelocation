@@ -364,7 +364,8 @@ class Logs(BaseModel):
         'Materials',
         'Facilities',
         'Feedback',
-        'Families'
+        'Families',
+        'Employee'
     ]
     action:Literal[
         'Insert',

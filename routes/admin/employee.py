@@ -3,7 +3,9 @@ from flask import Flask, Blueprint,request, jsonify
 from flask_cors import CORS
 from pydantic import ValidationError
 from pymongo import  ASCENDING, DESCENDING, ReturnDocument,errors as mongo_errors
-from utils.helpers import hash_password, make_response, validation_error_response
+from models.village import Logs
+from utils.tokenAuth import auth_required
+from utils.helpers import authorizationDD, hash_password, make_response, nowIST, validation_error_response
 from models.counters import get_next_user_id
 from models.emp import  UserInsert, UserUpdate, Users
 from config import JWT_EXPIRE_MIN, db
@@ -13,7 +15,7 @@ from pymongo.errors import DuplicateKeyError
 
 users = db.users
 villages = db.villages
-
+logs = db.logs
 emp_bp = Blueprint("emp",__name__)
 
 def validate_village_ids(village_ids: list):
@@ -29,8 +31,12 @@ def validate_village_ids(village_ids: list):
     return len(invalid_ids) == 0, invalid_ids
 
 @emp_bp.route("/employee/add", methods=["POST"])
-def add_employee():
+@auth_required
+def add_employee(decoded_data):
     try:
+        error = authorizationDD(decoded_data)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
         payload = request.get_json(force=True)
         if not payload or "password" in payload:
             return make_response(True, "Missing request body/ password not required", status=400)
@@ -61,7 +67,18 @@ def add_employee():
         #emp_dict.update({"userId": userId, "password": hashed_pw})
 
         users.insert_one(comp_emp.model_dump(exclude_none=True))
+        log=Logs(
+            userId=decoded_data.get("userId"),
+            updateTime=nowIST(),
+            type='Employee',
+            action='Insert',
+            comments="",
+            relatedId=userId,
+            villageId=""
+        )
 
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         return make_response(False, "Employee added successfully", result={"userId": userId}, status=201)
 
     except ValidationError as ve:
@@ -85,12 +102,15 @@ def add_employee():
         return make_response(True, "Unexpected error", result=str(e), status=500)
 
 @emp_bp.route("/employee/bulk_add", methods=["POST"])
-def bulk_add_employees():
+@auth_required
+def bulk_add_employees(decoded_data):
     try:
         payload = request.get_json(force=True)
         if not payload or "employees" not in payload:
             return make_response(True, "Missing 'employees' in request body or password is not required", status=400)
-        
+        error = authorizationDD(decoded_data)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
         employees = payload["employees"]
         if not isinstance(employees, list):
             return make_response(True, "'employees' must be a list", status=400)
@@ -161,6 +181,18 @@ def bulk_add_employees():
             "skipped_existing": skipped,
             "validation_errors": errors_list
         }
+        log=Logs(
+            userId=decoded_data.get("userId"),
+            updateTime=nowIST(),
+            type='Employee',
+            action='Insert',
+            comments="",
+            relatedId="",
+            villageId=""
+        )
+
+        # Insert into DB
+        logs.insert_one(log.model_dump())
 
         return make_response(False, "Bulk insert completed", result=summary, status=200)
 
@@ -170,11 +202,15 @@ def bulk_add_employees():
         return make_response(True, f"Unexpected error: {str(e)}", status=500)
 
 @emp_bp.route("/employee/update/<emp_id>", methods=["PUT"])
-def update_employee(emp_id):
+@auth_required
+def update_employee(decoded_data,emp_id):
     try:
         payload = request.get_json(force=True)
         if not payload:
             return make_response(True, "Missing request body", status=400)
+        error = authorizationDD(decoded_data)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
         forbidden_fields = {"password"}
         if any(f in payload for f in forbidden_fields):
             return make_response(True, f"Fields {forbidden_fields} are not allowed here", status=400)
@@ -202,7 +238,18 @@ def update_employee(emp_id):
 
         if not result:
             return make_response(True, "Employee not found", status=404)
+        log=Logs(
+            userId=decoded_data.get("userId"),
+            updateTime=nowIST(),
+            type='Employee',
+            action='Edited',
+            comments="",
+            relatedId=emp_id,
+            villageId=""
+        )
 
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         return make_response(False, "Employee updated successfully",result=update_data,status=200)
 
     except ValidationError as ve:
@@ -215,8 +262,12 @@ def update_employee(emp_id):
         return make_response(True, "Unexpected error", result=str(e), status=500)
 
 @emp_bp.route("/employee/activate/<emp_id>", methods=["PUT"])
-def activate_employee(emp_id):
+@auth_required
+def activate_employee(decoded_data,emp_id):
     try:
+        error = authorizationDD(decoded_data)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
         result = users.find_one_and_update(
             {"userId": emp_id, "deleted": False},
             {"$set": {"activated": True}},
@@ -226,7 +277,18 @@ def activate_employee(emp_id):
 
         if not result:
             return make_response(True, "Employee not found or deleted", status=404)
+        log=Logs(
+            userId=decoded_data.get("userId"),
+            updateTime=nowIST(),
+            type='Employee',
+            action='Edited',
+            comments="",
+            relatedId=emp_id,
+            villageId=""
+        )
 
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         return make_response(False, "Employee activated successfully", result=result, status=200)
 
     except mongo_errors as me:
@@ -235,8 +297,12 @@ def activate_employee(emp_id):
         return make_response(True, "Unexpected error", result=str(e), status=500)
 
 @emp_bp.route("/employee/deactivate/<emp_id>", methods=["PUT"])
-def deactivate_employee(emp_id):
+@auth_required
+def deactivate_employee(decoded_data,emp_id):
     try:
+        error = authorizationDD(decoded_data)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
         result = users.find_one_and_update(
             {"userId": emp_id, "deleted": False},
             {"$set": {"activated": False}},
@@ -246,7 +312,18 @@ def deactivate_employee(emp_id):
 
         if not result:
             return make_response(True, "Employee not found or deleted", status=404)
+        log=Logs(
+            userId=decoded_data.get("userId"),
+            updateTime=nowIST(),
+            type='Employee',
+            action='Edited',
+            comments="",
+            relatedId=emp_id,
+            villageId=""
+        )
 
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         return make_response(False, "Employee deactivated successfully", result=result, status=200)
 
     except mongo_errors as me:
@@ -255,12 +332,27 @@ def deactivate_employee(emp_id):
         return make_response(True, "Unexpected error", result=str(e), status=500)
 
 @emp_bp.route("/employee/delete/<emp_id>", methods=["DELETE"])
-def delete_employee(emp_id):
+@auth_required
+def delete_employee(decoded_data,emp_id):
     try:
+        error = authorizationDD(decoded_data)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
         result = users.delete_one({"userId": emp_id})
         if result.deleted_count == 0:
             return make_response(True, "Employee not found", status=404)
+        log=Logs(
+            userId=decoded_data.get("userId"),
+            updateTime=nowIST(),
+            type='Employee',
+            action='Delete',
+            comments="",
+            relatedId=emp_id,
+            villageId=""
+        )
 
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         return make_response(False, "Employee deleted successfully")
 
     except mongo_errors.PyMongoError as me:
@@ -270,9 +362,25 @@ def delete_employee(emp_id):
         return make_response(True, "Unexpected error", result=str(e), status=500)
 
 @emp_bp.route("/employee/delete_all", methods=["DELETE"])
-def delete_all_employees():
+@auth_required
+def delete_all_employees(decoded_data):
     try:
+        error = authorizationDD(decoded_data)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
         result=users.delete_many({})
+        log=Logs(
+            userId=decoded_data.get("userId"),
+            updateTime=nowIST(),
+            type='Employee',
+            action='Delete',
+            comments="All Deleted",
+            relatedId="",
+            villageId=""
+        )
+
+        # Insert into DB
+        logs.insert_one(log.model_dump())
         return make_response(
             False,
             f"Deleted {result.deleted_count} employees",
@@ -285,7 +393,8 @@ def delete_all_employees():
         return make_response(True, "Unexpected error", result=str(e), status=500)
 
 @emp_bp.route("/employee/all", methods=["GET"])
-def get_all_employees():
+@auth_required
+def get_all_employees(decoded_data):
     try:
         employees = list(users.find(
             {},
@@ -308,7 +417,8 @@ def get_all_employees():
         return make_response(True, "Unexpected error", message=str(e), result={"count": 0, "items": []},status=500)
 
 @emp_bp.route("/employee/ids", methods=["GET"])
-def get_emp_ids():
+@auth_required
+def get_emp_ids(decoded_data):
     try:
         employees = list(users.find(
             {},

@@ -10,6 +10,7 @@ from models.counters import get_next_feedback_id
 from models.emp import UserRole
 from utils.helpers import make_response, nowIST, str_to_ist_datetime, validation_error_response
 from config import db, SENDER_EMAIL, APP_PASSWORD, OTP_EXPIRE_MIN
+from utils.rate_limiting import limiter
 
 # MongoDB collections
 users = db.users
@@ -67,6 +68,7 @@ def send_email_feedback(receiver_email: str, name: str, feedbackId: str, village
 
 
 @feedback_bp.route("/feedback", methods=["POST"])
+@limiter.limit("1 per minute")
 def insert_feedback():
     try:
         payload = request.get_json(force=True)
@@ -287,6 +289,7 @@ def get_all_feedbacks(decoded_data,villageId):
         )
 
 @feedback_bp.route("/feedback/<feedbackId>", methods=["GET"])
+@limiter.limit("1 per minute")
 def get_feedback(feedbackId):
     try:
         if not feedbackId:

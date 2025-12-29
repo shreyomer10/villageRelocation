@@ -5,6 +5,7 @@ from typing import List, Optional
 class GuidelinesModel(BaseModel):
     pdfLink: HttpUrl
     points: List[str]
+    updatedAt:str
 
     @classmethod
     def from_mongo(cls, doc: dict):
@@ -17,6 +18,8 @@ class AboutUsModel(BaseModel):
     title: str
     content: str
     image: Optional[HttpUrl] = None
+    updatedAt:str
+
 
     @classmethod
     def from_mongo(cls, doc: dict):
@@ -29,6 +32,7 @@ class ContactUsModel(BaseModel):
     phone: str
     address: str
     image: Optional[HttpUrl] = None
+    updatedAt:str
 
     @classmethod
     def from_mongo(cls, doc: dict):
@@ -43,6 +47,7 @@ class FAQItem(BaseModel):
 
 class FAQModel(BaseModel):
     items: List[FAQItem]
+    updatedAt:str
 
     @classmethod
     def from_mongo(cls, doc: dict):
@@ -59,3 +64,12 @@ class SystemType(BaseModel):
 
 class Config(BaseModel):
     config:List[SystemType]
+
+class PrivacyPolicyModel(BaseModel):
+    title: str 
+    content: str 
+    updatedAt:str
+    @classmethod
+    def from_mongo(cls, doc: dict):
+        doc.pop("_id", None)
+        return cls.model_validate(doc)
