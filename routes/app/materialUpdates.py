@@ -228,7 +228,7 @@ def get_updates(decoded_data, villageId, materialId):
                 date_filter["$lte"] = to_date
             query["insertedAt"] = date_filter
 
-        projection = {"_id": 0, "statusHistory": 0, "docs": 0}
+        projection = {"_id": 0, "statusHistory": 0}
         skip = (page - 1) * limit
 
         cursor = (

@@ -476,7 +476,7 @@ def get_field_verifications(decoded_data,villageId,plotId):
             query["insertedAt"] = date_filter
 
         # --- Projection (exclude heavy fields) ---
-        projection = {"_id": 0, "statusHistory": 0, "docs": 0}
+        projection = {"_id": 0, "statusHistory": 0}
 
         # --- Sorting & Pagination ---
         skip = (page - 1) * limit
