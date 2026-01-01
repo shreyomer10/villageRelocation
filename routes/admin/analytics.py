@@ -6,7 +6,7 @@ from flask import Blueprint, logging,request, jsonify
 from pydantic import ValidationError
 from utils.tokenAuth import auth_required
 from models.village import FamilyCount
-from utils.helpers import authorizationDD, make_response
+from utils.helpers import authorizationDD, get_last_12_months_bounds, make_response
 from config import  db
 
 from pymongo import errors  
@@ -223,116 +223,137 @@ def get_family_count(decoded_data,village_id):
             "result": None
         }), 500
 
-
-@analytics_BP.route("/analytics/activity", methods=["GET"])
+@analytics_BP.route("/analytics/activity/monthly", methods=["GET"]) #monthly activity sum count
 @auth_required
-def peak_activity(decoded_data):
-    try:
-        error = authorizationDD(decoded_data)
-        if error:
-            return make_response(True, message=error["message"], status=error["status"])
-        args = request.args
+def monthly_activity(decoded_data):
+    args = request.args
+    villageId = args.get("villageId")
+    userId = args.get("userId")
+    fromMonth = args.get("fromMonth")
+    toMonth = args.get("toMonth")
 
-        granularity = args.get("granularity")  # day | month
-        villageId = args.get("villageId")
-        userId = args.get("userId")
-        from_date = args.get("fromDate")
-        to_date = args.get("toDate")
+    match = {}
+    if villageId:
+        match["villageId"] = villageId
+    if userId:
+        match["userId"] = userId
 
-        if granularity not in ["day", "month"]:
-            return make_response(True, "granularity must be day or month", status=400)
+    if fromMonth and toMonth:
+        match["updateTime"] = {
+            "$gte": f"{fromMonth}-01 00:00:00",
+            "$lte": f"{toMonth}-31 23:59:59"
+        }
+    else:
+        start, end = get_last_12_months_bounds()
+        match["updateTime"] = {"$gte": start, "$lte": end}
 
-        match = {}
+    pipeline = [
+        {"$match": match},
+        {
+            "$group": {
+                "_id": {"$substr": ["$updateTime", 0, 7]},
+                "count": {"$sum": 1}
+            }
+        },
+        {"$sort": {"_id": 1}}
+    ]
 
-        if villageId:
-            match["villageId"] = villageId
-        if userId:
-            match["userId"] = userId
+    return make_response(False, "Monthly activity", result=list(logs.aggregate(pipeline)))
 
-        if from_date or to_date:
-            date_filter = {}
-            if from_date:
-                date_filter["$gte"] = from_date
-            if to_date:
-                date_filter["$lte"] = to_date
-            match["updateTime"] = date_filter
-
-        substr_len = 10 if granularity == "day" else 7  # YYYY-MM-DD / YYYY-MM
-
-        pipeline = [
-            {"$match": match},
-            {
-                "$group": {
-                    "_id": { "$substr": ["$updateTime", 0, substr_len] },
-                    "count": { "$sum": 1 }
-                }
-            },
-            {"$sort": {"_id": 1}}
-        ]
-
-        data = list(logs.aggregate(pipeline))
-
-        return make_response(
-            False,
-            "Peak activity data",
-            result=data
-        )
-
-    except Exception as e:
-        return make_response(True, f"Error generating peak activity: {str(e)}", status=500)
-
-
-@analytics_BP.route("/analytics/user", methods=["GET"])
+@analytics_BP.route("/analytics/activity/month-detail", methods=["GET"]) #month breakdown
 @auth_required
-def user_breakdown(decoded_data):
-    try:
-        error = authorizationDD(decoded_data)
-        if error:
-            return make_response(True, message=error["message"], status=error["status"])
-        args = request.args
+def month_detail(decoded_data):
+    args = request.args
+    month = args.get("month")
+    villageId = args.get("villageId")
+    userId = args.get("userId")
 
-        userId = args.get("userId")
-        granularity = args.get("granularity")  # day | month
+    if not month or not (villageId or userId):
+        return make_response(True, "month + villageId/userId required", status=400)
 
-        if not userId:
-            return make_response(True, "userId required", status=400)
-        if granularity not in ["day", "month"]:
-            return make_response(True, "granularity must be day or month", status=400)
+    match = {
+        "updateTime": {
+            "$gte": f"{month}-01 00:00:00",
+            "$lte": f"{month}-31 23:59:59"
+        }
+    }
 
-        substr_len = 10 if granularity == "day" else 7
-        time_key = "day" if granularity == "day" else "month"
+    if villageId:
+        match["villageId"] = villageId
+    if userId:
+        match["userId"] = userId
 
-        pipeline = [
-            {"$match": {"userId": userId}},
-            {
-                "$group": {
-                    "_id": {
-                        time_key: { "$substr": ["$updateTime", 0, substr_len] },
-                        "type": "$type",
-                        "action": "$action"
-                    },
-                    "count": { "$sum": 1 }
-                }
-            },
-            {
-                "$project": {
-                    "_id": 0,
-                    time_key: f"$_id.{time_key}",
-                    "type": "$_id.type",
-                    "action": "$_id.action",
-                    "count": 1
-                }
-            },
-            {"$sort": {time_key: 1}}
-        ]
+    pipeline = [
+        {"$match": match},
+        {
+            "$group": {
+                "_id": {"type": "$type", "action": "$action"},
+                "count": {"$sum": 1}
+            }
+        },
+        {
+            "$project": {
+                "_id": 0,
+                "type": "$_id.type",
+                "action": "$_id.action",
+                "count": 1
+            }
+        },
+        {"$sort": {"count": -1}}
+    ]
 
-        data = list(logs.aggregate(pipeline))
+    return make_response(False, "Month breakdown", result=list(logs.aggregate(pipeline)))
 
-        return make_response(
-            False,
-            "User activity breakdown",
-            result=data
-        )
+@analytics_BP.route("/analytics/activity/action-trend", methods=["GET"]) #type -> actions breakdown
+@auth_required
+def action_trend(decoded_data):
+    args = request.args
+    villageId = args.get("villageId")
+    userId = args.get("userId")
+    type_ = args.get("type")
+    actions = args.getlist("actions")
+    fromMonth = args.get("fromMonth")
+    toMonth = args.get("toMonth")
 
-    except Exception as e:
-        return make_response(True, f"Error generating breakdown: {str(e)}", status=500)
+    if not type_ or not actions:
+        return make_response(True, "type, actions[]", status=400)
+
+    match = {"type": type_, "action": {"$in": actions}}
+
+    if villageId:
+        match["villageId"] = villageId
+    if userId:
+        match["userId"] = userId
+
+    if fromMonth and toMonth:
+        match["updateTime"] = {
+            "$gte": f"{fromMonth}-01 00:00:00",
+            "$lte": f"{toMonth}-31 23:59:59"
+        }
+    else:
+        start, end = get_last_12_months_bounds()
+        match["updateTime"] = {"$gte": start, "$lte": end}
+
+    pipeline = [
+        {"$match": match},
+        {
+            "$group": {
+                "_id": {
+                    "month": {"$substr": ["$updateTime", 0, 7]},
+                    "action": "$action"
+                },
+                "count": {"$sum": 1}
+            }
+        },
+        {"$sort": {"_id.month": 1}}
+    ]
+
+    raw = list(logs.aggregate(pipeline))
+
+    result = {}
+    for r in raw:
+        action = r["_id"]["action"]
+        month = r["_id"]["month"]
+        result.setdefault(action, []).append({"month": month, "count": r["count"]})
+
+    return make_response(False, "Action trend", result=result)

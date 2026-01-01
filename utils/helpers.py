@@ -1,7 +1,7 @@
 import re
 import bcrypt
 from flask import jsonify
-import datetime as dt
+import datetime as dt 
 
 import pytz
 
@@ -144,3 +144,15 @@ def detect_system_from_ua(user_agent: str):
     if "mozilla" in ua or "chrome" in ua or "brave" in ua or "edge" in ua:
         return "web"
     return None
+
+
+def get_last_12_months_bounds():
+    now_str = nowIST()                              # string
+    now_dt = str_to_ist_datetime(now_str)           # datetime (IST)
+
+    start_dt = (now_dt.replace(day=1) - dt.timedelta(days=365))
+    
+    start = start_dt.strftime("%Y-%m-%d %H:%M:%S")
+    end = now_str                                  # already correct format
+
+    return start, end

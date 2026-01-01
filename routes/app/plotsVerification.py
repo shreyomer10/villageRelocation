@@ -149,10 +149,15 @@ def insert_verification(decoded_data, plotId):
                 },
             )
         #print("OK")
+        if type_ == "plot":
+            log_type = "Community Facilities"
+        elif type_ == "house":
+            log_type = "Houses"
+
         log=Logs(
             userId=userId,
             updateTime=nowIST(),
-            type='Community Facilities',
+            type=log_type,
             action='Verification Insert',
             comments="",
             relatedId=new_verification_id,
@@ -228,10 +233,15 @@ def update_verification(decoded_data,plotId, verificationId):
             {"$set":update_dict,
             "$push": {"statusHistory": history.model_dump(exclude_none=True)}}
         )
+        if type_ == "plot":
+            log_type = "Community Facilities"
+        elif type_ == "house":
+            log_type = "Houses"
+
         log=Logs(
             userId=userId,
             updateTime=nowIST(),
-            type='Community Facilities',
+            type=log_type,
             action='Verification Edited',
             comments="",
             relatedId=verificationId,
@@ -270,6 +280,7 @@ def verify_verification(decoded_data):
             return make_response(True, "verification not found", status=404)
         previous_status = verification.get("status", 1) 
         villageId=verification.get("villageId")
+        type_=verification.get("type")
         
         required_status = STATUS_TRANSITIONS.get(user_role)
         if not required_status or previous_status != required_status:
@@ -299,10 +310,15 @@ def verify_verification(decoded_data):
             upsert=False
 
         )
+        if type_ == "plot":
+            log_type = "Community Facilities"
+        elif type_ == "house":
+            log_type = "Houses"
+
         log=Logs(
             userId=userId,
             updateTime=now,
-            type='Community Facilities',
+            type=log_type,
             action='Action',
             comments=comments,
             relatedId=verificationId,
@@ -404,10 +420,15 @@ def delete_verification(decoded_data,plotId, verificationId):
         updates.delete_one(
             {"verificationId": verificationId}
         )
+        if type_ == "plot":
+            log_type = "Community Facilities"
+        elif type_ == "house":
+            log_type = "Houses"
+
         log=Logs(
             userId=userId,
             updateTime=nowIST(),
-            type='Community Facilities',
+            type=log_type,
             action='Delete',
             comments=comments,
             relatedId=verificationId,

@@ -33,6 +33,7 @@ def get_logs(decoded_data):
         action = args.get("action")
         from_date = args.get("fromDate")
         to_date = args.get("toDate")
+        relatedId=args.get("relatedId")
 
         page = int(args.get("page", 1))
         limit = int(args.get("limit", 20))
@@ -51,6 +52,8 @@ def get_logs(decoded_data):
             query["type"] = log_type
         if action:
             query["action"] = action
+        if relatedId:
+            query["relatedId"] = relatedId
 
         # ---- Date filter ----
         if from_date or to_date:
