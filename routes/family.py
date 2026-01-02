@@ -37,7 +37,7 @@ def get_beneficiaries(village_id):
 
         option_id = request.args.get("optionId")
         name=request.args.get("mukhiyaName")
-
+        havePlot = request.args.get("havePlot")  # "true" | "false" | None
         page = int(request.args.get("page", 1))
         limit = int(request.args.get("limit", 15))
 
@@ -47,6 +47,13 @@ def get_beneficiaries(village_id):
             q["relocationOption"] = option_id
         if name:
             q["mukhiyaName"] = {"$regex": name, "$options": "i"}
+        # ✅ havePlot filter
+        if havePlot is not None:
+            if havePlot.lower() == "false":
+                q["plotId"] = ""
+            elif havePlot.lower() == "true":
+                q["plotId"] = {"$ne": ""}
+
         projection = {
             "_id": 0,
             "familyId": 1,
@@ -377,7 +384,6 @@ def update_family(decoded_data,family_id):
         return make_response(True, f"Database error: {str(e)}", status=500)
     except Exception as e:
         return make_response(True, f"Unexpected error: {str(e)}", status=500)
-
 
 
 # #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ FOR FAMILY COMPLAINT AND SUGGESTIONS ~~~~~~~~~~~~~~~~~~~~~~~##
