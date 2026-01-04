@@ -1,10 +1,12 @@
 ﻿// src/pages/MeetingsPage.jsx
-import React, { useEffect, useMemo, useState, useCallback, useContext } from "react";
+import React, { useEffect, useMemo, useState, useCallback, useContext, useRef } from "react";
+import ReactDOM from "react-dom";
 import { useNavigate, useParams } from "react-router-dom";
 import MainNavbar from "../component/MainNavbar";
 import { API_BASE } from "../config/Api.js";
 import { AuthContext } from "../context/AuthContext";
-import DocsModal from "../component/DocsModal";
+// DocumentModal (your uploaded DocsModal component)
+import DocumentModal from "../component/DocsModal";
 import {
   PieChart, Pie, Cell, Tooltip as ReTooltip, ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Legend
@@ -26,6 +28,12 @@ function formatDateTime(iso) {
     if (Number.isNaN(d.getTime())) return iso;
     return d.toLocaleString();
   } catch { return iso; }
+}
+
+/* ---------- ModalPortal (ensures modals are on top) ---------- */
+function ModalPortal({ children }) {
+  if (typeof document === "undefined") return <>{children}</>;
+  return ReactDOM.createPortal(children, document.body);
 }
 
 /* ------------------ MeetingsPage ------------------ */
@@ -100,16 +108,28 @@ export default function MeetingsPage() {
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState(null);
 
-  // always use DocsModal for photos/docs; maintain its state here
+  // DocumentModal state
   const [showDocsModal, setShowDocsModal] = useState(false);
   const [docsModalItems, setDocsModalItems] = useState([]);
   const [docsModalType, setDocsModalType] = useState(null);
   const [docsModalMeeting, setDocsModalMeeting] = useState(null);
+  const [docsModalLoading, setDocsModalLoading] = useState(false);
 
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
 
   const modalOpen = Boolean(showModal || showDocsModal || showDeleteModal);
+
+  // lock body scroll while modal open
+  useEffect(() => {
+    const prev = typeof document !== "undefined" ? document.body.style.overflow : "";
+    if (modalOpen) {
+      try { document.body.style.overflow = "hidden"; } catch {}
+    } else {
+      try { document.body.style.overflow = prev || ""; } catch {}
+    }
+    return () => { try { document.body.style.overflow = prev || ""; } catch {} };
+  }, [modalOpen]);
 
   // token utils (use auth.token if available)
   const readToken = useCallback(() => {
@@ -219,63 +239,137 @@ export default function MeetingsPage() {
     return arr
       .map(it => {
         if (!it) return null;
-        // blob/object preview (created with URL.createObjectURL)
         if (typeof it === "string") {
           const s = it.trim();
-          // consider valid url-like strings (http(s) or blob:)
           if (/^(https?:\/\/|blob:|data:)/i.test(s)) {
             return { url: s, name: s.split("/").pop() || s };
           }
-          // if plain filename or other string that looks like doc name, include as name with null url
           return { url: /^(https?:\/\/|blob:|data:)/i.test(s) ? s : null, name: s };
         }
         if (typeof it === "object") {
-          // common shapes: { url }, { src }, { path }, { name, url }
           const url = it.url || it.src || it.path || it.href || null;
           const name = it.name || (url ? String(url).split("/").pop() : null) || (it.filename || it.fileName) || null;
           if (url || name) return { url: url || null, name: name || String(it) };
-          // fallback stringify
           try { return { url: null, name: JSON.stringify(it) }; } catch { return null; }
         }
         return null;
       })
       .filter(Boolean)
-      // remove entries that are obviously empty (no url AND empty name)
       .filter(x => (x.url && String(x.url).trim()) || (x.name && String(x.name).trim()));
   }
 
-  // Always open DocsModal with server-fresh data (preferred)
+  // Determine ownership: returns true if current user is owner (by heldBy match OR userId fields)
+  function isMeetingOwned(meeting) {
+    if (!meeting) return false;
+    try {
+      const heldByRaw = (meeting.heldBy ?? (meeting.raw && (meeting.raw.heldBy || meeting.raw.held_by || meeting.raw.by)) ?? "");
+      if (heldByRaw && currentUserName) {
+        if (String(heldByRaw).trim().toLowerCase() === String(currentUserName).trim().toLowerCase()) return true;
+      }
+
+      const ownerIdCandidates = new Set();
+      const pushIf = (v) => { if (v !== undefined && v !== null && v !== "") ownerIdCandidates.add(String(v)); };
+      const src = meeting.raw || meeting;
+      pushIf(src.userId ?? src.user_id ?? src.createdBy ?? src.created_by ?? src.ownerId ?? src.owner_id ?? src.user ?? src.created_by_user);
+      pushIf(meeting.userId ?? meeting.user_id);
+
+      const currentIds = new Set();
+      const cpush = (v) => { if (v !== undefined && v !== null && v !== "") currentIds.add(String(v)); };
+      cpush(auth?.userId ?? auth?.user?.userId ?? auth?.user?.id ?? auth?.user?._id ?? null);
+      try { const lsUid = localStorage.getItem("userId"); if (lsUid) cpush(lsUid); } catch {}
+      try { const raw = localStorage.getItem("user"); if (raw) { const parsed = JSON.parse(raw); if (parsed?.id) cpush(parsed.id); if (parsed?._id) cpush(parsed._id); if (parsed?.userId) cpush(parsed.userId); } } catch {}
+
+      for (const o of ownerIdCandidates) {
+        if (currentIds.has(o)) return true;
+      }
+
+      return false;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // Always open DocumentModal with server-fresh data (preferred)
   async function openDocsModal(meeting, type) {
     try {
-      if (!meeting || !meeting.meetingId) return;
+      if (!meeting) return;
+      setDocsModalItems([]);
+      setDocsModalType(type);
+      setDocsModalMeeting(meeting);
+      setDocsModalLoading(true);
+      setShowDocsModal(true);
+
       const details = await fetchMeetingDetails(meeting?.meetingId);
       const src = details ?? (meeting?.raw ?? meeting ?? {});
       const rawItems = type === "photos" ? (src.photos ?? src.photos_urls ?? src.photos_list ?? []) : (src.docs ?? src.documents ?? src.docs_list ?? []);
       const items = normalizeItemsList(rawItems);
-      if (!items || items.length === 0) {
-        // do not open modal if no items
-        return;
-      }
       setDocsModalItems(items);
-      setDocsModalType(type);
-      setDocsModalMeeting(meeting);
-      setShowDocsModal(true);
     } catch (err) {
       console.warn("openDocsModal error:", err);
+      setDocsModalItems([]);
+    } finally {
+      setDocsModalLoading(false);
     }
   }
 
-  // Directly open DocsModal with items you already have (local blob previews etc)
+  // Directly open DocumentModal with items you already have (local blob previews etc)
   function showDocsModalWithItems(items, type = "photos", meeting = null) {
     const normalized = normalizeItemsList(items);
-    if (!normalized || normalized.length === 0) return;
-    setDocsModalItems(normalized);
+    setDocsModalItems(normalized || []);
     setDocsModalType(type);
     setDocsModalMeeting(meeting);
+    setDocsModalLoading(false);
     setShowDocsModal(true);
   }
 
-  // load meetings
+  // upload helpers for S3 endpoints (reused from your code)
+  async function uploadSingleFileToServer(file, fieldName) {
+    const fd = new FormData();
+    fd.append(`files[${fieldName}]`, file);
+    const res = await doProtectedFetch(`${API_BASE}/s3/upload`, { method: "POST", body: fd, isFormData: true });
+    const text = await res.text().catch(()=>"");
+    if (!res.ok) {
+      const snippet = text.slice(0,400);
+      throw new Error(`Upload failed: ${res.status} ${res.statusText} ${snippet}`);
+    }
+    let payload = {};
+    try { payload = text ? JSON.parse(text) : {}; } catch(e){ payload = {}; }
+    const mapping = payload.result ?? payload;
+    const s3_uri = mapping && mapping[fieldName] ? mapping[fieldName] : null;
+    if (!s3_uri) {
+      const values = Object.values(mapping || {});
+      if (values.length === 1) return values[0];
+      throw new Error("Upload response missing uploaded file URI");
+    }
+    return s3_uri;
+  }
+
+  async function getPresignedUrlForS3Uri(s3_uri) {
+    const res = await doProtectedFetch(`${API_BASE}/s3/access`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ s3_uri }) });
+    const text = await res.text().catch(()=>"");
+    if (!res.ok) {
+      const snippet = text.slice(0,400);
+      throw new Error(`Get access URL failed: ${res.status} ${res.statusText} ${snippet}`);
+    }
+    let payload = {};
+    try { payload = text ? JSON.parse(text) : {}; } catch { payload = {}; }
+    const result = payload.result ?? payload;
+    const url = result && result.url ? result.url : (result && result.access_url ? result.access_url : null);
+    if (!url) throw new Error("Access endpoint returned no URL");
+    return url;
+  }
+
+  async function deleteFileOnServer(publicUrl) {
+    const res = await doProtectedFetch(`${API_BASE}/s3/delete`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: publicUrl }) });
+    const text = await res.text().catch(()=>"");
+    if (!res.ok) {
+      const snippet = text.slice(0,400);
+      throw new Error(`Delete failed: ${res.status} ${res.statusText} ${snippet}`);
+    }
+    return true;
+  }
+
+  // load meetings (original behavior preserved)
   useEffect(() => {
     let mounted = true;
     const ctrl = new AbortController();
@@ -427,6 +521,13 @@ export default function MeetingsPage() {
   async function handleDelete(meeting) {
     try {
       if (!meeting || !meeting.meetingId) return;
+      if (!isMeetingOwned(meeting)) {
+        setError("Delete failed: you are not the owner of this meeting.");
+        setShowDeleteModal(false);
+        setDeleteTarget(null);
+        return;
+      }
+
       const uidCandidates = [auth?.userId, auth?.user?.userId, auth?.user?.id, auth?.user?._id];
       const uid = uidCandidates.find(Boolean) || localStorage.getItem("userId") || null;
       if (!uid) {
@@ -467,11 +568,17 @@ export default function MeetingsPage() {
     }
   }
 
-  function openEdit(meeting) { setEditing(meeting); setShowModal(true); }
+  function openEdit(meeting) {
+    if (!isMeetingOwned(meeting)) {
+      setError("You can only edit meetings that you created/hold.");
+      return;
+    }
+    setEditing(meeting); setShowModal(true);
+  }
   function openAdd() { setEditing(null); setShowModal(true); }
 
   // Save meeting (insert or update) - expects JSON (files handled in modal's flow)
-  async function saveMeeting(formData, files = {}, photoPreviewsFromModal = []) {
+  async function saveMeeting(formData, files = {}, photoUrlsFromModal = [], docUrlsFromModal = []) {
     try {
       const payload = {
         villageId: villageIdState || "",
@@ -483,18 +590,21 @@ export default function MeetingsPage() {
         userId: auth?.userId ?? auth?.user?.id ?? auth?.user?._id ?? localStorage.getItem("userId") ?? null,
       };
 
-      // include photos (strings) only if they look like strings (URLs or blob)
-      const photos = (photoPreviewsFromModal || []).filter(p => typeof p === "string");
+      const photos = (photoUrlsFromModal || []).filter(p => typeof p === "string" && /^https?:\/\//i.test(p));
       if (photos.length) payload.photos = photos;
 
-      // include docs that are URLs (server expects doc URLs in JSON). Local file uploads are not automatically handled by this endpoint.
-      const docUrls = (formData.docs || []).filter(d => typeof d === "string" && /^https?:\/\//i.test(d));
+      const docUrls = (docUrlsFromModal || []).filter(d => typeof d === "string" && /^https?:\/\//i.test(d));
       if (docUrls.length) payload.docs = docUrls;
 
       if (!payload.userId) throw new Error("userId missing — please sign in again.");
       if (!payload.heldBy || !String(payload.heldBy).trim()) throw new Error("Provide 'Held By' — non-empty name is required.");
 
       if (editing && editing.meetingId) {
+        if (!isMeetingOwned(editing)) {
+          setError("Update failed: you are not the owner of this meeting.");
+          throw new Error("Update failed: not owner");
+        }
+
         // UPDATE flow (PUT)
         const url = `${API_BASE}/meetings/${encodeURIComponent(editing.meetingId)}`;
         const res = await doProtectedFetch(url, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
@@ -503,13 +613,12 @@ export default function MeetingsPage() {
           setError(`Update failed: ${res.status} ${res.statusText} ${txt}`);
           throw new Error(`Update failed: ${res.status}`);
         }
-        // After successful update, refresh list to reflect changes
         setRefreshCounter(s=>s+1);
         setShowModal(false);
         setEditing(null);
         return;
       } else {
-        // INSERT flow (POST /meetings/insert) - backend will generate meetingId and return created meeting in result
+        // INSERT flow (POST /meetings/insert) — backend expects userId in body; returns created meeting in result with 201
         const url = `${API_BASE}/meetings/insert`;
         const res = await doProtectedFetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
         const text = await res.text().catch(()=>"");
@@ -519,21 +628,17 @@ export default function MeetingsPage() {
           throw new Error(`Insert failed: ${res.status}`);
         }
 
-        // parse response body to get created meeting
         let bodyObj = {};
         try { bodyObj = text ? JSON.parse(text) : {}; } catch (e) { bodyObj = {}; }
         const created = (bodyObj?.result ?? bodyObj) || null;
 
         if (created && (created.meetingId || created._id)) {
           const normalized = normalizeSingleMeeting(created);
-          // Prepend to current list and maintain page limit
           setMeetings(prev => {
             const newList = [normalized, ...prev];
-            // keep list to page size
             return newList.slice(0, limit);
           });
           setTotalCount(c => Number(c || 0) + 1);
-          // ensure user sees first page (we just prepended)
           setPage(1);
           setShowModal(false);
           setEditing(null);
@@ -553,8 +658,7 @@ export default function MeetingsPage() {
     }
   }
 
-  /* ---------------- Modal components (unchanged behavior, improved z-index) ---------------- */
-
+  /* ---------------- Modal components (rendered via portal) ---------------- */
   function MeetingModal({ onClose, initial }) {
     const init = initial || { venue: "", time: "", heldBy: currentUserName || "", notes: "", attendees: [], photos: [], docs: [] };
     const [venue, setVenue] = useState(init.venue || "");
@@ -562,46 +666,101 @@ export default function MeetingsPage() {
     const [heldBy, setHeldBy] = useState(init.heldBy || (currentUserName || ""));
     const [notes, setNotes] = useState(init.notes || "");
     const [attendees, setAttendees] = useState(Array.isArray(init.attendees) ? [...init.attendees] : []);
-    const [photoPreviews, setPhotoPreviews] = useState(init.photos ? [...init.photos] : []);
-    const [photoFiles, setPhotoFiles] = useState([]); // File[]
-    const [docUrlsOrNames, setDocUrlsOrNames] = useState(init.docs ? [...init.docs] : []);
-    const [docFiles, setDocFiles] = useState([]); // File[]
+
+    const [photoUploads, setPhotoUploads] = useState(() => {
+      const arr = (init.photos || []).map((p, idx) => ({ id: `existing-photo-${idx}-${Math.random().toString(36).slice(2,6)}`, file: null, preview: null, s3_uri: null, url: p, uploading: false, name: p.split("/").pop() }));
+      return arr;
+    });
+    const [docUploads, setDocUploads] = useState(() => {
+      const arr = (init.docs || []).map((d, idx) => ({ id: `existing-doc-${idx}-${Math.random().toString(36).slice(2,6)}`, file: null, preview: null, s3_uri: null, url: d, uploading: false, name: d.split("/").pop() }));
+      return arr;
+    });
 
     useEffect(() => {
       return () => {
-        (photoPreviews || []).forEach(p => { try { if (p && p.startsWith && p.startsWith("blob:")) URL.revokeObjectURL(p); } catch {} });
+        (photoUploads || []).forEach(p => { try { if (p.preview && p.preview.startsWith && p.preview.startsWith("blob:")) URL.revokeObjectURL(p.preview); } catch {} });
       };
-    }, [photoPreviews]);
+    }, [photoUploads]);
 
     function addAttendee(name) { if (!name) return; setAttendees(s=>[...s, name]); }
     function removeAttendee(i) { setAttendees(s=>s.filter((_,idx)=>idx!==i)); }
 
-    function onPhotoChange(e) {
+    async function uploadFileAndGetUrl(file, typePrefix = "file") {
+      const fieldName = `${typePrefix}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
+      const s3_uri = await uploadSingleFileToServer(file, fieldName);
+      const url = await getPresignedUrlForS3Uri(s3_uri);
+      return { s3_uri, url, fieldName };
+    }
+
+    async function onPhotoChange(e) {
       const files = Array.from(e.target.files || []);
       if (!files.length) return;
-      const urls = files.map(f=>URL.createObjectURL(f));
-      setPhotoPreviews(s=>[...s, ...urls]);
-      setPhotoFiles(s=>[...s, ...files]);
-      e.target.value = "";
-    }
-    function onDocChange(e) {
-      const files = Array.from(e.target.files || []);
-      if (!files.length) return;
-      setDocFiles(s=>[...s, ...files]);
-      setDocUrlsOrNames(s=>[...s, ...files.map(f=>f.name)]);
-      e.target.value = "";
-    }
-    function removePhoto(idx) {
-      setPhotoPreviews(s=>{
-        const toRemove = s[idx];
-        try { if (toRemove && toRemove.startsWith && toRemove.startsWith("blob:")) URL.revokeObjectURL(toRemove); } catch {}
-        return s.filter((_,i)=>i!==idx);
+      const newEntries = files.map((file) => {
+        const id = `up-photo-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
+        const preview = URL.createObjectURL(file);
+        return { id, file, preview, s3_uri: null, url: null, uploading: true, name: file.name };
       });
-      setPhotoFiles(s=>s.filter((_,i)=>i!==idx));
+      setPhotoUploads(prev => [...prev, ...newEntries]);
+      e.target.value = "";
+
+      for (const entry of newEntries) {
+        try {
+          const { s3_uri, url } = await uploadFileAndGetUrl(entry.file, "photos");
+          setPhotoUploads(prev => prev.map(p => p.id === entry.id ? { ...p, s3_uri, url, uploading: false, preview: null } : p));
+        } catch (err) {
+          setError("Photo upload failed: " + (err.message || String(err)));
+          setPhotoUploads(prev => prev.map(p => p.id === entry.id ? { ...p, uploading: false } : p));
+        }
+      }
     }
-    function removeDoc(idx) {
-      setDocUrlsOrNames(s=>s.filter((_,i)=>i!==idx));
-      setDocFiles(s=>s.filter((_,i)=>i!==idx));
+
+    async function onDocChange(e) {
+      const files = Array.from(e.target.files || []);
+      if (!files.length) return;
+      const newEntries = files.map((file) => {
+        const id = `up-doc-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
+        return { id, file, preview: null, s3_uri: null, url: null, uploading: true, name: file.name };
+      });
+      setDocUploads(prev => [...prev, ...newEntries]);
+      e.target.value = "";
+
+      for (const entry of newEntries) {
+        try {
+          const { s3_uri, url } = await uploadFileAndGetUrl(entry.file, "docs");
+          setDocUploads(prev => prev.map(d => d.id === entry.id ? { ...d, s3_uri, url, uploading: false } : d));
+        } catch (err) {
+          setError("Document upload failed: " + (err.message || String(err)));
+          setDocUploads(prev => prev.map(d => d.id === entry.id ? { ...d, uploading: false } : d));
+        }
+      }
+    }
+
+    async function removePhoto(idx) {
+      const target = photoUploads[idx];
+      if (!target) return;
+      if (target.url) {
+        try {
+          await deleteFileOnServer(target.url);
+        } catch (err) {
+          setError("Failed to delete photo from server: " + (err.message || String(err)));
+        }
+      } else if (target.preview && target.preview.startsWith && target.preview.startsWith("blob:")) {
+        try { URL.revokeObjectURL(target.preview); } catch {}
+      }
+      setPhotoUploads(prev => prev.filter((_,i)=>i!==idx));
+    }
+
+    async function removeDoc(idx) {
+      const target = docUploads[idx];
+      if (!target) return;
+      if (target.url) {
+        try {
+          await deleteFileOnServer(target.url);
+        } catch (err) {
+          setError("Failed to delete document from server: " + (err.message || String(err)));
+        }
+      }
+      setDocUploads(prev => prev.filter((_,i)=>i!==idx));
     }
 
     async function submit(e) {
@@ -612,113 +771,366 @@ export default function MeetingsPage() {
         heldBy,
         notes,
         attendees,
-        docs: (docUrlsOrNames || []).filter(d => typeof d === "string" && /^https?:\/\//i.test(d))
       };
-      const files = { photos: photoFiles || [], docs: docFiles || [] };
+
+      const photoUrls = (photoUploads || []).map(p => p.url).filter(Boolean);
+      const docUrls = (docUploads || []).map(d => d.url).filter(Boolean);
+
       try {
-        // Note: file upload is not implemented against /meetings/insert in this snippet.
-        // If you need direct file upload, we should implement an upload endpoint or form-data upload step.
-        await saveMeeting(sendData, files, photoPreviews);
+        await saveMeeting(sendData, {}, photoUrls, docUrls);
       } catch (err) {
-        // saveMeeting sets `error` for UI; we still keep modal open to let user retry/correct.
         return;
       }
     }
 
-    // disable save if heldBy missing
     const saveDisabled = !heldBy || !heldBy.toString().trim();
 
     return (
-      <div className="fixed inset-0 z-90 flex items-center justify-center bg-black bg-opacity-60 p-4" role="dialog" aria-modal="true">
-        <form onSubmit={submit} className="w-full max-w-3xl bg-[#f8f0dc] rounded-2xl shadow-2xl p-5 md:p-6 overflow-auto max-h-[90vh]">
-          <div className="flex items-start justify-between mb-4">
-            <div>
-              <div className="text-xs text-gray-500">Village</div>
-              <div className="text-lg font-semibold">{villageIdState ?? "—"}</div>
-            </div>
-            <div className="flex items-center gap-2">
-              <button type="button" onClick={onClose} className="px-3 py-1 rounded bg-red-50 hover:bg-red-100 text-sm">Cancel</button>
-              <button type="submit" disabled={saveDisabled} className={`px-4 py-2 rounded ${saveDisabled ? 'bg-gray-200 text-gray-400' : 'bg-blue-600 text-white hover:bg-blue-700'} flex items-center gap-2`}>
-                <IconAdd /> Save
-              </button>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs text-gray-600">Venue</label>
-              <input value={venue} onChange={(e)=>setVenue(e.target.value)} className="w-full p-2 border rounded mt-1" />
-            </div>
-            <div>
-              <label className="text-xs text-gray-600">Time</label>
-              <input type="datetime-local" value={time} onChange={(e)=>setTime(e.target.value)} className="w-full p-2 border rounded mt-1" />
-            </div>
-            <div>
-              <label className="text-xs text-gray-600">Held By</label>
-              <input value={heldBy} onChange={(e)=>setHeldBy(e.target.value)} className="w-full p-2 border rounded mt-1" />
-            </div>
-
-            <div>
-              <label className="text-xs text-gray-600">Attendees</label>
-              <div className="mt-1">
-                <div className="flex gap-2">
-                  <input id="attendeeInputModal" placeholder="Name" className="flex-1 p-2 border rounded" />
-                  <button type="button" onClick={()=>{ const el = document.getElementById("attendeeInputModal"); if (!el) return; const v = el.value.trim(); if (!v) return; addAttendee(v); el.value = ""; }} className="px-3 py-2 bg-gray-100 rounded">+ Add</button>
-                </div>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {attendees.map((a,i)=>(<div key={i} className="px-2 py-1 bg-gray-50 border rounded text-sm flex items-center gap-2"><span>{a}</span><button type="button" onClick={()=>removeAttendee(i)} className="text-xs text-red-500">✕</button></div>))}
-                </div>
+      <ModalPortal>
+        <div
+          className="fixed inset-0 flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          style={{ zIndex: 99999 }}
+        >
+          <div className="absolute inset-0 bg-black bg-opacity-50" onClick={onClose} />
+          <form onSubmit={submit} className="relative w-full max-w-3xl bg-[#f8f0dc] rounded-2xl shadow-2xl p-5 md:p-6 overflow-auto max-h-[90vh]">
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <div className="text-xs text-gray-500">Village</div>
+                <div className="text-lg font-semibold">{villageIdState ?? "—"}</div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={onClose} className="px-3 py-1 rounded bg-red-50 hover:bg-red-100 text-sm">Cancel</button>
+                <button type="submit" disabled={saveDisabled} className={`px-4 py-2 rounded ${saveDisabled ? 'bg-gray-200 text-gray-400' : 'bg-blue-600 text-white hover:bg-blue-700'} flex items-center gap-2`}>
+                  <IconAdd /> Save
+                </button>
               </div>
             </div>
 
-            <div className="md:col-span-2">
-              <label className="text-xs text-gray-600">Notes</label>
-              <textarea value={notes} onChange={(e)=>setNotes(e.target.value)} className="w-full p-2 border rounded mt-1 h-28" />
-            </div>
-
-            <div>
-              <label className="text-xs text-gray-600">Photos</label>
-              <input type="file" accept="image/*" multiple onChange={onPhotoChange} className="w-full mt-1" />
-              <div className="mt-2 flex gap-2 overflow-x-auto">
-                {photoPreviews.map((p,idx)=>(<div key={idx} className="relative"><img src={p} alt="preview" className="w-20 h-20 object-cover rounded cursor-pointer" onClick={(e)=>{ e.stopPropagation(); showDocsModalWithItems([p], 'photos', null); }} /><button type="button" onClick={()=>removePhoto(idx)} className="absolute -top-2 -right-2 bg-white rounded-full p-0.5 text-xs">✕</button></div>))}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-gray-600">Venue</label>
+                <input value={venue} onChange={(e)=>setVenue(e.target.value)} className="w-full p-2 border rounded mt-1" />
               </div>
-            </div>
+              <div>
+                <label className="text-xs text-gray-600">Time</label>
+                <input type="datetime-local" value={time} onChange={(e)=>setTime(e.target.value)} className="w-full p-2 border rounded mt-1" />
+              </div>
+              <div>
+                <label className="text-xs text-gray-600">Held By</label>
+                <input value={heldBy} onChange={(e)=>setHeldBy(e.target.value)} className="w-full p-2 border rounded mt-1" />
+              </div>
 
-            <div>
-              <label className="text-xs text-gray-600">Documents (URLs or local files)</label>
-              <input type="file" onChange={onDocChange} multiple className="w-full mt-1" />
-              <div className="mt-2 space-y-1">
-                {docUrlsOrNames.map((d,idx)=>(<div key={idx} className="flex items-center justify-between bg-gray-50 p-2 rounded">
-                  <div className="text-sm truncate max-w-[200px]">
-                    {typeof d === "string" && /^https?:\/\//i.test(d) ? (<a href={d} target="_blank" rel="noreferrer" className="text-indigo-600 underline">{d}</a>) : (<span>{d}</span>)}
+              <div>
+                <label className="text-xs text-gray-600">Attendees</label>
+                <div className="mt-1">
+                  <div className="flex gap-2">
+                    <input id="attendeeInputModal" placeholder="Name" className="flex-1 p-2 border rounded" />
+                    <button type="button" onClick={()=>{ const el = document.getElementById("attendeeInputModal"); if (!el) return; const v = el.value.trim(); if (!v) return; addAttendee(v); el.value = ""; }} className="px-3 py-2 bg-gray-100 rounded">+ Add</button>
                   </div>
-                  <button type="button" onClick={()=>removeDoc(idx)} className="text-xs text-red-500">Remove</button>
-                </div>))}
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {attendees.map((a,i)=>(<div key={i} className="px-2 py-1 bg-gray-50 border rounded text-sm flex items-center gap-2"><span>{a}</span><button type="button" onClick={()=>removeAttendee(i)} className="text-xs text-red-500">✕</button></div>))}
+                  </div>
+                </div>
               </div>
-            </div>
 
-          </div>
-        </form>
-      </div>
+              <div className="md:col-span-2">
+                <label className="text-xs text-gray-600">Notes</label>
+                <textarea value={notes} onChange={(e)=>setNotes(e.target.value)} className="w-full p-2 border rounded mt-1 h-28" />
+              </div>
+
+              <div>
+                <label className="text-xs text-gray-600">Photos</label>
+                <input type="file" accept="image/*" multiple onChange={onPhotoChange} className="w-full mt-1" />
+                <div className="mt-2 flex gap-2 overflow-x-auto">
+                  {photoUploads.map((p, idx) => (
+                    <div key={p.id} className="relative">
+                      <img
+                        src={p.url || p.preview}
+                        alt={p.name || "preview"}
+                        className="w-20 h-20 object-cover rounded cursor-pointer"
+                        onClick={(e)=>{ e.stopPropagation(); showDocsModalWithItems([p.url || p.preview], 'photos', null); }}
+                      />
+                      {p.uploading ? <div className="absolute inset-0 flex items-center justify-center text-xs bg-white/70">Uploading…</div> : null}
+                      <button type="button" onClick={()=>removePhoto(idx)} className="absolute -top-2 -right-2 bg-white rounded-full p-0.5 text-xs">✕</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs text-gray-600">Documents (local files will be uploaded)</label>
+                <input type="file" onChange={onDocChange} multiple className="w-full mt-1" />
+                <div className="mt-2 space-y-1">
+                  {docUploads.map((d, idx)=>(<div key={d.id} className="flex items-center justify-between bg-gray-50 p-2 rounded">
+                    <div className="text-sm truncate max-w-[200px]">
+                      {d.url ? (<a href={d.url} target="_blank" rel="noreferrer" className="text-indigo-600 underline">{d.name || d.url}</a>) : (<span>{d.name || "Uploading..."}</span>)}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {d.uploading ? <div className="text-xs text-gray-500">Uploading…</div> : null}
+                      <button type="button" onClick={()=>removeDoc(idx)} className="text-xs text-red-500">Remove</button>
+                    </div>
+                  </div>))}
+                </div>
+              </div>
+
+            </div>
+          </form>
+        </div>
+      </ModalPortal>
     );
   }
 
   function ConfirmDeleteModal({ meeting, onCancel, onConfirm }) {
     if (!meeting) return null;
     return (
-      <div className="fixed inset-0 z-90 bg-black bg-opacity-45 flex items-center justify-center p-4" role="dialog" aria-modal="true">
-        <div className="w-full max-w-md bg-white rounded-xl shadow-2xl p-6">
-          <div className="text-lg font-semibold mb-2">Confirm delete</div>
-          <div className="text-sm text-gray-600 mb-4">Are you sure you want to delete meeting <span className="font-medium">{meeting.meetingId}</span> held by <span className="font-medium">{meeting.heldBy}</span>? This cannot be undone.</div>
-          <div className="flex justify-end gap-2">
-            <button onClick={onCancel} className="px-4 py-2 rounded bg-gray-100">Cancel</button>
-            <button onClick={() => onConfirm(meeting)} className="px-4 py-2 rounded bg-red-600 text-white">Delete</button>
+      <ModalPortal>
+        <div className="fixed inset-0 flex items-center justify-center p-4" role="dialog" aria-modal="true" style={{ zIndex: 99999 }}>
+          <div className="absolute inset-0 bg-black bg-opacity-45" onClick={onCancel} />
+          <div className="relative w-full max-w-md bg-white rounded-xl shadow-2xl p-6">
+            <div className="text-lg font-semibold mb-2">Confirm delete</div>
+            <div className="text-sm text-gray-600 mb-4">Are you sure you want to delete meeting <span className="font-medium">{meeting.meetingId}</span> held by <span className="font-medium">{meeting.heldBy}</span>? This cannot be undone.</div>
+            <div className="flex justify-end gap-2">
+              <button onClick={onCancel} className="px-4 py-2 rounded bg-gray-100">Cancel</button>
+              <button onClick={() => onConfirm(meeting)} className="px-4 py-2 rounded bg-red-600 text-white">Delete</button>
+            </div>
           </div>
+        </div>
+      </ModalPortal>
+    );
+  }
+
+  // ----------------- LOGS (line chart) -----------------
+  const [logsItems, setLogsItems] = useState([]);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [logsError, setLogsError] = useState(null);
+  const [logsTotalCount, setLogsTotalCount] = useState(null);
+
+  // Chart should be hidden when filters are active
+  const showLogsChart = Boolean(villageIdState) && !debouncedVenue && !debouncedHeldBy && !showOnlyMine;
+
+  // fetch logs for Meetings
+  useEffect(() => {
+    let mounted = true;
+
+    if (!showLogsChart) {
+      setLogsItems([]);
+      setLogsTotalCount(null);
+      setLogsError(null);
+      setLogsLoading(false);
+      return;
+    }
+
+    (async () => {
+      setLogsLoading(true);
+      setLogsError(null);
+      try {
+        const params = new URLSearchParams();
+        params.append("type", "Meeting");
+        if (villageIdState) params.append("villageId", villageIdState);
+        // request first page of logs for chart; you can request larger limit if you want to aggregate more months
+        params.append("page", "1");
+        params.append("limit", String(Math.max(100, limit))); // fetch up to 100 by default for chart
+        const url = `${API_BASE}/logs?${params.toString()}`;
+        const res = await doProtectedFetch(url, { method: "GET" });
+        const text = await res.text().catch(()=>"");
+        if (!res.ok) {
+          const msg = `Failed to fetch logs: ${res.status} ${res.statusText} ${text.slice(0,200)}`;
+          throw new Error(msg);
+        }
+        const payload = (() => { try { return JSON.parse(text || "{}"); } catch { return null; } })();
+        const result = payload?.result ?? payload ?? {};
+        const items = result.items ?? (Array.isArray(result) ? result : []);
+        const count = Number(result.count ?? null);
+        if (!mounted) return;
+        setLogsItems(Array.isArray(items) ? items : []);
+        setLogsTotalCount(!Number.isNaN(count) ? count : null);
+      } catch (err) {
+        console.error("fetchLogs:", err);
+        if (!mounted) return;
+        setLogsError(err.message || "Failed to load logs");
+        setLogsItems([]);
+      } finally {
+        if (mounted) setLogsLoading(false);
+      }
+    })();
+
+    return () => { mounted = false; };
+  }, [showLogsChart, villageIdState, limit, doProtectedFetch]);
+
+  // Logs line chart component (same style as other pages)
+  function LogsLineChart({ items }) {
+    if (!items || items.length === 0) {
+      return <div className="text-sm text-gray-500">No activity logs available to plot.</div>;
+    }
+
+    function normalizeAction(a) {
+      if (!a) return "other";
+      const lower = String(a).toLowerCase();
+      if (lower.includes("delete")) return "Delete";
+      if (lower.includes("edited") || lower.includes("edit")) return "Edited";
+      if (lower.includes("insert")) return "Insert";
+      return "other";
+    }
+
+    const map = {}; // { 'YYYY-MM': { Insert, Edited, Delete } }
+    items.forEach((it) => {
+      const timeStr = it.updateTime || it.update_time || it.time || "";
+      let monthKey = null;
+      if (typeof timeStr === "string" && timeStr.length >= 7) {
+        const m = timeStr.match(/^(\d{4})[-\/](\d{2})/);
+        if (m) monthKey = `${m[1]}-${m[2]}`;
+        else {
+          const parsed = new Date(timeStr);
+          if (!Number.isNaN(parsed.getTime())) {
+            const y = parsed.getFullYear();
+            const mm = String(parsed.getMonth() + 1).padStart(2, "0");
+            monthKey = `${y}-${mm}`;
+          }
+        }
+      } else if (timeStr instanceof Date) {
+        const y = timeStr.getFullYear();
+        const mm = String(timeStr.getMonth() + 1).padStart(2, "0");
+        monthKey = `${y}-${mm}`;
+      }
+      if (!monthKey) monthKey = "unknown";
+      if (!map[monthKey]) map[monthKey] = { Insert: 0, Edited: 0, Delete: 0 };
+      const act = normalizeAction(it.action);
+      if (act === "Insert" || act === "Edited" || act === "Delete") {
+        map[monthKey][act] = (map[monthKey][act] || 0) + 1;
+      }
+    });
+
+    const months = Object.keys(map).filter(k => k !== "unknown").sort((a, b) => a.localeCompare(b));
+    if (months.length === 0) months.push("unknown");
+
+    const insertSeries = months.map(m => map[m]?.Insert ?? 0);
+    const editedSeries = months.map(m => map[m]?.Edited ?? 0);
+    const deleteSeries = months.map(m => map[m]?.Delete ?? 0);
+
+    const maxVal = Math.max(...insertSeries, ...editedSeries, ...deleteSeries, 1);
+
+    const width = 820;
+    const height = 260;
+    const paddingLeft = 72;
+    const paddingRight = 24;
+    const paddingTop = 24;
+    const paddingBottom = 48;
+    const plotWidth = width - paddingLeft - paddingRight;
+    const plotHeight = height - paddingTop - paddingBottom;
+
+    const xForIndex = (i) => {
+      if (months.length === 1) return paddingLeft + plotWidth / 2;
+      return paddingLeft + (i / (months.length - 1)) * plotWidth;
+    };
+    const yForValue = (v) => {
+      const frac = v / maxVal;
+      return paddingTop + (1 - frac) * plotHeight;
+    };
+
+    const makePath = (series) => series.map((val, idx) => {
+      const x = xForIndex(idx);
+      const y = yForValue(val);
+      return `${idx === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+    }).join(" ");
+
+    const colors = { Insert: "#10b981", Edited: "#f59e0b", Delete: "#ef4444" };
+    const ticks = 4;
+    const tickVals = Array.from({ length: ticks + 1 }).map((_, i) => Math.round((i / ticks) * maxVal));
+
+    return (
+      <div className="bg-white rounded-lg border p-3 shadow-sm w-full">
+        <div className="flex items-start justify-between mb-2">
+          <div>
+            <div className="text-sm text-gray-600">Activity over time (logs)</div>
+            <div className="text-lg font-semibold">Insert / Edited / Delete — Meetings</div>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="text-sm text-gray-500">Showing logs (recent)</div>
+            <div className="text-xs text-gray-400">• Chart hidden when filters active</div>
+          </div>
+        </div>
+
+        <div className="overflow-auto">
+          <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label="Meetings activity chart">
+            <defs>
+              <filter id="softShadow" x="-50%" y="-50%" width="200%" height="200%">
+                <feDropShadow dx="0" dy="4" stdDeviation="6" floodColor="#0b1220" floodOpacity="0.06" />
+              </filter>
+            </defs>
+
+            {tickVals.map((tv, i) => {
+              const y = yForValue(tv);
+              return (
+                <g key={`tick_${i}`}>
+                  <line x1={paddingLeft} x2={width - paddingRight} y1={y} y2={y} stroke="#eef2ff" strokeWidth="1" />
+                  <text x={paddingLeft - 12} y={y + 4} fontSize="11" fill="#475569" textAnchor="end" style={{ fontFamily: "Inter, system-ui" }}>{tv}</text>
+                </g>
+              );
+            })}
+
+            {months.map((m, i) => {
+              const x = xForIndex(i);
+              return (
+                <g key={`x_${m}`}>
+                  <text x={x} y={height - 18} fontSize="11" fill="#475569" textAnchor="middle" style={{ fontFamily: "Inter, system-ui" }}>{m}</text>
+                </g>
+              );
+            })}
+
+            {[
+              { key: "Insert", series: insertSeries },
+              { key: "Edited", series: editedSeries },
+              { key: "Delete", series: deleteSeries }
+            ].map(({ key, series }) => {
+              const path = series.map((val, idx) => {
+                const x = xForIndex(idx);
+                const y = yForValue(val);
+                return `${idx === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+              }).join(" ");
+              const lastX = xForIndex(series.length - 1);
+              const firstX = xForIndex(0);
+              const baseY = yForValue(0);
+              const areaPath = `${path} L ${lastX.toFixed(2)} ${baseY.toFixed(2)} L ${firstX.toFixed(2)} ${baseY.toFixed(2)} Z`;
+              return <path key={`area_${key}`} d={areaPath} fill={colors[key]} opacity="0.06" />;
+            })}
+
+            {[
+              { key: "Insert", series: insertSeries },
+              { key: "Edited", series: editedSeries },
+              { key: "Delete", series: deleteSeries }
+            ].map(({ key, series }) => {
+              const d = makePath(series);
+              return (
+                <g key={`line_${key}`}>
+                  <path d={d} fill="none" stroke={colors[key]} strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" style={{ filter: "url(#softShadow)" }}>
+                    <animate attributeName="stroke-dasharray" from="0,1000" to="1000,0" dur="800ms" fill="freeze" />
+                  </path>
+                  {series.map((val, idx) => {
+                    const x = xForIndex(idx);
+                    const y = yForValue(val);
+                    return <circle key={`pt_${key}_${idx}`} cx={x} cy={y} r={3.6} fill="#fff" stroke={colors[key]} strokeWidth={2} />;
+                  })}
+                </g>
+              );
+            })}
+
+            <g transform={`translate(${paddingLeft}, ${paddingTop - 6})`}>
+              {["Insert", "Edited", "Delete"].map((k, i) => (
+                <g key={`leg_${k}`} transform={`translate(${i * 110}, 0)`}>
+                  <rect x={0} y={-12} width={14} height={8} rx={2} fill={colors[k]} />
+                  <text x={20} y={-4} fontSize="12" fill="#0f172a" style={{ fontFamily: "Inter, system-ui" }}>{k}</text>
+                </g>
+              ))}
+            </g>
+          </svg>
         </div>
       </div>
     );
   }
 
+  // ---------------- RENDER ----------------
   const totalPages = Math.max(1, Math.ceil((totalCount || 0) / (limit || 1)));
   function gotoPage(p) { const np = Math.max(1, Math.min(totalPages, Number(p) || 1)); if (np === page) return; setPage(np); window.scrollTo({ top: 0, behavior: "smooth" }); }
   function renderPageButtons() {
@@ -735,7 +1147,6 @@ export default function MeetingsPage() {
     return pages.map((p,idx)=>{ if (p==='left-ellipsis' || p==='right-ellipsis') return <span key={`e-${idx}`} className="px-3 py-1">…</span>; return (<button key={p} onClick={()=>gotoPage(p)} className={`px-3 py-1 rounded ${p===page ? 'bg-indigo-600 text-white' : 'bg-white border hover:bg-gray-50'}`}>{p}</button>); });
   }
 
-  /* ------------------ Render ------------------ */
   return (
     <div className="min-h-screen bg-[#f8f0dc] font-sans">
       <MainNavbar showVillageInNavbar={true} />
@@ -802,6 +1213,21 @@ export default function MeetingsPage() {
             </div>
           </div>
 
+          {/* ---------- LOGS LINE CHART: placed between pagination & meetings list ---------- */}
+          <div className="mt-6">
+            {showLogsChart ? (
+              logsLoading ? (
+                <div className="text-sm text-gray-600 py-4">Loading activity chart…</div>
+              ) : logsError ? (
+                <div className="text-sm text-red-600 py-2">{logsError}</div>
+              ) : (
+                <LogsLineChart items={logsItems} />
+              )
+            ) : (
+              <div className="text-sm text-gray-400 italic">Activity chart (Meetings) hidden while filters are active or village is not selected.</div>
+            )}
+          </div>
+
           <div className="mt-2 p-4">
             <div className="flex items-center justify-between mb-4"><div className="text-lg font-semibold">Meeting list</div><div className="text-sm text-gray-500">{loading ? 'Loading...' : `${(meetings||[]).length} meetings (showing ${Math.min(totalCount, (page-1)*limit+1)}–${Math.min(totalCount, page*limit)})`}</div></div>
 
@@ -809,7 +1235,6 @@ export default function MeetingsPage() {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
               {(meetings||[]).map((m)=>{
-                // determine photos/docs robustly using normalizeItemsList (prefer raw payload)
                 const rawPhotosSource = (m.raw && (m.raw.photos ?? m.raw.photos_urls ?? m.raw.photos_list)) ?? m.photos ?? [];
                 const rawDocsSource = (m.raw && (m.raw.docs ?? m.raw.documents ?? m.raw.docs_list)) ?? m.docs ?? [];
                 const normalizedPhotos = normalizeItemsList(rawPhotosSource);
@@ -820,21 +1245,17 @@ export default function MeetingsPage() {
                 const cover = (normalizedPhotos && normalizedPhotos[0] && normalizedPhotos[0].url) ? normalizedPhotos[0].url : null;
                 const heldByInitial = (m.heldBy && String(m.heldBy).trim().charAt(0).toUpperCase()) || "?";
 
+                const owned = isMeetingOwned(m);
+
                 return (
                   <div
                     key={m.id}
                     className={`relative rounded-2xl overflow-hidden bg-blue-100 shadow-lg transform transition hover:-translate-y-1 hover:shadow-2xl`}
                     style={{ border: "1px solid rgba(15,23,42,0.04)" }}
                   >
-                    {/* clickable cover image (if available) */}
-                    {cover && (<div className="w-full h-40 bg-gray-100 overflow-hidden">
-                      <img src={cover} alt="cover" className="w-full h-full object-cover cursor-pointer" onClick={(e)=>{ e.stopPropagation(); openDocsModal(m, 'photos'); }} />
-                    </div>)}
-
                     <div className="p-4 pt-6">
                       <div className="flex items-start justify-between">
                         <div className="flex items-center gap-3">
-                          {/* avatar circle */}
                           <div className="w-10 h-10 rounded-full bg-indigo-600 flex items-center justify-center text-white font-semibold shadow-sm select-none">
                             {heldByInitial}
                           </div>
@@ -844,7 +1265,7 @@ export default function MeetingsPage() {
                           </div>
                         </div>
 
-                        {/* action buttons */}
+                        {owned ? (
                         <div className="flex flex-col items-center gap-2">
                           <button
                             onClick={(e)=>{ e.stopPropagation(); openEdit(m); }}
@@ -863,6 +1284,9 @@ export default function MeetingsPage() {
                             <IconDelete />
                           </button>
                         </div>
+                        ) : (
+                          <div className="flex items-center gap-2 text-xs text-gray-400" title="Not editable by you">—</div>
+                        )}
                       </div>
 
                       <div className="mt-3 text-sm text-slate-600 line-clamp-3">{m.notes || 'No description provided.'}</div>
@@ -882,9 +1306,7 @@ export default function MeetingsPage() {
                         <div className="text-xs text-gray-400">{/* placeholder for any right-side tiny info */}</div>
                       </div>
                     </div>
-                    <hr style={{border: "none", height: "2px",backgroundColor: "#ffffffff"}}/>
 
-                    {/* footer buttons */}
                     <div className="p-3 border-t bg-blue-100 flex items-center justify-center gap-3">
                       <button
                         onClick={(e)=>{ e.stopPropagation(); openDocsModal(m, 'photos'); }}
@@ -916,13 +1338,38 @@ export default function MeetingsPage() {
       </div>
 
       {/* meeting modal */}
-      {showModal && (<MeetingModal initial={editing ? { ...editing, photos: editing.photos || [], docs: editing.docs || [] } : null} onClose={()=>{ setShowModal(false); setEditing(null); }} />)}
+      {showModal && (
+        <MeetingModal
+          initial={editing ? { ...editing, photos: editing.photos || [], docs: editing.docs || [] } : null}
+          onClose={()=>{ setShowModal(false); setEditing(null); }}
+        />
+      )}
 
       {/* delete modal */}
-      {showDeleteModal && (<ConfirmDeleteModal meeting={deleteTarget} onCancel={()=>{ setShowDeleteModal(false); setDeleteTarget(null); }} onConfirm={(m)=>handleDelete(m)} />)}
+      {showDeleteModal && (
+        <ConfirmDeleteModal meeting={deleteTarget} onCancel={()=>{ setShowDeleteModal(false); setDeleteTarget(null); }} onConfirm={(m)=>handleDelete(m)} />
+      )}
 
-      {/* docs modal (always used for both photos & docs now) */}
-      {showDocsModal && (<div className="fixed inset-0 z-90"><DocsModal items={docsModalItems} type={docsModalType} meeting={docsModalMeeting} onClose={() => { setShowDocsModal(false); setDocsModalItems([]); setDocsModalType(null); setDocsModalMeeting(null); }} /></div>)}
+      {/* DocumentModal used for both photos & docs (render portal-wrapped) */}
+      {showDocsModal && (
+        <ModalPortal>
+          <div style={{ zIndex: 99999 }}>
+            <DocumentModal
+              open={showDocsModal}
+              onClose={() => {
+                setShowDocsModal(false);
+                setDocsModalItems([]);
+                setDocsModalType(null);
+                setDocsModalMeeting(null);
+                setDocsModalLoading(false);
+              }}
+              docs={docsModalItems}
+              title={docsModalType === 'photos' ? 'Photos' : (docsModalType === 'docs' ? 'Documents' : 'Files')}
+              loading={docsModalLoading}
+            />
+          </div>
+        </ModalPortal>
+      )}
     </div>
   );
 }

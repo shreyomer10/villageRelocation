@@ -192,32 +192,279 @@ export default function FacilityDetails() {
 
   const verifRefs = useRef({});
 
+  // ----- LOGS (line chart) state + abort + cache -----
+  const [logsItems, setLogsItems] = useState([]);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [logsError, setLogsError] = useState(null);
+  const logsControllerRef = useRef(null);
+  const logsCacheRef = useRef({}); // keyed by village|facility|filters
+
+  function authHeaders() {
+    const token = localStorage.getItem("token") || null;
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }
+
+  async function fetchWithCreds(url, opts = {}) {
+    try {
+      const headers = { ...(opts.headers || {}), ...(opts.authHeaders || {}) };
+      const res = await fetch(url, {
+        method: opts.method || 'GET',
+        credentials: 'include',
+        headers,
+        body: opts.body,
+        signal: opts.signal,
+      });
+      const text = await res.text().catch(() => "");
+      let json = null;
+      try { json = text ? JSON.parse(text) : null; } catch { json = null; }
+      return { res, ok: res.ok, status: res.status, json, text };
+    } catch (err) {
+      if (err && err.name === 'AbortError') return { res: null, ok: false, status: 0, json: null, text: 'aborted', aborted: true };
+      return { res: null, ok: false, status: 0, json: null, text: String(err) };
+    }
+  }
+
   useEffect(() => {
-    // debounce search input to update server-side nameFilter
-    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
-    searchDebounceRef.current = setTimeout(() => {
-      const trimmed = (search || "").trim();
-      if (trimmed !== nameFilter) {
-        setNameFilter(trimmed);
-        setPage(1);
+    // debounce logs fetch to avoid spamming when params change rapidly
+    const key = `${villageId || ''}|${facilityId || ''}|${statusFilter||''}|${fromDateFilter||''}|${toDateFilter||''}|${nameFilter||''}`;
+
+    const showLogsChart = Boolean(villageId && facilityId) && !statusFilter && !fromDateFilter && !toDateFilter && !nameFilter;
+
+    if (!showLogsChart) {
+      try { if (logsControllerRef.current) { logsControllerRef.current.abort(); logsControllerRef.current = null; } } catch {}
+      setLogsItems([]);
+      setLogsLoading(false);
+      setLogsError(null);
+      return;
+    }
+
+    let mounted = true;
+    const tid = setTimeout(async () => {
+      try {
+        if (logsCacheRef.current[key]) {
+          if (!mounted) return;
+          setLogsItems(logsCacheRef.current[key]);
+          setLogsError(null);
+          setLogsLoading(false);
+          return;
+        }
+
+        try { if (logsControllerRef.current) logsControllerRef.current.abort(); } catch {}
+        const controller = new AbortController();
+        logsControllerRef.current = controller;
+        setLogsLoading(true);
+        setLogsError(null);
+
+        const params = new URLSearchParams();
+        params.append('type', 'Facilities'); // <-- type is Facilities
+        if (villageId) params.append('villageId', villageId);
+        if (facilityId) params.append('facilityId', facilityId);
+        params.append('page', '1');
+        params.append('limit', String(Math.max(100, limit)));
+        const url = `${API_BASE}/logs?${params.toString()}`;
+
+        const { ok, status, json, text, aborted } = await fetchWithCreds(url, { method: 'GET', signal: controller.signal, authHeaders: authHeaders() });
+        if (!mounted) return;
+        if (aborted) return;
+
+        if (!ok) {
+          if (status === 404) {
+            setLogsItems([]);
+            setLogsError(null);
+            setLogsLoading(false);
+            return;
+          }
+          throw new Error((json && (json.message || json.error)) || text || `Failed to fetch logs: ${status}`);
+        }
+
+        const payload = json ?? {};
+        const result = payload.result ?? payload ?? {};
+        const items = result.items ?? (Array.isArray(result) ? result : []);
+        const finalItems = Array.isArray(items) ? items : [];
+        logsCacheRef.current[key] = finalItems;
+        setLogsItems(finalItems);
+        setLogsError(null);
+      } catch (err) {
+        if (err && err.name === 'AbortError') return;
+        console.error('fetch logs error:', err);
+        setLogsError(err.message || 'Failed to load logs');
+        setLogsItems([]);
+      } finally {
+        if (mounted) setLogsLoading(false);
       }
-    }, 400);
-    return () => {
-      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    }, 420);
+
+    return () => { mounted = false; clearTimeout(tid); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [villageId, facilityId, statusFilter, fromDateFilter, toDateFilter, nameFilter, limit]);
+
+  // Chart renderer — focused on the three actions required by user
+  function LogsLineChart({ items }) {
+    if (!items || items.length === 0) {
+      return <div className="text-sm text-gray-500">No activity logs available to plot.</div>;
+    }
+
+    function normalizeAction(a) {
+      if (!a) return 'other';
+      const lower = String(a).toLowerCase();
+      if (lower.includes('delete')) return 'Delete';
+      if (lower.includes('edited') || lower.includes('edit')) return 'Edited';
+      if (lower.includes('insert') || lower.includes('create') || lower.includes('added')) return 'Insert';
+      if (lower.includes('facility') && lower.includes('insert')) return 'Insert';
+      if (lower.includes('facility') && (lower.includes('edit') || lower.includes('updated') || lower.includes('edited'))) return 'Edited';
+      if (lower.includes('facility') && lower.includes('delete')) return 'Delete';
+      return 'other';
+    }
+
+    const byMonth = {};
+    items.forEach((it) => {
+      const timeStr = it.updateTime ?? it.update_time ?? it.time ?? it.createdAt ?? it.insertedAt ?? it.created_at ?? null;
+      let monthKey = null;
+      if (typeof timeStr === 'string' && timeStr.length >= 7) {
+        const m = timeStr.match(/^(\d{4})[-\/](\d{2})/);
+        if (m) monthKey = `${m[1]}-${m[2]}`;
+        else {
+          const parsed = new Date(timeStr);
+          if (!Number.isNaN(parsed.getTime())) {
+            const y = parsed.getFullYear();
+            const mm = String(parsed.getMonth() + 1).padStart(2, '0');
+            monthKey = `${y}-${mm}`;
+          }
+        }
+      } else if (timeStr instanceof Date) {
+        const y = timeStr.getFullYear();
+        const mm = String(timeStr.getMonth() + 1).padStart(2, '0');
+        monthKey = `${y}-${mm}`;
+      } else {
+        const parsed = new Date(it.createdAt || it.time || it.insertedAt || Date.now());
+        if (!Number.isNaN(parsed.getTime())) {
+          const y = parsed.getFullYear();
+          const mm = String(parsed.getMonth() + 1).padStart(2, '0');
+          monthKey = `${y}-${mm}`;
+        } else monthKey = 'unknown';
+      }
+      if (!monthKey) monthKey = 'unknown';
+      if (!byMonth[monthKey]) byMonth[monthKey] = { Insert: 0, Edited: 0, Delete: 0 };
+      const action = normalizeAction(it.action ?? it.event ?? it.type ?? it.activity ?? it.description ?? '');
+      if (action === 'Insert' || action === 'Edited' || action === 'Delete') {
+        byMonth[monthKey][action] = (byMonth[monthKey][action] || 0) + 1;
+      }
+    });
+
+    const months = Object.keys(byMonth).filter(k => k !== 'unknown').sort((a, b) => a.localeCompare(b));
+    if (months.length === 0) months.push('unknown');
+
+    const insertSeries = months.map(m => byMonth[m]?.Insert ?? 0);
+    const editedSeries = months.map(m => byMonth[m]?.Edited ?? 0);
+    const deleteSeries = months.map(m => byMonth[m]?.Delete ?? 0);
+
+    const maxVal = Math.max(...insertSeries, ...editedSeries, ...deleteSeries, 1);
+    const width = 820;
+    const height = 240;
+    const paddingLeft = 64;
+    const paddingRight = 24;
+    const paddingTop = 20;
+    const paddingBottom = 44;
+    const plotWidth = width - paddingLeft - paddingRight;
+    const plotHeight = height - paddingTop - paddingBottom;
+
+    const xForIndex = (i) => {
+      if (months.length === 1) return paddingLeft + plotWidth / 2;
+      return paddingLeft + (i / (months.length - 1)) * plotWidth;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search]);
+    const yForValue = (v) => {
+      const frac = v / maxVal;
+      return paddingTop + (1 - frac) * plotHeight;
+    };
 
-  useEffect(() => {
-    loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [facilityId, villageId]);
+    const ticks = 4;
+    const tickVals = Array.from({ length: ticks + 1 }).map((_, i) => Math.round((i / ticks) * maxVal));
+    const colors = { Insert: "#10b981", Edited: "#f59e0b", Delete: "#ef4444" };
 
-  useEffect(() => {
-    // fetch when any server-side filter or pagination changes
-    fetchVerifications(page, limit);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, limit, nameFilter, statusFilter, fromDateFilter, toDateFilter]);
+    return (
+      <div className="bg-white rounded-lg border p-3 shadow-sm w-full mb-4">
+        <div className="flex items-start justify-between mb-2">
+          <div>
+            <div className="text-sm text-gray-600">Facility activity (Facilities)</div>
+            <div className="text-lg font-semibold">Facility Insert / Edited / Deleted</div>
+          </div>
+          <div className="text-xs text-gray-400">Hidden when server filters are active</div>
+        </div>
+
+        <div className="overflow-auto">
+          <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label="Facility activity chart">
+            <defs>
+              <filter id="softShadow" x="-50%" y="-50%" width="200%" height="200%">
+                <feDropShadow dx="0" dy="4" stdDeviation="6" floodColor="#0b1220" floodOpacity="0.06" />
+              </filter>
+            </defs>
+
+            {tickVals.map((tv, i) => {
+              const y = yForValue(tv);
+              return (
+                <g key={`tick_${i}`}>
+                  <line x1={paddingLeft} x2={width - paddingRight} y1={y} y2={y} stroke="#eef2ff" strokeWidth="1" />
+                  <text x={paddingLeft - 8} y={y + 4} fontSize="11" fill="#475569" textAnchor="end" style={{ fontFamily: "Inter, system-ui" }}>{tv}</text>
+                </g>
+              );
+            })}
+
+            {months.map((m, i) => {
+              const x = xForIndex(i);
+              return (
+                <g key={`x_${m}`}>
+                  <text x={x} y={height - 18} fontSize="11" fill="#475569" textAnchor="middle" style={{ fontFamily: "Inter, system-ui" }}>{m}</text>
+                </g>
+              );
+            })}
+
+            {["Insert", "Edited", "Delete"].map((key) => {
+              const series = key === "Insert" ? insertSeries : key === "Edited" ? editedSeries : deleteSeries;
+              const path = series.map((val, idx) => {
+                const x = xForIndex(idx);
+                const y = yForValue(val);
+                return `${idx === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+              }).join(" ");
+              const lastX = xForIndex(series.length - 1);
+              const firstX = xForIndex(0);
+              const baseY = yForValue(0);
+              const areaPath = `${path} L ${lastX.toFixed(2)} ${baseY.toFixed(2)} L ${firstX.toFixed(2)} ${baseY.toFixed(2)} Z`;
+              return <path key={`area_${key}`} d={areaPath} fill={colors[key]} opacity="0.06" />;
+            })}
+
+            {["Insert", "Edited", "Delete"].map((key) => {
+              const series = key === "Insert" ? insertSeries : key === "Edited" ? editedSeries : deleteSeries;
+              const d = series.map((val, idx) => {
+                const x = xForIndex(idx);
+                const y = yForValue(val);
+                return `${idx === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+              }).join(" ");
+              return (
+                <g key={`line_${key}`}>
+                  <path d={d} fill="none" stroke={colors[key]} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" style={{ filter: "url(#softShadow)" }} />
+                  {series.map((val, idx) => {
+                    const x = xForIndex(idx);
+                    const y = yForValue(val);
+                    return <circle key={`pt_${key}_${idx}`} cx={x} cy={y} r={3.6} fill="#fff" stroke={colors[key]} strokeWidth={2} />;
+                  })}
+                </g>
+              );
+            })}
+
+            <g transform={`translate(${paddingLeft}, ${paddingTop - 6})`}>
+              {["Insert", "Edited", "Delete"].map((k, i) => (
+                <g key={`leg_${k}`} transform={`translate(${i * 120}, 0)`}>
+                  <rect x={0} y={-12} width={14} height={8} rx={2} fill={colors[k]} />
+                  <text x={20} y={-4} fontSize="12" fill="#0f172a" style={{ fontFamily: "Inter, system-ui" }}>{k}</text>
+                </g>
+              ))}
+            </g>
+
+          </svg>
+        </div>
+      </div>
+    );
+  }
 
   function authFetch(url, opts = {}) {
     return fetch(url, { credentials: "include", headers: { "Content-Type": "application/json", ...(opts.headers || {}) }, ...opts });
@@ -486,6 +733,40 @@ export default function FacilityDetails() {
     });
   }
 
+  useEffect(() => {
+    // debounce search input to update server-side nameFilter
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = setTimeout(() => {
+      const trimmed = (search || "").trim();
+      if (trimmed !== nameFilter) {
+        setNameFilter(trimmed);
+        setPage(1);
+      }
+    }, 400);
+    return () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
+
+  useEffect(() => {
+    loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [facilityId, villageId]);
+
+  useEffect(() => {
+    // fetch when any server-side filter or pagination changes
+    fetchVerifications(page, limit);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, limit, nameFilter, statusFilter, fromDateFilter, toDateFilter]);
+
+  // cleanup controllers on unmount
+  useEffect(() => {
+    return () => {
+      try { if (logsControllerRef.current) logsControllerRef.current.abort(); } catch {}
+    };
+  }, []);
+
   if (loading) return (
     <div className="min-h-screen bg-[#f8f0dc] font-sans">
       <MainNavbar showVillageInNavbar={true} />
@@ -508,6 +789,9 @@ export default function FacilityDetails() {
     </div>
   );
 
+  // Chart visible only when no server-side filters are active (recomputed here for rendering)
+  const showLogsChart = Boolean(villageId && facilityId) && !statusFilter && !fromDateFilter && !toDateFilter && !nameFilter;
+
   return (
     <div className="min-h-screen bg-[#f8f0dc] font-sans">
       <MainNavbar showVillageInNavbar={true} />
@@ -522,6 +806,21 @@ export default function FacilityDetails() {
           </div>
 
           <div style={{ width: 120 }} />
+        </div>
+
+        {/* Chart: placed above filters and hidden if any server-side filters are active */}
+        <div>
+          {showLogsChart ? (
+            logsLoading ? (
+              <div className="text-sm text-gray-600 py-2">Loading activity chart…</div>
+            ) : logsError ? (
+              <div className="text-sm text-red-600 py-2">{logsError}</div>
+            ) : (
+              <LogsLineChart items={logsItems} />
+            )
+          ) : (
+            <div className="text-sm text-gray-400 italic mb-4">Activity chart (Facilities) hidden while server-side filters are active.</div>
+          )}
         </div>
 
         {/* Filters */}

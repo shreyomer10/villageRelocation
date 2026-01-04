@@ -25,6 +25,17 @@ function StatusBadge({ status }) {
   return <span className={`text-xs px-2 py-1 rounded ${e.cls}`}>{e.label}</span>;
 }
 
+/**
+ * HomeDetailsPage (updated)
+ * - Adds a cached, debounced line chart (activity logs) for actions:
+ *     "Verification Insert", "Verification Edited", "Verification Deleted"
+ *   The chart calls /logs with credentials included and Authorization header (if token present).
+ * - Chart is visible only when NO server-side filters are active (status/fromDate/toDate/homeId/name).
+ * - Chart fetch uses AbortController + cache keyed by village/plot/filters to avoid repeated requests.
+ * - Chart is shown above the filters block (near where timeline is displayed).
+ * - All original behaviours preserved (verifications listing, timeline, modals).
+ */
+
 export default function HomeDetailsPage() {
   const params = useParams();
   const navigate = useNavigate();
@@ -123,9 +134,7 @@ export default function HomeDetailsPage() {
   const [statusFilter, setStatusFilter] = useState('');
   const [fromDateFilter, setFromDateFilter] = useState('');
   const [toDateFilter, setToDateFilter] = useState('');
-  // optional homeId filter (keeps compatibility if you want it)
   const [homeIdFilter, setHomeIdFilter] = useState('');
-  // server-side name/search filter
   const [nameFilter, setNameFilter] = useState('');
   const searchDebounceRef = useRef(null);
 
@@ -143,30 +152,46 @@ export default function HomeDetailsPage() {
   const fetchAbortRef = useRef(null);
   const modalAbortRef = useRef(null);
 
-  async function fetchWithSignal(url, signal) {
-    const opts = {
-      method: 'GET',
-      credentials: 'include',
-      headers: {
-        'Content-Type': 'application/json',
-        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
-        'Pragma': 'no-cache'
-      },
-      signal
-    };
-    const res = await fetch(url, opts);
-    const text = await res.text().catch(() => '');
-    let json = null;
-    try { json = text ? JSON.parse(text) : null; } catch {}
-    return { ok: res.ok, status: res.status, json, text };
+  // ----- LOGS (line chart) state + abort + cache -----
+  const [logsItems, setLogsItems] = useState([]);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [logsError, setLogsError] = useState(null);
+  const logsControllerRef = useRef(null);
+  const logsCacheRef = useRef({}); // keyed by village|plot|filters
+
+  // helper to read token & build auth headers
+  function authHeaders() {
+    const token = localStorage.getItem("token") || null;
+    return token ? { Authorization: `Bearer ${token}` } : {};
   }
 
-  // House metadata
+  async function fetchWithCreds(url, opts = {}) {
+    // similar to earlier pages: uses credentials include and optional signal
+    try {
+      const headers = { ...(opts.headers || {}), ...(opts.authHeaders || {}) };
+      const res = await fetch(url, {
+        method: opts.method || 'GET',
+        credentials: 'include',
+        headers,
+        body: opts.body,
+        signal: opts.signal,
+      });
+      const text = await res.text().catch(() => "");
+      let json = null;
+      try { json = text ? JSON.parse(text) : null; } catch { json = null; }
+      return { res, ok: res.ok, status: res.status, json, text };
+    } catch (err) {
+      if (err && err.name === 'AbortError') return { res: null, ok: false, status: 0, json: null, text: 'aborted', aborted: true };
+      return { res: null, ok: false, status: 0, json: null, text: String(err) };
+    }
+  }
+
+  // ----------------- DATA FETCHERS (unchanged behaviour mostly) -----------------
   async function fetchHouse() {
     try {
       if (!resolvedPlotId) { setHouse(null); return; }
       const url = `${API_BASE}/house/one/${encodeURIComponent(resolvedPlotId)}?_t=${Date.now()}`;
-      const { ok, status, json, text } = await fetchWithSignal(url, null);
+      const { ok, status, json, text } = await fetchWithCreds(url, { headers: { 'Content-Type': 'application/json' } });
       if (!ok) {
         if (status === 401) setError((json && (json.message || json.error)) || text || 'Unauthorized');
         else console.warn('fetchHouse failed', status, text);
@@ -183,7 +208,6 @@ export default function HomeDetailsPage() {
       normalized.stagesCompleted = Array.isArray(item.stagesCompleted) ? item.stagesCompleted : [];
       setHouse(normalized);
 
-      // ensure URL matches plot
       try {
         const currentRoutePlot = params.plotId || params.plot_id;
         if (!currentRoutePlot && normalized.plotId) navigate(`/house/one/${encodeURIComponent(String(normalized.plotId))}`, { replace: true });
@@ -199,7 +223,7 @@ export default function HomeDetailsPage() {
     try {
       if (!resolvedVillageId) { setBuildings([]); return; }
       const url = `${API_BASE}/buildings/${encodeURIComponent(resolvedVillageId)}?_t=${Date.now()}`;
-      const { ok, status, json, text } = await fetchWithSignal(url, null);
+      const { ok, status, json, text } = await fetchWithCreds(url, { headers: { 'Content-Type': 'application/json' } });
       if (!ok) {
         if (status === 401) setError((json && (json.message || json.error)) || text || 'Unauthorized');
         else console.warn('fetchBuildings failed', status, text);
@@ -215,9 +239,7 @@ export default function HomeDetailsPage() {
     }
   }
 
-  // Core: fetch verifications (page, limit, optional homeId, currentStage, status, fromDate, toDate, name)
   async function fetchFieldVerifications({ page: pageArg = 1, limit: limitArg = 15, currentStage = null, status = null, fromDate = null, toDate = null, homeId = null, name = null } = {}) {
-    // abort previous
     if (fetchAbortRef.current) {
       try { fetchAbortRef.current.abort(); } catch {}
     }
@@ -245,13 +267,10 @@ export default function HomeDetailsPage() {
       if (toDate) qs.set('toDate', String(toDate));
       if (homeId) qs.set('homeId', String(homeId));
       if (name) qs.set('name', String(name));
-      // cache-busting
       qs.set('_t', String(Date.now()));
 
       const url = `${API_BASE}/field_verification/${encodeURIComponent(resolvedVillageId)}/${encodeURIComponent(resolvedPlotId)}?${qs.toString()}`;
-      console.debug('[fetchFieldVerifications] starting', { url, pageArg, limitArg, currentStage, status, fromDate, toDate, homeId, name });
-
-      const { ok, status: st, json, text } = await fetchWithSignal(url, signal);
+      const { ok, status: st, json, text } = await fetchWithCreds(url, { signal, headers: { 'Content-Type': 'application/json' }, authHeaders: authHeaders() });
 
       if (!ok) {
         if (st === 401) setError((json && (json.message || json.error)) || text || 'Unauthorized');
@@ -277,12 +296,9 @@ export default function HomeDetailsPage() {
 
       setVerifications(items);
       setTotalCount(Number(count) || 0);
-
-      console.debug('[fetchFieldVerifications] finished', { itemsCount: items.length, totalCount: count });
       return items;
     } catch (err) {
       if (err && err.name === 'AbortError') {
-        console.debug('[fetchFieldVerifications] aborted');
         return [];
       }
       console.error('fetchFieldVerifications error', err);
@@ -294,7 +310,6 @@ export default function HomeDetailsPage() {
     }
   }
 
-  // SINGLE verification fetch -> Uses /field_verification/one/:id
   async function fetchVerification(verificationId) {
     if (modalAbortRef.current) {
       try { modalAbortRef.current.abort(); } catch {}
@@ -306,7 +321,7 @@ export default function HomeDetailsPage() {
     try {
       if (!verificationId) return null;
       const url = `${API_BASE}/field_verification/one/${encodeURIComponent(verificationId)}?_t=${Date.now()}`;
-      const { ok, status, json, text } = await fetchWithSignal(url, signal);
+      const { ok, status, json, text } = await fetchWithCreds(url, { signal, authHeaders: authHeaders() });
       if (!ok) {
         console.warn('fetchVerification failed', status, text);
         return null;
@@ -337,7 +352,6 @@ export default function HomeDetailsPage() {
     return house?.typeName ?? house?.type ?? house?.typeId ?? '';
   }
 
-  // Stage map: derive from building if available, otherwise infer from fetched verifications
   function getStagesMap() {
     const building = findBuildingForHouse();
     if (building) {
@@ -388,10 +402,9 @@ export default function HomeDetailsPage() {
   const completedCount = timeline.filter(t => t.isCompleted).length;
   const pct = stagesMap.length ? Math.round((completedCount / stagesMap.length) * 100) : 0;
 
-  // displayItems now directly reflects server returned verifications (no client-side filtering/searching)
   const displayItems = useMemo(() => Array.isArray(verifications) ? verifications : [], [verifications]);
 
-  // user actions
+  // user actions similar to original code
   async function onTimelineClick(t) {
     const stageId = t?.id ?? null;
     if (!stageId) { setFilteredStage(null); setPage(1); await fetchFieldVerifications({ page: 1, limit, currentStage: null, status: statusFilter || null, fromDate: fromDateFilter || null, toDate: toDateFilter || null, homeId: homeIdFilter || null, name: nameFilter || null }); return; }
@@ -467,7 +480,6 @@ export default function HomeDetailsPage() {
     setDocsModalDocs(null);
     try {
       const data = await fetchVerification(verificationId);
-      // try common fields for docs
       const docs = (data && (data.docs || data.documents || data.photos || data.files)) ?? [];
       setDocsModalDocs(Array.isArray(docs) ? docs : []);
       setDocsModalOpen(true);
@@ -533,7 +545,7 @@ export default function HomeDetailsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resolvedVillageId, resolvedPlotId]);
 
-  // effect guard (keeps behavior consistent if external changes occur)
+  // effect guard (keeps behaviour consistent if external changes occur)
   useEffect(() => {
     (async () => {
       if (!resolvedVillageId || !resolvedPlotId) return;
@@ -547,6 +559,7 @@ export default function HomeDetailsPage() {
     return () => {
       if (fetchAbortRef.current) try { fetchAbortRef.current.abort(); } catch {}
       if (modalAbortRef.current) try { modalAbortRef.current.abort(); } catch {}
+      if (logsControllerRef.current) try { logsControllerRef.current.abort(); } catch {}
     };
   }, []);
 
@@ -575,6 +588,253 @@ export default function HomeDetailsPage() {
     });
   }
 
+  // ----------------- Logs (line chart) -----------------
+  // Chart visible only when no server-side filter is active
+  const showLogsChart = Boolean(resolvedVillageId && resolvedPlotId) &&
+    !statusFilter && !fromDateFilter && !toDateFilter && !homeIdFilter && !nameFilter;
+
+  useEffect(() => {
+    // debounce logs fetch to avoid spamming when params change rapidly
+    const key = `${resolvedVillageId || ''}|${resolvedPlotId || ''}|${statusFilter||''}|${fromDateFilter||''}|${toDateFilter||''}|${homeIdFilter||''}|${nameFilter||''}`;
+    if (!showLogsChart) {
+      try { if (logsControllerRef.current) { logsControllerRef.current.abort(); logsControllerRef.current = null; } } catch {}
+      setLogsItems([]);
+      setLogsLoading(false);
+      setLogsError(null);
+      return;
+    }
+
+    let mounted = true;
+    const tid = setTimeout(async () => {
+      try {
+        if (logsCacheRef.current[key]) {
+          if (!mounted) return;
+          setLogsItems(logsCacheRef.current[key]);
+          setLogsError(null);
+          setLogsLoading(false);
+          return;
+        }
+
+        try { if (logsControllerRef.current) logsControllerRef.current.abort(); } catch {}
+        const controller = new AbortController();
+        logsControllerRef.current = controller;
+        setLogsLoading(true);
+        setLogsError(null);
+
+        const params = new URLSearchParams();
+        params.append('type', 'houses'); // user requested type = houses
+        if (resolvedVillageId) params.append('villageId', resolvedVillageId);
+        if (resolvedPlotId) params.append('plotId', resolvedPlotId);
+        params.append('page', '1');
+        params.append('limit', String(Math.max(100, limit)));
+        const url = `${API_BASE}/logs?${params.toString()}`;
+
+        const { ok, status, json, text, aborted } = await fetchWithCreds(url, { method: 'GET', signal: controller.signal, authHeaders: authHeaders() });
+        if (!mounted) return;
+        if (aborted) return;
+
+        if (!ok) {
+          if (status === 404) {
+            setLogsItems([]);
+            setLogsError(null);
+            setLogsLoading(false);
+            return;
+          }
+          throw new Error((json && (json.message || json.error)) || text || `Failed to fetch logs: ${status}`);
+        }
+
+        const payload = json ?? {};
+        const result = payload.result ?? payload ?? {};
+        const items = result.items ?? (Array.isArray(result) ? result : []);
+        const finalItems = Array.isArray(items) ? items : [];
+        logsCacheRef.current[key] = finalItems;
+        setLogsItems(finalItems);
+        setLogsError(null);
+      } catch (err) {
+        if (err && err.name === 'AbortError') return;
+        console.error('fetch logs error:', err);
+        setLogsError(err.message || 'Failed to load logs');
+        setLogsItems([]);
+      } finally {
+        if (mounted) setLogsLoading(false);
+      }
+    }, 420);
+
+    return () => { mounted = false; clearTimeout(tid); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolvedVillageId, resolvedPlotId, statusFilter, fromDateFilter, toDateFilter, homeIdFilter, nameFilter, limit]);
+
+  // Chart renderer — focused on the three actions required by user
+  function LogsLineChart({ items }) {
+    if (!items || items.length === 0) {
+      return <div className="text-sm text-gray-500">No activity logs available to plot.</div>;
+    }
+
+    // Normalize action name to one of: Insert, Edited, Delete
+    function normalizeAction(a) {
+      if (!a) return 'other';
+      const lower = String(a).toLowerCase();
+      if (lower.includes('delete')) return 'Delete';
+      if (lower.includes('edited') || lower.includes('edit')) return 'Edited';
+      if (lower.includes('insert') || lower.includes('create') || lower.includes('added')) return 'Insert';
+      // sometimes logs include specific titles; try match "verification" + action
+      if (lower.includes('verification') && lower.includes('insert')) return 'Insert';
+      if (lower.includes('verification') && (lower.includes('edit') || lower.includes('updated') || lower.includes('edited'))) return 'Edited';
+      if (lower.includes('verification') && lower.includes('delete')) return 'Delete';
+      return 'other';
+    }
+
+    const byMonth = {};
+    items.forEach((it) => {
+      const timeStr = it.updateTime ?? it.update_time ?? it.time ?? it.createdAt ?? it.insertedAt ?? it.created_at ?? null;
+      let monthKey = null;
+      if (typeof timeStr === 'string' && timeStr.length >= 7) {
+        const m = timeStr.match(/^(\d{4})[-\/](\d{2})/);
+        if (m) monthKey = `${m[1]}-${m[2]}`;
+        else {
+          const parsed = new Date(timeStr);
+          if (!Number.isNaN(parsed.getTime())) {
+            const y = parsed.getFullYear();
+            const mm = String(parsed.getMonth() + 1).padStart(2, '0');
+            monthKey = `${y}-${mm}`;
+          }
+        }
+      } else if (timeStr instanceof Date) {
+        const y = timeStr.getFullYear();
+        const mm = String(timeStr.getMonth() + 1).padStart(2, '0');
+        monthKey = `${y}-${mm}`;
+      } else {
+        const parsed = new Date(it.createdAt || it.time || it.insertedAt || Date.now());
+        if (!Number.isNaN(parsed.getTime())) {
+          const y = parsed.getFullYear();
+          const mm = String(parsed.getMonth() + 1).padStart(2, '0');
+          monthKey = `${y}-${mm}`;
+        } else monthKey = 'unknown';
+      }
+      if (!monthKey) monthKey = 'unknown';
+      if (!byMonth[monthKey]) byMonth[monthKey] = { Insert: 0, Edited: 0, Delete: 0 };
+      const action = normalizeAction(it.action ?? it.event ?? it.type ?? it.activity ?? it.description ?? '');
+      if (action === 'Insert' || action === 'Edited' || action === 'Delete') {
+        byMonth[monthKey][action] = (byMonth[monthKey][action] || 0) + 1;
+      }
+    });
+
+    const months = Object.keys(byMonth).filter(k => k !== 'unknown').sort((a, b) => a.localeCompare(b));
+    if (months.length === 0) months.push('unknown');
+
+    const insertSeries = months.map(m => byMonth[m]?.Insert ?? 0);
+    const editedSeries = months.map(m => byMonth[m]?.Edited ?? 0);
+    const deleteSeries = months.map(m => byMonth[m]?.Delete ?? 0);
+
+    const maxVal = Math.max(...insertSeries, ...editedSeries, ...deleteSeries, 1);
+    const width = 820;
+    const height = 240;
+    const paddingLeft = 64;
+    const paddingRight = 24;
+    const paddingTop = 20;
+    const paddingBottom = 44;
+    const plotWidth = width - paddingLeft - paddingRight;
+    const plotHeight = height - paddingTop - paddingBottom;
+
+    const xForIndex = (i) => {
+      if (months.length === 1) return paddingLeft + plotWidth / 2;
+      return paddingLeft + (i / (months.length - 1)) * plotWidth;
+    };
+    const yForValue = (v) => {
+      const frac = v / maxVal;
+      return paddingTop + (1 - frac) * plotHeight;
+    };
+
+    const ticks = 4;
+    const tickVals = Array.from({ length: ticks + 1 }).map((_, i) => Math.round((i / ticks) * maxVal));
+    const colors = { Insert: "#10b981", Edited: "#f59e0b", Delete: "#ef4444" };
+
+    return (
+      <div className="bg-white rounded-lg border p-3 shadow-sm w-full mb-4">
+        <div className="flex items-start justify-between mb-2">
+          <div>
+            <div className="text-sm text-gray-600">Verification activity (houses)</div>
+            <div className="text-lg font-semibold">Verification Insert / Edited / Deleted</div>
+          </div>
+          <div className="text-xs text-gray-400">Hidden when server filters are active</div>
+        </div>
+
+        <div className="overflow-auto">
+          <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label="Verification activity chart">
+            <defs>
+              <filter id="softShadow" x="-50%" y="-50%" width="200%" height="200%">
+                <feDropShadow dx="0" dy="4" stdDeviation="6" floodColor="#0b1220" floodOpacity="0.06" />
+              </filter>
+            </defs>
+
+            {tickVals.map((tv, i) => {
+              const y = yForValue(tv);
+              return (
+                <g key={`tick_${i}`}>
+                  <line x1={paddingLeft} x2={width - paddingRight} y1={y} y2={y} stroke="#eef2ff" strokeWidth="1" />
+                  <text x={paddingLeft - 8} y={y + 4} fontSize="11" fill="#475569" textAnchor="end" style={{ fontFamily: "Inter, system-ui" }}>{tv}</text>
+                </g>
+              );
+            })}
+
+            {months.map((m, i) => {
+              const x = xForIndex(i);
+              return (
+                <g key={`x_${m}`}>
+                  <text x={x} y={height - 18} fontSize="11" fill="#475569" textAnchor="middle" style={{ fontFamily: "Inter, system-ui" }}>{m}</text>
+                </g>
+              );
+            })}
+
+            {["Insert", "Edited", "Delete"].map((key) => {
+              const series = key === "Insert" ? insertSeries : key === "Edited" ? editedSeries : deleteSeries;
+              const path = series.map((val, idx) => {
+                const x = xForIndex(idx);
+                const y = yForValue(val);
+                return `${idx === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+              }).join(" ");
+              const lastX = xForIndex(series.length - 1);
+              const firstX = xForIndex(0);
+              const baseY = yForValue(0);
+              const areaPath = `${path} L ${lastX.toFixed(2)} ${baseY.toFixed(2)} L ${firstX.toFixed(2)} ${baseY.toFixed(2)} Z`;
+              return <path key={`area_${key}`} d={areaPath} fill={colors[key]} opacity="0.06" />;
+            })}
+
+            {["Insert", "Edited", "Delete"].map((key) => {
+              const series = key === "Insert" ? insertSeries : key === "Edited" ? editedSeries : deleteSeries;
+              const d = series.map((val, idx) => {
+                const x = xForIndex(idx);
+                const y = yForValue(val);
+                return `${idx === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+              }).join(" ");
+              return (
+                <g key={`line_${key}`}>
+                  <path d={d} fill="none" stroke={colors[key]} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" style={{ filter: "url(#softShadow)" }} />
+                  {series.map((val, idx) => {
+                    const x = xForIndex(idx);
+                    const y = yForValue(val);
+                    return <circle key={`pt_${key}_${idx}`} cx={x} cy={y} r={3.6} fill="#fff" stroke={colors[key]} strokeWidth={2} />;
+                  })}
+                </g>
+              );
+            })}
+
+            <g transform={`translate(${paddingLeft}, ${paddingTop - 6})`}>
+              {["Insert", "Edited", "Delete"].map((k, i) => (
+                <g key={`leg_${k}`} transform={`translate(${i * 120}, 0)`}>
+                  <rect x={0} y={-12} width={14} height={8} rx={2} fill={colors[k]} />
+                  <text x={20} y={-4} fontSize="12" fill="#0f172a" style={{ fontFamily: "Inter, system-ui" }}>{k}</text>
+                </g>
+              ))}
+            </g>
+
+          </svg>
+        </div>
+      </div>
+    );
+  }
+
+  // ----------------- Rendering -----------------
   if (loading) return (
     <div className="min-h-screen bg-[#f8f0dc]">
       <MainNavbar showVillageInNavbar />
@@ -606,7 +866,6 @@ export default function HomeDetailsPage() {
 
   const typeName = getTypeName();
 
-  // filter helpers
   const applyFilters = async () => {
     setPage(1);
     const hid = selectedHome ? (selectedHome.homeId ?? selectedHome.home_id ?? selectedHome.home) : null;
@@ -738,6 +997,21 @@ export default function HomeDetailsPage() {
               <div className="bg-white rounded-xl shadow p-4 mb-6 text-sm text-slate-500">Select a home to show the timeline.</div>
             )}
 
+            {/* Chart: placed above filters and hidden if any server-side filters are active */}
+            <div>
+              {showLogsChart ? (
+                logsLoading ? (
+                  <div className="text-sm text-gray-600 py-2">Loading activity chart…</div>
+                ) : logsError ? (
+                  <div className="text-sm text-red-600 py-2">{logsError}</div>
+                ) : (
+                  <LogsLineChart items={logsItems} />
+                )
+              ) : (
+                <div className="text-sm text-gray-400 italic mb-4">Activity chart (houses) hidden while server-side filters are active.</div>
+              )}
+            </div>
+
             <div className="space-y-4">
               <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }} className="space-y-4">
                 <div className="flex items-center justify-between">
@@ -745,16 +1019,14 @@ export default function HomeDetailsPage() {
 
                   <div className="flex items-center gap-3">
                     <div className="text-sm text-slate-500 mr-3">Showing: <span className="font-medium">{`${displayItems.length} on page ${page}`}</span></div>
-                    <div className="relative">
-                      
-                    </div>
+                    <div className="relative"></div>
                     {filteredStage && (
                       <button onClick={async () => { setFilteredStage(null); setPage(1); await fetchFieldVerifications({ page: 1, limit, currentStage: null, name: nameFilter || null }); }} className="px-3 py-2 text-sm bg-white border rounded">Clear stage filter</button>
                     )}
                   </div>
                 </div>
 
-                {/* NEW: server-side filter controls (keeps existing style) */}
+                {/* Filters */}
                 <div className="bg-yellow-100 border rounded-xl p-3 flex flex-wrap gap-3 items-end">
                   <div>
                     <label className="text-xs text-slate-600">Status</label>
@@ -776,6 +1048,11 @@ export default function HomeDetailsPage() {
                   <div>
                     <label className="text-xs text-slate-600">To date</label>
                     <input type="date" value={toDateFilter} onChange={(e) => setToDateFilter(e.target.value)} className="mt-1 px-2 py-1 border rounded" />
+                  </div>
+
+                  <div>
+                    <label className="text-xs text-slate-600">Home ID</label>
+                    <input value={homeIdFilter} onChange={(e) => setHomeIdFilter(e.target.value)} className="mt-1 px-2 py-1 border rounded" />
                   </div>
 
                   <div className="relative">
@@ -847,7 +1124,6 @@ export default function HomeDetailsPage() {
                               <div className="flex items-center gap-2">
                                 <button onClick={(e) => { e.stopPropagation(); openHistoryModalById(e, s.verificationId ?? s.verification_id ?? s.verification ?? s._id); }} className="inline-flex items-center gap-2 px-3 py-1.5 bg-sky-600 text-white rounded-lg text-sm hover:bg-sky-700 focus:outline-none">Status history</button>
 
-                                {/* NEW: Documents button (calls same API but extracts docs and opens DocsModal) */}
                                 <button onClick={(e) => { e.stopPropagation(); openDocsModalById(e, s.verificationId ?? s.verification_id ?? s.verification ?? s._id); }} className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border text-slate-700 rounded-lg text-sm hover:bg-gray-50 focus:outline-none"><FileText size={16} />Docs</button>
                               </div>
 
@@ -925,7 +1201,7 @@ export default function HomeDetailsPage() {
           </div>
         )}
 
-        {/* Docs Modal (opened by "View documents" button) */}
+        {/* Docs Modal */}
         {docsModalOpen && (
           <DocsModal
             open={docsModalOpen}

@@ -200,34 +200,280 @@ export default function MaterialDetails() {
 
   const updateRefs = useRef({});
 
-  useEffect(() => {
-    // debounce search -> setNameFilter (server param)
-    if (searchDebounceRef.current) {
-      clearTimeout(searchDebounceRef.current);
+  // ----- LOGS (line chart) state + abort + cache (added) -----
+  const [logsItems, setLogsItems] = useState([]);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [logsError, setLogsError] = useState(null);
+  const logsControllerRef = useRef(null);
+  const logsCacheRef = useRef({}); // keyed by village|material|filters
+
+  function authHeaders() {
+    const token = localStorage.getItem("token") || null;
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }
+
+  async function fetchWithCreds(url, opts = {}) {
+    try {
+      const headers = { ...(opts.headers || {}), ...(opts.authHeaders || {}) };
+      const res = await fetch(url, {
+        method: opts.method || 'GET',
+        credentials: 'include',
+        headers,
+        body: opts.body,
+        signal: opts.signal,
+      });
+      const text = await res.text().catch(() => "");
+      let json = null;
+      try { json = text ? JSON.parse(text) : null; } catch { json = null; }
+      return { res, ok: res.ok, status: res.status, json, text };
+    } catch (err) {
+      if (err && err.name === 'AbortError') return { res: null, ok: false, status: 0, json: null, text: 'aborted', aborted: true };
+      return { res: null, ok: false, status: 0, json: null, text: String(err) };
     }
-    searchDebounceRef.current = setTimeout(() => {
-      const trimmed = (search || "").trim();
-      if (trimmed !== nameFilter) {
-        setNameFilter(trimmed);
-        setPage(1);
+  }
+
+  useEffect(() => {
+    // debounce logs fetch to avoid spamming when params change rapidly
+    const key = `${villageId || ''}|${materialId || ''}|${statusFilter||''}|${fromDateFilter||''}|${toDateFilter||''}|${nameFilter||''}|${typeFilter||''}`;
+
+    // Chart visible only when no server-side filter is active
+    const showLogsChart = Boolean(villageId && materialId) && !statusFilter && !fromDateFilter && !toDateFilter && !nameFilter && !typeFilter;
+
+    if (!showLogsChart) {
+      try { if (logsControllerRef.current) { logsControllerRef.current.abort(); logsControllerRef.current = null; } } catch {}
+      setLogsItems([]);
+      setLogsLoading(false);
+      setLogsError(null);
+      return;
+    }
+
+    let mounted = true;
+    const tid = setTimeout(async () => {
+      try {
+        if (logsCacheRef.current[key]) {
+          if (!mounted) return;
+          setLogsItems(logsCacheRef.current[key]);
+          setLogsError(null);
+          setLogsLoading(false);
+          return;
+        }
+
+        try { if (logsControllerRef.current) logsControllerRef.current.abort(); } catch {}
+        const controller = new AbortController();
+        logsControllerRef.current = controller;
+        setLogsLoading(true);
+        setLogsError(null);
+
+        const params = new URLSearchParams();
+        params.append('type', 'Materials'); // <-- difference: type is Materials
+        if (villageId) params.append('villageId', villageId);
+        if (materialId) params.append('materialId', materialId);
+        params.append('page', '1');
+        params.append('limit', String(Math.max(100, limit)));
+        const url = `${API_BASE}/logs?${params.toString()}`;
+
+        const { ok, status, json, text, aborted } = await fetchWithCreds(url, { method: 'GET', signal: controller.signal, authHeaders: authHeaders() });
+        if (!mounted) return;
+        if (aborted) return;
+
+        if (!ok) {
+          if (status === 404) {
+            setLogsItems([]);
+            setLogsError(null);
+            setLogsLoading(false);
+            return;
+          }
+          throw new Error((json && (json.message || json.error)) || text || `Failed to fetch logs: ${status}`);
+        }
+
+        const payload = json ?? {};
+        const result = payload.result ?? payload ?? {};
+        const items = result.items ?? (Array.isArray(result) ? result : []);
+        const finalItems = Array.isArray(items) ? items : [];
+        logsCacheRef.current[key] = finalItems;
+        setLogsItems(finalItems);
+        setLogsError(null);
+      } catch (err) {
+        if (err && err.name === 'AbortError') return;
+        console.error('fetch logs error:', err);
+        setLogsError(err.message || 'Failed to load logs');
+        setLogsItems([]);
+      } finally {
+        if (mounted) setLogsLoading(false);
       }
-    }, 400);
-    return () => {
-      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    }, 420);
+
+    return () => { mounted = false; clearTimeout(tid); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [villageId, materialId, statusFilter, fromDateFilter, toDateFilter, nameFilter, typeFilter, limit]);
+
+  // Chart renderer — focused on the three actions required by user
+  function LogsLineChart({ items }) {
+    if (!items || items.length === 0) {
+      return <div className="text-sm text-gray-500">No activity logs available to plot.</div>;
+    }
+
+    function normalizeAction(a) {
+      if (!a) return 'other';
+      const lower = String(a).toLowerCase();
+      if (lower.includes('delete')) return 'Delete';
+      if (lower.includes('edited') || lower.includes('edit')) return 'Edited';
+      if (lower.includes('insert') || lower.includes('create') || lower.includes('added')) return 'Insert';
+      if (lower.includes('material') && lower.includes('insert')) return 'Insert';
+      if (lower.includes('material') && (lower.includes('edit') || lower.includes('updated') || lower.includes('edited'))) return 'Edited';
+      if (lower.includes('material') && lower.includes('delete')) return 'Delete';
+      return 'other';
+    }
+
+    const byMonth = {};
+    items.forEach((it) => {
+      const timeStr = it.updateTime ?? it.update_time ?? it.time ?? it.createdAt ?? it.insertedAt ?? it.created_at ?? null;
+      let monthKey = null;
+      if (typeof timeStr === 'string' && timeStr.length >= 7) {
+        const m = timeStr.match(/^(\d{4})[-\/](\d{2})/);
+        if (m) monthKey = `${m[1]}-${m[2]}`;
+        else {
+          const parsed = new Date(timeStr);
+          if (!Number.isNaN(parsed.getTime())) {
+            const y = parsed.getFullYear();
+            const mm = String(parsed.getMonth() + 1).padStart(2, '0');
+            monthKey = `${y}-${mm}`;
+          }
+        }
+      } else if (timeStr instanceof Date) {
+        const y = timeStr.getFullYear();
+        const mm = String(timeStr.getMonth() + 1).padStart(2, '0');
+        monthKey = `${y}-${mm}`;
+      } else {
+        const parsed = new Date(it.createdAt || it.time || it.insertedAt || Date.now());
+        if (!Number.isNaN(parsed.getTime())) {
+          const y = parsed.getFullYear();
+          const mm = String(parsed.getMonth() + 1).padStart(2, '0');
+          monthKey = `${y}-${mm}`;
+        } else monthKey = 'unknown';
+      }
+      if (!monthKey) monthKey = 'unknown';
+      if (!byMonth[monthKey]) byMonth[monthKey] = { Insert: 0, Edited: 0, Delete: 0 };
+      const action = normalizeAction(it.action ?? it.event ?? it.type ?? it.activity ?? it.description ?? '');
+      if (action === 'Insert' || action === 'Edited' || action === 'Delete') {
+        byMonth[monthKey][action] = (byMonth[monthKey][action] || 0) + 1;
+      }
+    });
+
+    const months = Object.keys(byMonth).filter(k => k !== 'unknown').sort((a, b) => a.localeCompare(b));
+    if (months.length === 0) months.push('unknown');
+
+    const insertSeries = months.map(m => byMonth[m]?.Insert ?? 0);
+    const editedSeries = months.map(m => byMonth[m]?.Edited ?? 0);
+    const deleteSeries = months.map(m => byMonth[m]?.Delete ?? 0);
+
+    const maxVal = Math.max(...insertSeries, ...editedSeries, ...deleteSeries, 1);
+    const width = 820;
+    const height = 240;
+    const paddingLeft = 64;
+    const paddingRight = 24;
+    const paddingTop = 20;
+    const paddingBottom = 44;
+    const plotWidth = width - paddingLeft - paddingRight;
+    const plotHeight = height - paddingTop - paddingBottom;
+
+    const xForIndex = (i) => {
+      if (months.length === 1) return paddingLeft + plotWidth / 2;
+      return paddingLeft + (i / (months.length - 1)) * plotWidth;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search]);
+    const yForValue = (v) => {
+      const frac = v / maxVal;
+      return paddingTop + (1 - frac) * plotHeight;
+    };
 
-  useEffect(() => {
-    loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [materialId, villageId]);
+    const ticks = 4;
+    const tickVals = Array.from({ length: ticks + 1 }).map((_, i) => Math.round((i / ticks) * maxVal));
+    const colors = { Insert: "#10b981", Edited: "#f59e0b", Delete: "#ef4444" };
 
-  useEffect(() => {
-    // fetch when any server-side filter or pagination changes
-    fetchUpdates(page, limit);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, limit, nameFilter, typeFilter, statusFilter, fromDateFilter, toDateFilter]);
+    return (
+      <div className="bg-white rounded-lg border p-3 shadow-sm w-full mb-4">
+        <div className="flex items-start justify-between mb-2">
+          <div>
+            <div className="text-sm text-gray-600">Material activity (Materials)</div>
+            <div className="text-lg font-semibold">Material Insert / Edited / Deleted</div>
+          </div>
+          <div className="text-xs text-gray-400">Hidden when server filters are active</div>
+        </div>
+
+        <div className="overflow-auto">
+          <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label="Material activity chart">
+            <defs>
+              <filter id="softShadow" x="-50%" y="-50%" width="200%" height="200%">
+                <feDropShadow dx="0" dy="4" stdDeviation="6" floodColor="#0b1220" floodOpacity="0.06" />
+              </filter>
+            </defs>
+
+            {tickVals.map((tv, i) => {
+              const y = yForValue(tv);
+              return (
+                <g key={`tick_${i}`}>
+                  <line x1={paddingLeft} x2={width - paddingRight} y1={y} y2={y} stroke="#eef2ff" strokeWidth="1" />
+                  <text x={paddingLeft - 8} y={y + 4} fontSize="11" fill="#475569" textAnchor="end" style={{ fontFamily: "Inter, system-ui" }}>{tv}</text>
+                </g>
+              );
+            })}
+
+            {months.map((m, i) => {
+              const x = xForIndex(i);
+              return (
+                <g key={`x_${m}`}>
+                  <text x={x} y={height - 18} fontSize="11" fill="#475569" textAnchor="middle" style={{ fontFamily: "Inter, system-ui" }}>{m}</text>
+                </g>
+              );
+            })}
+
+            {["Insert", "Edited", "Delete"].map((key) => {
+              const series = key === "Insert" ? insertSeries : key === "Edited" ? editedSeries : deleteSeries;
+              const path = series.map((val, idx) => {
+                const x = xForIndex(idx);
+                const y = yForValue(val);
+                return `${idx === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+              }).join(" ");
+              const lastX = xForIndex(series.length - 1);
+              const firstX = xForIndex(0);
+              const baseY = yForValue(0);
+              const areaPath = `${path} L ${lastX.toFixed(2)} ${baseY.toFixed(2)} L ${firstX.toFixed(2)} ${baseY.toFixed(2)} Z`;
+              return <path key={`area_${key}`} d={areaPath} fill={colors[key]} opacity="0.06" />;
+            })}
+
+            {["Insert", "Edited", "Delete"].map((key) => {
+              const series = key === "Insert" ? insertSeries : key === "Edited" ? editedSeries : deleteSeries;
+              const d = series.map((val, idx) => {
+                const x = xForIndex(idx);
+                const y = yForValue(val);
+                return `${idx === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+              }).join(" ");
+              return (
+                <g key={`line_${key}`}>
+                  <path d={d} fill="none" stroke={colors[key]} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" style={{ filter: "url(#softShadow)" }} />
+                  {series.map((val, idx) => {
+                    const x = xForIndex(idx);
+                    const y = yForValue(val);
+                    return <circle key={`pt_${key}_${idx}`} cx={x} cy={y} r={3.6} fill="#fff" stroke={colors[key]} strokeWidth={2} />;
+                  })}
+                </g>
+              );
+            })}
+
+            <g transform={`translate(${paddingLeft}, ${paddingTop - 6})`}>
+              {["Insert", "Edited", "Delete"].map((k, i) => (
+                <g key={`leg_${k}`} transform={`translate(${i * 120}, 0)`}>
+                  <rect x={0} y={-12} width={14} height={8} rx={2} fill={colors[k]} />
+                  <text x={20} y={-4} fontSize="12" fill="#0f172a" style={{ fontFamily: "Inter, system-ui" }}>{k}</text>
+                </g>
+              ))}
+            </g>
+
+          </svg>
+        </div>
+      </div>
+    );
+  }
 
   function authFetch(url, opts = {}) {
     return fetch(url, { credentials: "include", headers: { "Content-Type": "application/json", ...(opts.headers || {}) }, ...opts });
@@ -349,13 +595,11 @@ export default function MaterialDetails() {
     }
   }
 
-  // New: fetch only docs for an update. Tries a dedicated docs endpoint first, falls back to the full update endpoint.
   async function fetchUpdateDocs(updateId) {
     if (!updateId) return [];
     setDocsLoading(true);
     setPageError(null);
     try {
-      // try a lightweight docs-only endpoint (common pattern), if it returns 404/doesn't exist fallback to the full endpoint
       const tryUrls = [
         `${API_BASE}/material_update/docs/${encodeURIComponent(updateId)}`,
         `${API_BASE}/material_update/${encodeURIComponent(updateId)}/docs`,
@@ -371,23 +615,18 @@ export default function MaterialDetails() {
           try { json = text ? JSON.parse(text) : null; } catch { json = null; }
 
           if (!res.ok) {
-            // If it's a 404 try the next candidate
             if (res.status === 404) continue;
-            // otherwise throw and try fallback
             const msg = (json && (json.message || json.error)) || text || `Failed to fetch docs: ${res.status}`;
             throw new Error(msg);
           }
 
-          // Try to extract docs array from common shapes
           let payload = json ?? {};
-          // If API returned { result: { docs: [...] } } or { docs: [...] }
           let docsArr = null;
           if (payload.result && (Array.isArray(payload.result.docs) || Array.isArray(payload.result.documents))) {
             docsArr = payload.result.docs ?? payload.result.documents;
           } else if (Array.isArray(payload.docs) || Array.isArray(payload.documents)) {
             docsArr = payload.docs ?? payload.documents;
           } else if (Array.isArray(payload)) {
-            // some endpoints return the array directly
             docsArr = payload;
           } else if (payload.result && Array.isArray(payload.result)) {
             docsArr = payload.result;
@@ -395,27 +634,21 @@ export default function MaterialDetails() {
             docsArr = payload.files;
           }
 
-          // If we don't have a docs array yet, but this was the full update object - try common fields
           if (!Array.isArray(docsArr) && (payload.result || payload)) {
             const obj = payload.result ?? payload;
-            // possible fields that can contain doc links
             const candidates = ["docs", "documents", "photos", "images", "files", "attachments"];
             for (const c of candidates) {
               if (Array.isArray(obj[c])) { docsArr = obj[c]; break; }
             }
-            // if still not an array, some APIs may store a single string field containing JSON
             if (!Array.isArray(docsArr)) {
-              // nothing more we can do here
               docsArr = [];
             }
           }
 
-          // Normalize docsArr to array of URLs (strings)
           const normalized = (docsArr || []).map((item) => {
             if (!item) return null;
             if (typeof item === "string") return item;
             if (typeof item === "object") {
-              // common url fields
               return item.url ?? item.link ?? item.path ?? item.file ?? item.src ?? item.location ?? null;
             }
             return null;
@@ -423,13 +656,11 @@ export default function MaterialDetails() {
 
           return normalized;
         } catch (innerErr) {
-          // try next URL candidate
           console.warn(`fetchUpdateDocs candidate failed (${url}):`, innerErr?.message || innerErr);
           continue;
         }
       }
 
-      // If none succeeded, return empty
       return [];
     } catch (err) {
       console.error("fetchUpdateDocs:", err);
@@ -456,7 +687,6 @@ export default function MaterialDetails() {
     }
   }
 
-  // Updated: fetch docs-only then open DocumentModal with normalized list of links
   async function openDocsModalById(e, updateId) {
     e?.stopPropagation?.();
     setDocsLoading(true);
@@ -466,15 +696,11 @@ export default function MaterialDetails() {
     try {
       const docsList = await fetchUpdateDocs(updateId);
       setDocsDocs(docsList || []);
-
-      // try to set a useful title using the update's name if we can fetch it (but don't block on it)
       try {
         const maybe = await fetchUpdateOne(updateId);
         const title = (maybe && (maybe.name ?? maybe.updateName ?? maybe.title ?? maybe.updateId)) || "Documents";
         setDocsTitle(title);
-      } catch (e) {
-        // ignore
-      }
+      } catch (e) {}
     } catch (err) {
       console.error("openDocsModalById:", err);
       setDocsDocs([]);
@@ -526,6 +752,35 @@ export default function MaterialDetails() {
     });
   }
 
+  useEffect(() => {
+    // debounce search -> setNameFilter (server param)
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+    }
+    searchDebounceRef.current = setTimeout(() => {
+      const trimmed = (search || "").trim();
+      if (trimmed !== nameFilter) {
+        setNameFilter(trimmed);
+        setPage(1);
+      }
+    }, 400);
+    return () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
+
+  useEffect(() => {
+    loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [materialId, villageId]);
+
+  useEffect(() => {
+    // fetch when any server-side filter or pagination changes
+    fetchUpdates(page, limit);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, limit, nameFilter, typeFilter, statusFilter, fromDateFilter, toDateFilter]);
+
   if (loading) return (
     <div className="min-h-screen bg-[#f8f0dc] font-sans">
       <MainNavbar showVillageInNavbar={true} />
@@ -548,6 +803,9 @@ export default function MaterialDetails() {
     </div>
   );
 
+  // Chart visible only when no server-side filters are active (recomputed here for rendering)
+  const showLogsChart = Boolean(villageId && materialId) && !statusFilter && !fromDateFilter && !toDateFilter && !nameFilter && !typeFilter;
+
   return (
     <div className="min-h-screen bg-[#f8f0dc] font-sans">
       <MainNavbar showVillageInNavbar={true} />
@@ -564,6 +822,21 @@ export default function MaterialDetails() {
           <div style={{ width: 120 }} />
         </div>
 
+        {/* Chart: placed above filters and hidden if any server-side filters are active */}
+        <div>
+          {showLogsChart ? (
+            logsLoading ? (
+              <div className="text-sm text-gray-600 py-2">Loading activity chart…</div>
+            ) : logsError ? (
+              <div className="text-sm text-red-600 py-2">{logsError}</div>
+            ) : (
+              <LogsLineChart items={logsItems} />
+            )
+          ) : (
+            <div className="text-sm text-gray-400 italic mb-4">Activity chart (Materials) hidden while server-side filters are active.</div>
+          )}
+        </div>
+
         {/* Filters */}
         <div className="bg-yellow-100 border rounded-xl p-4 shadow-sm flex flex-wrap gap-3 items-end mb-4">
           <div className="flex flex-col">
@@ -574,6 +847,16 @@ export default function MaterialDetails() {
               <option value="2">Range Assistant</option>
               <option value="3">Range Officer</option>
               <option value="4">Assistant Director</option>
+            </select>
+          </div>
+
+          {/* New: Type filter (house / plot) */}
+          <div className="flex flex-col">
+            <label className="text-xs text-slate-600">Type</label>
+            <select value={typeFilter} onChange={(e) => { setTypeFilter(e.target.value); setPage(1); }} className="mt-1 px-3 py-2 border rounded-md shadow-sm">
+              <option value="">ALL</option>
+              <option value="house">House</option>
+              <option value="plot">Plot</option>
             </select>
           </div>
 
@@ -652,9 +935,10 @@ export default function MaterialDetails() {
                             {isExpanded ? rawNotes : `${shortNotes}${rawNotes.length > 400 ? "…" : ""}`}
                           </div>
 
-                          <div className="mt-3 text-xs text-slate-600 grid grid-cols-2 gap-2">
+                          <div className="mt-3 text-xs text-slate-600 grid grid-cols-3 gap-9">
                             <div>Qty: <span className="font-medium">{u.qty ?? "—"}</span></div>
                             <div>Unit: <span className="font-medium">{u.unit ?? "—"}</span></div>
+                            <div>Type:  <span className="font-medium">{u.type ?? "—"}</span></div>
                           </div>
 
                           <div className="mt-2 text-xs text-slate-600">Inserted by <span className="font-medium">{u.insertedBy ?? "—"}</span><span className="mx-2">•</span><span>{fmtDate(u.insertedAt)}</span></div>

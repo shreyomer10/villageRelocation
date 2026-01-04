@@ -41,6 +41,12 @@ export default function PlotsPage() {
   const [homeAnalyticsLoading, setHomeAnalyticsLoading] = useState(false);
   const [homeAnalyticsError, setHomeAnalyticsError] = useState(null);
 
+  // logs (for line chart)
+  const [logsItems, setLogsItems] = useState([]);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [logsError, setLogsError] = useState(null);
+  const [logsTotalCount, setLogsTotalCount] = useState(null);
+
   // helper for auth headers
   function authHeaders() {
     const token = localStorage.getItem("token");
@@ -331,6 +337,74 @@ export default function PlotsPage() {
     };
   }, [debouncedQuery, numberOfHomeFilter, showDeleted, villageId]);
 
+  // --- LOGS: fetch logs for line chart (type=Houses & villageId) ---
+  // Uses same page & pageSize for pagination as requested. Chart hidden when any filter is active.
+  useEffect(() => {
+    let mounted = true;
+
+    // hide/clear logs when filters are applied (chart must not show)
+    if (!villageId || debouncedQuery || numberOfHomeFilter || showDeleted) {
+      if (mounted) {
+        setLogsItems([]);
+        setLogsTotalCount(null);
+        setLogsError(null);
+        setLogsLoading(false);
+      }
+      return;
+    }
+
+    (async () => {
+      setLogsLoading(true);
+      setLogsError(null);
+      try {
+        const params = new URLSearchParams();
+        // per your instruction: type will be "Houses"
+        params.append("type", "Houses");
+        params.append("villageId", villageId);
+        params.append("page", String(page));
+        params.append("limit", String(pageSize));
+
+        const url = `${API_BASE}/logs?${params.toString()}`;
+        const { ok, status, json, text } = await fetchWithCreds(url, { method: "GET" });
+
+        if (!mounted) return;
+
+        if (!ok) {
+          if (status === 404) {
+            setLogsItems([]);
+            setLogsTotalCount(0);
+            setLogsLoading(false);
+            return;
+          }
+          if (status === 401) {
+            setLogsError((json && (json.message || json.error)) || text || "Unauthorized — please sign in");
+            setLogsItems([]);
+            setLogsLoading(false);
+            return;
+          }
+          throw new Error((json && (json.message || JSON.stringify(json))) || text || `Failed to fetch logs: ${status}`);
+        }
+
+        const payload = json ?? {};
+        const result = payload.result ?? payload;
+        const items = result.items ?? (Array.isArray(result) ? result : []);
+        const count = result.count ?? payload.count ?? null;
+
+        setLogsItems(items);
+        setLogsTotalCount(count !== null ? Number(count) : null);
+      } catch (err) {
+        console.error(err);
+        if (!mounted) return;
+        setLogsError(err.message || "Error fetching logs");
+        setLogsItems([]);
+      } finally {
+        if (mounted) setLogsLoading(false);
+      }
+    })();
+
+    return () => { mounted = false; };
+  }, [villageId, page, pageSize, debouncedQuery, numberOfHomeFilter, showDeleted]);
+
   // toggle deleted view
   function toggleDeletedView() {
     setShowDeleted((s) => !s);
@@ -351,70 +425,62 @@ export default function PlotsPage() {
   }
 
   // pagination helpers
-  const totalPages = totalCount ? Math.max(1, Math.ceil(totalCount / pageSize)) : null;
+  const totalPages = totalCount ? Math.max(1, Math.ceil(totalCount / pageSize)) : Math.max(1, Math.ceil((plots.length || 0) / pageSize));
   function goPage(n) {
     if (!n || n < 1) return;
     if (totalPages && n > totalPages) return;
     setPage(n);
   }
 
+  // --- Feedback-style pagination rendering (Prev / numeric / Next with ellipses) ---
   function renderPageButtons() {
-    if (!totalPages) return (
-      <div className="text-sm">Page {page}</div>
-    );
+    const tp = totalPages || 1;
+    const maxButtons = 7;
+    const pages = [];
 
-    const windowSize = 5;
-    let start = Math.max(1, page - Math.floor(windowSize / 2));
-    let end = Math.min(totalPages, start + windowSize - 1);
-    if (end - start + 1 < windowSize) {
-      start = Math.max(1, end - windowSize + 1);
-    }
-
-    const buttons = [];
-    for (let i = start; i <= end; i++) {
-      buttons.push(
-        <button
-          key={i}
-          onClick={() => goPage(i)}
-          className={`px-2 py-1 rounded ${i === page ? "bg-gray-200" : "hover:bg-gray-100"}`}
-        >
-          {i}
-        </button>
-      );
+    if (tp <= maxButtons) {
+      for (let i = 1; i <= tp; i++) pages.push(i);
+    } else {
+      const left = Math.max(2, page - 1);
+      const right = Math.min(tp - 1, page + 1);
+      pages.push(1);
+      if (left > 2) pages.push("left-ellipsis");
+      for (let i = left; i <= right; i++) pages.push(i);
+      if (right < tp - 1) pages.push("right-ellipsis");
+      pages.push(tp);
     }
 
     return (
       <div className="flex items-center gap-2">
         <button
-          onClick={() => goPage(1)}
-          disabled={page === 1}
-          className="px-2 py-1 rounded disabled:opacity-50"
-        >
-          {"<<"}
-        </button>
-        <button
           onClick={() => goPage(page - 1)}
-          disabled={page === 1}
-          className="px-2 py-1 rounded disabled:opacity-50"
+          disabled={page <= 1}
+          className={`px-3 py-1 rounded ${page <= 1 ? "bg-gray-100 text-gray-400" : "bg-white border hover:bg-gray-50"}`}
         >
           Prev
         </button>
 
-        {buttons}
+        <div className="flex items-center gap-1">
+          {pages.map((p, idx) => {
+            if (p === "left-ellipsis" || p === "right-ellipsis") return <span key={`e-${idx}`} className="px-3 py-1">…</span>;
+            return (
+              <button
+                key={p}
+                onClick={() => goPage(p)}
+                className={`px-3 py-1 rounded ${p === page ? "bg-indigo-600 text-white" : "bg-white border hover:bg-gray-50"}`}
+              >
+                {p}
+              </button>
+            );
+          })}
+        </div>
 
         <button
           onClick={() => goPage(page + 1)}
-          disabled={totalPages !== null && page >= totalPages}
-          className="px-2 py-1 rounded disabled:opacity-50"
+          disabled={page >= tp}
+          className={`px-3 py-1 rounded ${page >= tp ? "bg-gray-100 text-gray-400" : "bg-white border hover:bg-gray-50"}`}
         >
           Next
-        </button>
-        <button
-          onClick={() => goPage(totalPages)}
-          disabled={totalPages !== null && page >= totalPages}
-          className="px-2 py-1 rounded disabled:opacity-50"
-        >
-          {">>"}
         </button>
       </div>
     );
@@ -690,6 +756,223 @@ export default function PlotsPage() {
   }
   /* ------------------------------------------------------------------ */
 
+  // --- LogsLineChart component (renders line chart for Insert/Edited/Delete counts by month-year) ---
+  function LogsLineChart({ items }) {
+    // items: array of logs with { action, updateTime, ... }
+    // We'll aggregate by month-year (YYYY-MM) and count occurrences for Insert, Edited, Delete.
+    if (!items || items.length === 0) {
+      return <div className="text-sm text-gray-500">No activity logs on this page to plot.</div>;
+    }
+
+    // helper to normalize action into one of three keys
+    function normalizeAction(a) {
+      if (!a) return "other";
+      const lower = String(a).toLowerCase();
+      if (lower.includes("delete")) return "Delete";
+      if (lower.includes("edited") || lower.includes("edit")) return "Edited";
+      if (lower.includes("insert")) return "Insert";
+      return "other";
+    }
+
+    // aggregate counts by month-year
+    const map = {}; // { "YYYY-MM": { Insert: n, Edited: n, Delete: n } }
+    items.forEach((it) => {
+      const timeStr = it.updateTime || it.update_time || "";
+      // try to extract yyyy-mm from "YYYY-MM-DD ..." or "YYYY/MM/DD"
+      let monthKey = null;
+      if (typeof timeStr === "string" && timeStr.length >= 7) {
+        // common format "YYYY-MM-DD"
+        const m = timeStr.match(/^(\d{4})[-\/](\d{2})/);
+        if (m) monthKey = `${m[1]}-${m[2]}`;
+        else {
+          // fallback: try parse Date
+          const parsed = new Date(timeStr);
+          if (!Number.isNaN(parsed.getTime())) {
+            const y = parsed.getFullYear();
+            const mm = String(parsed.getMonth() + 1).padStart(2, "0");
+            monthKey = `${y}-${mm}`;
+          }
+        }
+      } else if (timeStr instanceof Date) {
+        const y = timeStr.getFullYear();
+        const mm = String(timeStr.getMonth() + 1).padStart(2, "0");
+        monthKey = `${y}-${mm}`;
+      }
+
+      if (!monthKey) monthKey = "unknown";
+
+      if (!map[monthKey]) map[monthKey] = { Insert: 0, Edited: 0, Delete: 0 };
+      const act = normalizeAction(it.action);
+      if (act === "Insert" || act === "Edited" || act === "Delete") {
+        map[monthKey][act] = (map[monthKey][act] || 0) + 1;
+      }
+    });
+
+    // create sorted months array (ascending)
+    const months = Object.keys(map).filter(k => k !== "unknown").sort((a, b) => a.localeCompare(b));
+    if (months.length === 0) months.push("unknown");
+
+    // arrays of numbers for each action
+    const insertSeries = months.map(m => map[m]?.Insert ?? 0);
+    const editedSeries = months.map(m => map[m]?.Edited ?? 0);
+    const deleteSeries = months.map(m => map[m]?.Delete ?? 0);
+
+    const maxVal = Math.max(...insertSeries, ...editedSeries, ...deleteSeries, 1);
+
+    // chart layout
+    const width = 820;
+    const height = 260;
+    const paddingLeft = 72;
+    const paddingRight = 24;
+    const paddingTop = 24;
+    const paddingBottom = 48;
+    const plotWidth = width - paddingLeft - paddingRight;
+    const plotHeight = height - paddingTop - paddingBottom;
+
+    // scale helper
+    const xForIndex = (i) => {
+      if (months.length === 1) return paddingLeft + plotWidth / 2;
+      return paddingLeft + (i / (months.length - 1)) * plotWidth;
+    };
+    const yForValue = (v) => {
+      const frac = v / maxVal;
+      return paddingTop + (1 - frac) * plotHeight;
+    };
+
+    // make path string function
+    const makePath = (series) => {
+      return series.map((val, idx) => {
+        const x = xForIndex(idx);
+        const y = yForValue(val);
+        return `${idx === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+      }).join(" ");
+    };
+
+    // colors
+    const colors = {
+      Insert: "#10b981", // green
+      Edited: "#f59e0b", // amber
+      Delete: "#ef4444", // red
+    };
+
+    // build tick values for y-axis (4 ticks)
+    const ticks = 4;
+    const tickVals = Array.from({ length: ticks + 1 }).map((_, i) => Math.round((i / ticks) * maxVal));
+
+    return (
+      <div className="bg-white rounded-lg border p-3 shadow-sm w-full">
+        <div className="flex items-start justify-between mb-2">
+          <div>
+            <div className="text-sm text-gray-600">Activity over time (page logs)</div>
+            <div className="text-lg font-semibold">Insert / Edited / Delete — by month</div>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="text-sm text-gray-500">Showing logs for page {page}</div>
+            <div className="text-xs text-gray-400">• Chart hidden when filters active</div>
+          </div>
+        </div>
+
+        <div className="overflow-auto">
+          <svg
+            width="100%"
+            height={height}
+            viewBox={`0 0 ${width} ${height}`}
+            preserveAspectRatio="xMidYMid meet"
+            role="img"
+            aria-label="Logs line chart"
+          >
+            <defs>
+              <filter id="softShadow" x="-50%" y="-50%" width="200%" height="200%">
+                <feDropShadow dx="0" dy="4" stdDeviation="6" floodColor="#0b1220" floodOpacity="0.06" />
+              </filter>
+            </defs>
+
+            {/* y axis grid lines & labels */}
+            {tickVals.map((tv, i) => {
+              const y = yForValue(tv);
+              return (
+                <g key={`tick_${i}`}>
+                  <line x1={paddingLeft} x2={width - paddingRight} y1={y} y2={y} stroke="#eef2ff" strokeWidth="1" />
+                  <text x={paddingLeft - 12} y={y + 4} fontSize="11" fill="#475569" textAnchor="end" style={{ fontFamily: "Inter, system-ui" }}>{tv}</text>
+                </g>
+              );
+            })}
+
+            {/* x-axis labels */}
+            {months.map((m, i) => {
+              const x = xForIndex(i);
+              return (
+                <g key={`x_${m}`}>
+                  <text x={x} y={height - 18} fontSize="11" fill="#475569" textAnchor="middle" style={{ fontFamily: "Inter, system-ui" }}>
+                    {m}
+                  </text>
+                </g>
+              );
+            })}
+
+            {/* area under each line (subtle) */}
+            {[
+              { key: "Insert", series: insertSeries },
+              { key: "Edited", series: editedSeries },
+              { key: "Delete", series: deleteSeries }
+            ].map(({ key, series }) => {
+              const path = series.map((val, idx) => {
+                const x = xForIndex(idx);
+                const y = yForValue(val);
+                return `${idx === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+              }).join(" ");
+              const lastX = xForIndex(series.length - 1);
+              const firstX = xForIndex(0);
+              const baseY = yForValue(0);
+              const areaPath = `${path} L ${lastX.toFixed(2)} ${baseY.toFixed(2)} L ${firstX.toFixed(2)} ${baseY.toFixed(2)} Z`;
+              return (
+                <path key={`area_${key}`} d={areaPath} fill={colors[key]} opacity="0.06" />
+              );
+            })}
+
+            {/* lines */}
+            {[
+              { key: "Insert", series: insertSeries },
+              { key: "Edited", series: editedSeries },
+              { key: "Delete", series: deleteSeries }
+            ].map(({ key, series }) => {
+              const d = makePath(series);
+              return (
+                <g key={`line_${key}`}>
+                  <path d={d} fill="none" stroke={colors[key]} strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" style={{ filter: "url(#softShadow)" }}>
+                    <animate attributeName="stroke-dasharray" from="0,1000" to="1000,0" dur="800ms" fill="freeze" />
+                  </path>
+                  {/* points */}
+                  {series.map((val, idx) => {
+                    const x = xForIndex(idx);
+                    const y = yForValue(val);
+                    return (
+                      <g key={`pt_${key}_${idx}`}>
+                        <circle cx={x} cy={y} r={3.6} fill="#fff" stroke={colors[key]} strokeWidth={2} />
+                      </g>
+                    );
+                  })}
+                </g>
+              );
+            })}
+
+            {/* legend */}
+            <g transform={`translate(${paddingLeft}, ${paddingTop - 6})`}>
+              {["Insert", "Edited", "Delete"].map((k, i) => (
+                <g key={`leg_${k}`} transform={`translate(${i * 110}, 0)`}>
+                  <rect x={0} y={-12} width={14} height={8} rx={2} fill={colors[k]} />
+                  <text x={20} y={-4} fontSize="12" fill="#0f172a" style={{ fontFamily: "Inter, system-ui" }}>{k}</text>
+                </g>
+              ))}
+            </g>
+          </svg>
+        </div>
+      </div>
+    );
+  }
+
+  /* ------------------------------------------------------------------ */
+
   return (
     <div className="min-h-screen bg-[#f8f0dc] font-sans">
       <MainNavbar showVillageInNavbar={true} />
@@ -816,6 +1099,22 @@ export default function PlotsPage() {
           </div>
 
           <div>{renderPageButtons()}</div>
+        </div>
+
+        {/* LINE CHART: logs for Houses */}
+        <div className="mb-6">
+          {/* show chart only when no filters and villageId exists */}
+          {villageId && !debouncedQuery && !numberOfHomeFilter && !showDeleted ? (
+            logsLoading ? (
+              <div className="text-sm text-gray-600 py-4">Loading activity chart…</div>
+            ) : logsError ? (
+              <div className="text-sm text-red-600 py-2">{logsError}</div>
+            ) : (
+              <LogsLineChart items={logsItems} />
+            )
+          ) : (
+            <div className="text-sm text-gray-400 italic">Activity chart (Houses) hidden while filters are active or when village is not selected.</div>
+          )}
         </div>
 
         {loading ? (

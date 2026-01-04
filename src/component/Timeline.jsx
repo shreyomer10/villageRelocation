@@ -7,24 +7,26 @@ import { API_BASE } from "../config/Api.js";
  *
  * Props:
  *  - currentStage (string|number|null)
- *  - currentSubStage (string|number|null)
+ *  - currentSubStage (string|number|null)   // can be id like "Stage_17_2" or numeric index
  *  - completedSubstages (array of strings)  // e.g. ["Stage_17_2", ...]
- *  - onStageSelect(stageObj, index)         // click callback (click does NOT change fill)
+ *  - onStageSelect(stageObj, index)         // click callback for substages in popup
  *  - showSubstages (boolean)                // when false, substage hover popup will NOT be shown
  *
  * Behavior:
+ *  - Stage circles are static (not clickable).
  *  - Connector fills up to the current sub-stage (fractional).
  *  - Current stage: outlined blue circle (white interior).
  *  - Stages before current: filled blue circle with ✓.
  *  - If all stages completed: all circles filled blue with ✓.
- *  - Hover popup shows only sub-stage names; interactive and scrollable (only if showSubstages=true).
+ *  - Hover popup shows only sub-stage names (mapped from /stages API); interactive and scrollable
+ *    (only if showSubstages=true). Clicking a substage calls onStageSelect with the stage + selectedSub.
  */
 export default function TimelineOnly({
   currentStage = null,
   currentSubStage = null,
   completedSubstages = [],
   onStageSelect = () => {},
-  showSubstages = true, // <-- new prop (default true)
+  showSubstages = true,
 }) {
   const [stages, setStages] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -36,6 +38,9 @@ export default function TimelineOnly({
   const hideTimerRef = useRef(null);
   const mountedRef = useRef(true);
 
+  // mapping subStageId -> name
+  const subIdToNameRef = useRef({});
+
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -45,13 +50,15 @@ export default function TimelineOnly({
   }, []);
 
   // helper normalizations
-  const lcCompleted = Array.isArray(completedSubstages) ? completedSubstages.map((c) => String(c).toLowerCase()) : [];
+  const lcCompleted = Array.isArray(completedSubstages)
+    ? completedSubstages.map((c) => String(c).toLowerCase())
+    : [];
 
   function isSubCompleted(sub) {
     if (!sub) return false;
     const sid = String(sub.subStageId ?? "").toLowerCase();
-    const sname = String(sub.name ?? "").toLowerCase();
-    return lcCompleted.some((c) => c === sid || c.includes(sid) || c.includes(sname));
+    const sname = String(sub.name ?? subIdToNameRef.current[sub.subStageId] ?? "").toLowerCase();
+    return lcCompleted.some((c) => c === sid || c === sname || c.includes(sid) || c.includes(sname));
   }
 
   function isStageCompleted(stage) {
@@ -82,25 +89,33 @@ export default function TimelineOnly({
     if (!stageObj || !Array.isArray(stageObj.subStages) || stageObj.subStages.length === 0) return -1;
     if (subProp == null) return -1;
     const subStr = String(subProp).toLowerCase();
+
     // match id exactly
     const byId = stageObj.subStages.findIndex((ss) => String(ss.subStageId ?? "").toLowerCase() === subStr);
     if (byId >= 0) return byId;
-    // match by name fragment
-    const byName = stageObj.subStages.findIndex((ss) => String(ss.name ?? "").toLowerCase().includes(subStr));
+
+    // match by name fragment (compare to normalized name or mapped name)
+    const byName = stageObj.subStages.findIndex((ss) => {
+      const nm = String(ss.name ?? subIdToNameRef.current[ss.subStageId] ?? "").toLowerCase();
+      return nm.includes(subStr);
+    });
     if (byName >= 0) return byName;
+
     // try trailing number like "Stage_17_2"
     const numMatch = subStr.match(/(\d+)$/);
     if (numMatch) {
       const num = Number(numMatch[1]);
       if (!Number.isNaN(num) && num >= 1 && num <= stageObj.subStages.length) return num - 1;
     }
+
     // if numeric index string "2"
     const justNum = Number(subStr);
     if (!Number.isNaN(justNum) && justNum >= 1 && justNum <= stageObj.subStages.length) return justNum - 1;
+
     return -1;
   }
 
-  // load stages from API
+  // load stages from API and build subStageId->name mapping
   useEffect(() => {
     const ctrl = new AbortController();
     async function load() {
@@ -122,16 +137,25 @@ export default function TimelineOnly({
         else if (Array.isArray(payload.items)) items = payload.items;
         else if (Array.isArray(payload)) items = payload;
 
+        // build normalized stages and mapping
+        const mapping = {};
         const normalized = (items || []).map((s, idx) => {
           const stageId = s?.stageId ?? s?.stage_id ?? s?.id ?? `s-${idx + 1}`;
           const subs = s?.stages ?? s?.subStages ?? s?.sub_stages ?? s?.steps ?? [];
           const subStages = Array.isArray(subs)
-            ? subs.map((ss, sidx) => ({
-                name: ss?.name ?? ss?.title ?? `Sub ${sidx + 1}`,
-                subStageId: ss?.subStageId ?? ss?.sub_stage_id ?? ss?.sub_id ?? ss?.id ?? `${stageId}_${sidx + 1}`,
-                raw: ss,
-              }))
+            ? subs.map((ss, sidx) => {
+                const subId = ss?.subStageId ?? ss?.sub_stage_id ?? ss?.sub_id ?? ss?.id ?? `${stageId}_${sidx + 1}`;
+                const subName = ss?.name ?? ss?.title ?? `Sub ${sidx + 1}`;
+                // populate mapping
+                mapping[subId] = subName;
+                return {
+                  name: subName,
+                  subStageId: subId,
+                  raw: ss,
+                };
+              })
             : [];
+
           return {
             name: s?.name ?? s?.title ?? `Stage ${stageId}`,
             desc: s?.desc ?? s?.description ?? "",
@@ -141,6 +165,9 @@ export default function TimelineOnly({
             raw: s,
           };
         });
+
+        // attach mapping to ref (so we can use it anywhere without re-render cycles)
+        subIdToNameRef.current = mapping;
 
         if (!mountedRef.current) return;
         setStages(normalized);
@@ -218,12 +245,18 @@ export default function TimelineOnly({
     }, 180);
   }
 
-  function handleClick(stage, idx) {
+  function handleClickSub(stage, ss, idx) {
     try {
-      onStageSelect(stage, idx);
+      onStageSelect && onStageSelect({ ...stage, selectedSub: ss }, idx);
     } catch (e) {
-      // ignore
+      // ignore errors from callback
     }
+  }
+
+  // helper to get readable name for a substage id (fallback: id)
+  function getSubstageNameById(id) {
+    if (!id) return "";
+    return subIdToNameRef.current[id] ?? String(id);
   }
 
   // render
@@ -279,16 +312,16 @@ export default function TimelineOnly({
                     style={{ width: `${100 / Math.max(1, stages.length)}%`, maxWidth: 220 }}
                   >
                     <div className="h-12 flex items-center justify-center">
-                      <button
+                      {/* STATIC circle: replaced <button> with a non-interactive div to make it not clickable */}
+                      <div
                         onMouseEnter={() => handleCircleEnter(idx)}
                         onMouseLeave={() => handleCircleLeave(idx)}
-                        onClick={() => handleClick(stage, idx)}
                         title={stage.name}
-                        className={`relative z-20 flex items-center justify-center w-12 h-12 rounded-full focus:outline-none transition ${buttonClass}`}
+                        className={`relative z-20 flex items-center justify-center w-12 h-12 rounded-full transition ${buttonClass} cursor-default select-none`}
                         aria-pressed={isCurrent}
                       >
                         {isCompletedVisual ? "✓" : String(idx + 1)}
-                      </button>
+                      </div>
                     </div>
 
                     <div className={`mt-2 text-center text-sm truncate ${isCompletedVisual || isCurrent ? "text-slate-800" : "text-gray-400"}`}>
@@ -307,27 +340,30 @@ export default function TimelineOnly({
                       >
                         <div className="max-h-44 overflow-auto space-y-1 pr-2">
                           {stage.subStages.map((ss, sidx) => {
+                            // use mapped name first, then the ss.name, then fallback to id
+                            const displayName = ss.name ?? getSubstageNameById(ss.subStageId) ?? String(ss.subStageId ?? sidx);
+
                             const completedSub = isSubCompleted(ss);
                             const isCurrentSub =
                               currentSubStage != null &&
                               (String(currentSubStage).toLowerCase() === String(ss.subStageId ?? "").toLowerCase() ||
                                 String(currentSubStage).toLowerCase().includes(String(ss.subStageId ?? "").toLowerCase()) ||
-                                findSubIndexInStage(stage, currentSubStage) === sidx);
+                                findSubIndexInStage(stage, currentSubStage) === sidx ||
+                                String(currentSubStage).toLowerCase() === String(displayName).toLowerCase());
+
                             const itemClass = completedSub ? "bg-blue-100 text-blue-800 rounded px-2 py-1" : "bg-white text-gray-700 rounded px-2 py-1";
                             return (
                               <div
                                 key={String(ss.subStageId ?? sidx)}
                                 className={`flex items-center justify-between ${itemClass}`}
-                                title={ss.name}
+                                title={displayName}
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  try {
-                                    onStageSelect && onStageSelect({ ...stage, selectedSub: ss }, idx);
-                                  } catch {}
+                                  handleClickSub(stage, ss, idx);
                                 }}
                                 style={{ cursor: "pointer" }}
                               >
-                                <div className={`truncate text-xs ${isCurrentSub ? "font-semibold" : ""}`}>{ss.name}</div>
+                                <div className={`truncate text-xs ${isCurrentSub ? "font-semibold" : ""}`}>{displayName}</div>
                               </div>
                             );
                           })}

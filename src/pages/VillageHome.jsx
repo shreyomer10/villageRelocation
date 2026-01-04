@@ -56,6 +56,11 @@ export default function VillageDashboard() {
   const [beat, setBeat] = useState(null);
   const [circle, setCircle] = useState(null);
 
+  // stages fetched from API to map substage id -> name
+  const [stages, setStages] = useState([]);
+  const [loadingStages, setLoadingStages] = useState(false);
+  const [stagesError, setStagesError] = useState(null);
+
   // UI states
   const [loadingCounts, setLoadingCounts] = useState(true);
   const [loadingVillage, setLoadingVillage] = useState(true);
@@ -106,6 +111,69 @@ export default function VillageDashboard() {
       return String(iso);
     }
   }
+
+  // fetch /stages once so we can map subStageId -> name
+  useEffect(() => {
+    let mounted = true;
+    const fetchStages = async () => {
+      setLoadingStages(true);
+      setStagesError(null);
+      try {
+        const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+        const headers = { "Content-Type": "application/json" };
+        if (token) headers["Authorization"] = `Bearer ${token}`;
+        const res = await fetch(`${API_BASE}/stages`, { headers });
+        if (!res.ok) throw new Error(`Failed to fetch stages: ${res.status}`);
+        const data = await res.json();
+        const list = Array.isArray(data) ? data : data?.result?.items ?? data?.result ?? data?.stages ?? data?.data ?? [];
+        if (mounted) setStages(list);
+      } catch (err) {
+        if (mounted) setStagesError(err?.message ?? String(err));
+      } finally {
+        if (mounted) setLoadingStages(false);
+      }
+    };
+
+    fetchStages();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  // helper: find substage name in fetched stages by stageId and subStageId
+  const findSubstageNameFromFetched = (subId, stageId) => {
+    if (subId == null) return null;
+    const targetSub = String(subId);
+    const targetStage = stageId != null ? String(stageId) : null;
+
+    // if we have a specific stageId, prefer matching that stage first
+    let candidates = stages;
+    if (targetStage) {
+      const found = stages.find((s) => {
+        if (!s) return false;
+        const ids = [s.stageId, s.id, s._id, s.code, s.key];
+        return ids.some((x) => x != null && String(x) === targetStage);
+      });
+      if (found) candidates = [found];
+    }
+
+    for (const st of candidates) {
+      if (!st) continue;
+      // your API uses 'stages' array inside each stage object with subStageId/name
+      const subs = st.stages ?? st.substages ?? st.subStages ?? st.children ?? st.items ?? st.steps ?? [];
+      if (!Array.isArray(subs)) continue;
+      for (const ss of subs) {
+        if (!ss) continue;
+        const subIds = [ss.subStageId, ss.substageId, ss.id, ss._id, ss.code, ss.key];
+        for (const sid of subIds) {
+          if (sid != null && String(sid) === targetSub) {
+            return ss.name ?? ss.title ?? ss.label ?? ss.displayName ?? String(sid);
+          }
+        }
+      }
+    }
+    return null;
+  };
 
   // fetch counts & village
   useEffect(() => {
@@ -265,9 +333,19 @@ export default function VillageDashboard() {
     setCurrentSubStage(null);
   }
 
+  // derive human-friendly current substage name
+  const currentSubName = (() => {
+    if (!currentSubStage) return null;
+    // prefer mapping from fetched stages
+    const fromFetched = findSubstageNameFromFetched(currentSubStage, currentStage);
+    if (fromFetched) return fromFetched;
+    // fallback: try to use the raw id (or show placeholder)
+    return String(currentSubStage);
+  })();
+
   const googleMapsLink = (() => {
-    const lat = locationText?.split?.(",")?.[0]?.trim();
-    const lon = locationText?.split?.(",")?.[1]?.trim();
+    const lat = locationText?.split?.[0]?.trim?.();
+    const lon = locationText?.split?.[1]?.trim?.();
     if (lat && lon && lat !== "-" && lon !== "-") {
       return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(lat + "," + lon)}`;
     }
@@ -310,7 +388,7 @@ export default function VillageDashboard() {
             <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-100">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-semibold text-gray-700">Stages Of Relocation</h3>
-                <div className="text-sm text-gray-500">Current: <span className="font-medium text-gray-800">{currentStage ? ` ${currentStage}${currentSubStage ? ` - ${currentSubStage}` : ""}` : "—"}</span></div>
+                <div className="text-sm text-gray-500">Current Substage  :  <span className="font-medium text-gray-800">{currentSubStage ? (loadingStages ? " (loading substage)" : ` ${currentSubName ?? currentSubStage}`) : ""}</span></div>
               </div>
 
               <Timeline

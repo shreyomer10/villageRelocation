@@ -1,6 +1,4 @@
-﻿﻿
-
-// File: src/pages/FamilyList.jsx
+﻿﻿// src/pages/FamilyList.jsx
 import React, { useEffect, useState, useRef, useContext } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { SlidersHorizontal } from "lucide-react";
@@ -18,6 +16,7 @@ import {
   Tooltip,
   Legend,
   CartesianGrid,
+  LabelList,
 } from "recharts";
 
 function sanitizeFamilyId(raw) {
@@ -127,10 +126,285 @@ export default function FamilyList() {
   const menuRef = useRef(null);
   const closeTimerRef = useRef(null);
 
-  const [chartData, setChartData] = useState(null);
+  // chart state (existing analytics)
+  const [chartData, setChartData] = useState([]);
   const [chartKeys, setChartKeys] = useState([]);
   const [chartLoading, setChartLoading] = useState(false);
-  const [chartError, setChartError] = useState(null);
+  const [chartError, setChartError] = useState(null); // we won't show this in UI
+
+  // ----------------- Logs (family activity) state + abort + cache -----------------
+  const [logsItems, setLogsItems] = useState([]);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [logsError, setLogsError] = useState(null);
+  const logsControllerRef = useRef(null);
+  const logsCacheRef = useRef({}); // keyed by village|filter|search
+
+  function authHeaders() {
+    const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }
+
+  async function fetchWithCreds(url, opts = {}) {
+    try {
+      const headers = { ...(opts.headers || {}), ...(opts.authHeaders || {}) };
+      const res = await fetch(url, {
+        method: opts.method || "GET",
+        credentials: "include",
+        headers,
+        body: opts.body,
+        signal: opts.signal,
+      });
+      const text = await res.text().catch(() => "");
+      let json = null;
+      try { json = text ? JSON.parse(text) : null; } catch { json = null; }
+      return { res, ok: res.ok, status: res.status, json, text };
+    } catch (err) {
+      if (err && err.name === "AbortError") return { res: null, ok: false, status: 0, json: null, text: "aborted", aborted: true };
+      return { res: null, ok: false, status: 0, json: null, text: String(err) };
+    }
+  }
+
+  // Chart renderer — simple SVG line + area chart similar to other pages
+  function LogsLineChart({ items }) {
+    if (!items || items.length === 0) {
+      return <div className="text-sm text-gray-500">No activity logs available to plot.</div>;
+    }
+
+    function normalizeAction(a) {
+      if (!a) return "other";
+      const lower = String(a).toLowerCase();
+      if (lower.includes("delete")) return "Delete";
+      if (lower.includes("edited") || lower.includes("edit") || lower.includes("update")) return "Edited";
+      if (lower.includes("insert") || lower.includes("create") || lower.includes("added")) return "Insert";
+      if (lower.includes("family") && lower.includes("insert")) return "Insert";
+      if (lower.includes("family") && (lower.includes("edit") || lower.includes("updated") || lower.includes("edited"))) return "Edited";
+      if (lower.includes("family") && lower.includes("delete")) return "Delete";
+      return "other";
+    }
+
+    const byMonth = {};
+    items.forEach((it) => {
+      const timeStr = it.updateTime ?? it.update_time ?? it.time ?? it.createdAt ?? it.insertedAt ?? it.created_at ?? null;
+      let monthKey = null;
+      if (typeof timeStr === "string" && timeStr.length >= 7) {
+        const m = timeStr.match(/^(\d{4})[-\/](\d{2})/);
+        if (m) monthKey = `${m[1]}-${m[2]}`;
+        else {
+          const parsed = new Date(timeStr);
+          if (!Number.isNaN(parsed.getTime())) {
+            const y = parsed.getFullYear();
+            const mm = String(parsed.getMonth() + 1).padStart(2, "0");
+            monthKey = `${y}-${mm}`;
+          }
+        }
+      } else if (timeStr instanceof Date) {
+        const y = timeStr.getFullYear();
+        const mm = String(timeStr.getMonth() + 1).padStart(2, "0");
+        monthKey = `${y}-${mm}`;
+      } else {
+        const parsed = new Date(it.createdAt || it.time || it.insertedAt || Date.now());
+        if (!Number.isNaN(parsed.getTime())) {
+          const y = parsed.getFullYear();
+          const mm = String(parsed.getMonth() + 1).padStart(2, "0");
+          monthKey = `${y}-${mm}`;
+        } else monthKey = "unknown";
+      }
+      if (!monthKey) monthKey = "unknown";
+      if (!byMonth[monthKey]) byMonth[monthKey] = { Insert: 0, Edited: 0, Delete: 0 };
+      const action = normalizeAction(it.action ?? it.event ?? it.type ?? it.activity ?? it.description ?? "");
+      if (action === "Insert" || action === "Edited" || action === "Delete") {
+        byMonth[monthKey][action] = (byMonth[monthKey][action] || 0) + 1;
+      }
+    });
+
+    const months = Object.keys(byMonth).filter(k => k !== "unknown").sort((a, b) => a.localeCompare(b));
+    if (months.length === 0) months.push("unknown");
+
+    const insertSeries = months.map(m => byMonth[m]?.Insert ?? 0);
+    const editedSeries = months.map(m => byMonth[m]?.Edited ?? 0);
+    const deleteSeries = months.map(m => byMonth[m]?.Delete ?? 0);
+
+    const maxVal = Math.max(...insertSeries, ...editedSeries, ...deleteSeries, 1);
+    const width = 820;
+    const height = 240;
+    const paddingLeft = 64;
+    const paddingRight = 24;
+    const paddingTop = 20;
+    const paddingBottom = 44;
+    const plotWidth = width - paddingLeft - paddingRight;
+    const plotHeight = height - paddingTop - paddingBottom;
+
+    const xForIndex = (i) => {
+      if (months.length === 1) return paddingLeft + plotWidth / 2;
+      return paddingLeft + (i / (months.length - 1)) * plotWidth;
+    };
+    const yForValue = (v) => {
+      const frac = v / maxVal;
+      return paddingTop + (1 - frac) * plotHeight;
+    };
+
+    const ticks = 4;
+    const tickVals = Array.from({ length: ticks + 1 }).map((_, i) => Math.round((i / ticks) * maxVal));
+    const colors = { Insert: "#10b981", Edited: "#f59e0b", Delete: "#ef4444" };
+
+    return (
+      <div className="bg-white rounded-lg border p-3 shadow-sm w-full mb-4">
+        <div className="flex items-start justify-between mb-2">
+          <div>
+            <div className="text-sm text-gray-600">Family activity (family)</div>
+            <div className="text-lg font-semibold">Family Insert / Edited / Deleted</div>
+          </div>
+          <div className="text-xs text-gray-400">Hidden when server filters are active</div>
+        </div>
+
+        <div className="overflow-auto">
+          <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label="Family activity chart">
+            <defs>
+              <filter id="softShadow" x="-50%" y="-50%" width="200%" height="200%">
+                <feDropShadow dx="0" dy="4" stdDeviation="6" floodColor="#0b1220" floodOpacity="0.06" />
+              </filter>
+            </defs>
+
+            {tickVals.map((tv, i) => {
+              const y = yForValue(tv);
+              return (
+                <g key={`tick_${i}`}>
+                  <line x1={paddingLeft} x2={width - paddingRight} y1={y} y2={y} stroke="#eef2ff" strokeWidth="1" />
+                  <text x={paddingLeft - 8} y={y + 4} fontSize="11" fill="#475569" textAnchor="end" style={{ fontFamily: "Inter, system-ui" }}>{tv}</text>
+                </g>
+              );
+            })}
+
+            {months.map((m, i) => {
+              const x = xForIndex(i);
+              return (
+                <g key={`x_${m}`}>
+                  <text x={x} y={height - 18} fontSize="11" fill="#475569" textAnchor="middle" style={{ fontFamily: "Inter, system-ui" }}>{m}</text>
+                </g>
+              );
+            })}
+
+            {["Insert", "Edited", "Delete"].map((key) => {
+              const series = key === "Insert" ? insertSeries : key === "Edited" ? editedSeries : deleteSeries;
+              const path = series.map((val, idx) => {
+                const x = xForIndex(idx);
+                const y = yForValue(val);
+                return `${idx === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+              }).join(" ");
+              const lastX = xForIndex(series.length - 1);
+              const firstX = xForIndex(0);
+              const baseY = yForValue(0);
+              const areaPath = `${path} L ${lastX.toFixed(2)} ${baseY.toFixed(2)} L ${firstX.toFixed(2)} ${baseY.toFixed(2)} Z`;
+              return <path key={`area_${key}`} d={areaPath} fill={colors[key]} opacity="0.06" />;
+            })}
+
+            {["Insert", "Edited", "Delete"].map((key) => {
+              const series = key === "Insert" ? insertSeries : key === "Edited" ? editedSeries : deleteSeries;
+              const d = series.map((val, idx) => {
+                const x = xForIndex(idx);
+                const y = yForValue(val);
+                return `${idx === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+              }).join(" ");
+              return (
+                <g key={`line_${key}`}>
+                  <path d={d} fill="none" stroke={colors[key]} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" style={{ filter: "url(#softShadow)" }} />
+                  {series.map((val, idx) => {
+                    const x = xForIndex(idx);
+                    const y = yForValue(val);
+                    return <circle key={`pt_${key}_${idx}`} cx={x} cy={y} r={3.6} fill="#fff" stroke={colors[key]} strokeWidth={2} />;
+                  })}
+                </g>
+              );
+            })}
+
+            <g transform={`translate(${paddingLeft}, ${paddingTop - 6})`}>
+              {["Insert", "Edited", "Delete"].map((k, i) => (
+                <g key={`leg_${k}`} transform={`translate(${i * 120}, 0)`}>
+                  <rect x={0} y={-12} width={14} height={8} rx={2} fill={colors[k]} />
+                  <text x={20} y={-4} fontSize="12" fill="#0f172a" style={{ fontFamily: "Inter, system-ui" }}>{k}</text>
+                </g>
+              ))}
+            </g>
+
+          </svg>
+        </div>
+      </div>
+    );
+  }
+
+  // debounce + fetch logs effect
+  useEffect(() => {
+    const key = `${effectiveVillageId || ""}|${filterOption || ""}|${search || ""}`;
+    // Only show logs chart when no server-side filters active:
+    // for FamilyList: require effectiveVillageId and filterOption === 'All' and empty search
+    const showLogsChart = Boolean(effectiveVillageId) && (!filterOption || filterOption === "All") && (!search || search.trim() === "");
+
+    if (!showLogsChart) {
+      try { if (logsControllerRef.current) { logsControllerRef.current.abort(); logsControllerRef.current = null; } } catch {}
+      setLogsItems([]);
+      setLogsLoading(false);
+      setLogsError(null);
+      return;
+    }
+
+    let mounted = true;
+    const tid = setTimeout(async () => {
+      try {
+        if (logsCacheRef.current[key]) {
+          if (!mounted) return;
+          setLogsItems(logsCacheRef.current[key]);
+          setLogsError(null);
+          setLogsLoading(false);
+          return;
+        }
+
+        try { if (logsControllerRef.current) logsControllerRef.current.abort(); } catch {}
+        const controller = new AbortController();
+        logsControllerRef.current = controller;
+        setLogsLoading(true);
+        setLogsError(null);
+
+        const params = new URLSearchParams();
+        params.append("type", "family"); // type is family
+        if (effectiveVillageId) params.append("villageId", effectiveVillageId);
+        params.append("page", "1");
+        params.append("limit", String(Math.max(100, pageSize)));
+        const url = `${API_BASE}/logs?${params.toString()}`;
+
+        const { ok, status, json, text, aborted } = await fetchWithCreds(url, { method: "GET", signal: controller.signal, authHeaders: authHeaders() });
+        if (!mounted) return;
+        if (aborted) return;
+
+        if (!ok) {
+          if (status === 404) {
+            setLogsItems([]);
+            setLogsError(null);
+            setLogsLoading(false);
+            return;
+          }
+          throw new Error((json && (json.message || json.error)) || text || `Failed to fetch logs: ${status}`);
+        }
+
+        const payload = json ?? {};
+        const result = payload.result ?? payload ?? {};
+        const items = result.items ?? (Array.isArray(result) ? result : []);
+        const finalItems = Array.isArray(items) ? items : [];
+        logsCacheRef.current[key] = finalItems;
+        setLogsItems(finalItems);
+        setLogsError(null);
+      } catch (err) {
+        if (err && err.name === "AbortError") return;
+        console.error("fetch logs error:", err);
+        setLogsError(err.message || "Failed to load logs");
+        setLogsItems([]);
+      } finally {
+        if (mounted) setLogsLoading(false);
+      }
+    }, 420);
+
+    return () => { mounted = false; clearTimeout(tid); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveVillageId, filterOption, search, pageSize]);
 
   // modal state
   const [modalOpen, setModalOpen] = useState(false);
@@ -190,10 +464,13 @@ export default function FamilyList() {
           throw new Error("No village selected. Please select a village from the dashboard.");
         }
 
+        // Build headers + credentials
         const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-        const headers = token
-          ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }
-          : { "Content-Type": "application/json" };
+        const headers = {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        };
+        if (token) headers["Authorization"] = `Bearer ${token}`;
 
         const qp = new URLSearchParams();
         qp.set("page", String(page));
@@ -207,6 +484,7 @@ export default function FamilyList() {
           method: "GET",
           headers,
           signal: ctrl.signal,
+          credentials: "include",
         });
 
         if (!res.ok) {
@@ -214,7 +492,11 @@ export default function FamilyList() {
           try {
             const tmp = await res.json();
             bodyText = tmp && tmp.message ? `: ${tmp.message}` : "";
-          } catch {}
+          } catch {
+            try {
+              bodyText = `: ${await res.text()}`;
+            } catch {}
+          }
           throw new Error(`Failed to fetch beneficiaries (${res.status})${bodyText}`);
         }
 
@@ -275,27 +557,57 @@ export default function FamilyList() {
     return () => clearTimeout(searchDebounceRef.current);
   }, [search]);
 
+  // prettier, formal tooltip component
+  function CustomTooltip({ active, payload, label }) {
+    if (!active || !payload || !payload.length) return null;
+    const entry = payload[0];
+    return (
+      <div className="bg-white p-3 shadow rounded text-sm" style={{ minWidth: 140 }}>
+        <div className="font-semibold text-gray-800 mb-1">{label}</div>
+        <div className="text-gray-600">Count: <span className="font-medium text-gray-900">{new Intl.NumberFormat().format(entry.value)}</span></div>
+      </div>
+    );
+  }
+
   useEffect(() => {
     let mounted = true;
 
     async function fetchAnalyticsForOption(optionKey) {
       const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const headers = {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
       const url = `${API_BASE}/analytics/options/${encodeURIComponent(optionKey)}${effectiveVillageId ? `?villageId=${encodeURIComponent(effectiveVillageId)}` : ""}`;
-      const res = await fetch(url, { method: "GET", headers });
+      const res = await fetch(url, {
+        method: "GET",
+        headers,
+        credentials: "include",
+      });
       if (!res.ok) {
-        const txt = await res.text().catch(() => "");
-        throw new Error(`Analytics fetch failed (${res.status}) ${txt}`);
+        try {
+          const tmp = await res.json();
+          console.error("Analytics fetch unexpected status:", res.status, tmp);
+        } catch {
+          try {
+            const txt = await res.text();
+            console.error("Analytics fetch unexpected status:", res.status, txt);
+          } catch (e) {
+            console.error("Analytics fetch unexpected status and failed to parse body", e);
+          }
+        }
+        return { stages: [] };
       }
       const json = await res.json().catch(() => ({}));
-      if (json && json.error) throw new Error(json.message || "Analytics API error");
-      return json.result || json;
+      return (json && json.result) ? json.result : json;
     }
 
     async function loadChart() {
-      if (!effectiveVillageId || !filterOption || filterOption === "All") {
+      if (!filterOption || filterOption === "All") {
         if (mounted) {
-          setChartData(null);
+          setChartData([]);
           setChartKeys([]);
           setChartError(null);
           setChartLoading(false);
@@ -305,25 +617,36 @@ export default function FamilyList() {
 
       setChartLoading(true);
       setChartError(null);
-      setChartData(null);
+      setChartData([]);
       setChartKeys([]);
 
       try {
         const resp = await fetchAnalyticsForOption(filterOption);
-        const data = (resp.stages || []).map((s) => ({ name: s.name || s.id, [filterOption]: s.count || 0 }));
+        const stages = Array.isArray(resp?.stages) ? resp.stages : [];
+
+        const data = stages.map((s) => ({
+          name: (s && (s.name || s.id)) || "—",
+          count: Number(s.count || 0),
+        }));
+
         if (!mounted) return;
-        if (data && data.length > 0) {
+
+        const hasNonZero = data.some(d => Number(d.count) > 0);
+        if (!data.length || !hasNonZero) {
+          setChartData([]);
+          setChartKeys([filterOption]);
+          setChartError(null);
+        } else {
           setChartData(data);
           setChartKeys([filterOption]);
-        } else {
-          setChartData(null);
-          setChartKeys([]);
+          setChartError(null);
         }
       } catch (err) {
+        console.error("Analytics fetch failed:", err);
         if (!mounted) return;
-        setChartError(err.message || "Failed to load analytics");
-        setChartData(null);
+        setChartData([]);
         setChartKeys([]);
+        setChartError(null);
       } finally {
         if (mounted) setChartLoading(false);
       }
@@ -335,7 +658,7 @@ export default function FamilyList() {
     };
   }, [filterOption, effectiveVillageId]);
 
-  // Navigate to family details page (same behavior as previous code) -- keep persistence and auth updates
+  // Navigate to family details page
   const navigateToFamilyDetails = (familyId) => {
     if (familyId === undefined || familyId === null) {
       console.error("No familyId provided to navigation");
@@ -351,7 +674,6 @@ export default function FamilyList() {
       }
     } catch (e) { console.warn("AuthContext update error:", e); }
 
-    // closing modal and navigating
     setModalOpen(false);
     setModalFamilyId(null);
 
@@ -387,38 +709,65 @@ export default function FamilyList() {
     );
   }
 
-  const shouldShowChartBox = filterOption !== "All" && (chartLoading || (chartData && chartData.length > 0));
+  const shouldShowChartBox = filterOption !== "All";
   const startIndex = totalCount !== null ? (totalCount === 0 ? 0 : (page - 1) * pageSize + 1) : (beneficiaries.length === 0 ? 0 : (page - 1) * pageSize + 1);
   const endIndex = startIndex === 0 ? 0 : startIndex + beneficiaries.length - 1;
   const totalPages = totalCount !== null ? Math.max(1, Math.ceil(totalCount / pageSize)) : null;
 
+  function gotoPage(p) {
+    const np = Math.max(1, Math.min(totalPages || p, Number(p) || 1));
+    if (np === page) return;
+    setPage(np);
+    try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
+  }
+
   function renderPageButtons() {
     if (totalPages !== null) {
-      const windowSize = 5;
-      let start = Math.max(1, page - Math.floor(windowSize / 2));
-      let end = Math.min(totalPages, start + windowSize - 1);
-      if (end - start + 1 < windowSize) start = Math.max(1, end - windowSize + 1);
-      const buttons = [];
-      buttons.push(<button key="first" onClick={() => setPage(1)} disabled={page === 1} className="px-2 py-1 border rounded mx-1 text-sm">«</button>);
-      buttons.push(<button key="prev" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} className="px-2 py-1 border rounded mx-1 text-sm">Prev</button>);
-      for (let p = start; p <= end; p++) {
-        buttons.push(<button key={p} onClick={() => setPage(p)} className={`px-3 py-1 border rounded mx-1 text-sm ${p === page ? "bg-green-200 font-semibold" : ""}`}>{p}</button>);
+      const maxButtons = 7;
+      const pages = [];
+      if (totalPages <= maxButtons) {
+        for (let i = 1; i <= totalPages; i++) pages.push(i);
+      } else {
+        const left = Math.max(2, page - 1);
+        const right = Math.min(totalPages - 1, page + 1);
+        pages.push(1);
+        if (left > 2) pages.push("left-ellipsis");
+        for (let i = left; i <= right; i++) pages.push(i);
+        if (right < totalPages - 1) pages.push("right-ellipsis");
+        pages.push(totalPages);
       }
-      buttons.push(<button key="next" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages} className="px-2 py-1 border rounded mx-1 text-sm">Next</button>);
-      buttons.push(<button key="last" onClick={() => setPage(totalPages)} disabled={page === totalPages} className="px-2 py-1 border rounded mx-1 text-sm">»</button>);
-      return <div className="flex items-center">{buttons}</div>;
+
+      return (
+        <div className="flex items-center gap-2">
+          <button onClick={() => gotoPage(page - 1)} disabled={page <= 1} className={`px-3 py-1 rounded ${page <= 1 ? 'bg-gray-100 text-gray-400' : 'bg-white border'}`}>Prev</button>
+          <div className="flex items-center gap-1">
+            {pages.map((p, idx) => {
+              if (p === 'left-ellipsis' || p === 'right-ellipsis') return <span key={`e-${idx}`} className="px-3 py-1">…</span>;
+              return (
+                <button
+                  key={p}
+                  onClick={() => gotoPage(p)}
+                  className={`px-3 py-1 rounded ${p === page ? 'bg-indigo-600 text-white' : 'bg-white border hover:bg-gray-50'}`}
+                >
+                  {p}
+                </button>
+              );
+            })}
+          </div>
+          <button onClick={() => gotoPage(page + 1)} disabled={page >= totalPages} className={`px-3 py-1 rounded ${page >= totalPages ? 'bg-gray-100 text-gray-400' : 'bg-white border'}`}>Next</button>
+        </div>
+      );
     }
 
     return (
       <div className="flex items-center gap-2">
-        <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} className="px-3 py-1 border rounded text-sm">Prev</button>
+        <button onClick={() => gotoPage(page - 1)} disabled={page <= 1} className={`px-3 py-1 rounded ${page <= 1 ? 'bg-gray-100 text-gray-400' : 'bg-white border'}`}>Prev</button>
         <div className="text-sm px-2">Page {page}</div>
-        <button onClick={() => { if (beneficiaries.length < pageSize) return; setPage((p) => p + 1); }} disabled={beneficiaries.length < pageSize} className="px-3 py-1 border rounded text-sm">Next</button>
+        <button onClick={() => { if (beneficiaries.length < pageSize) return; gotoPage(page + 1); }} disabled={beneficiaries.length < pageSize} className={`px-3 py-1 rounded ${beneficiaries.length < pageSize ? 'bg-gray-100 text-gray-400' : 'bg-white border'}`}>Next</button>
       </div>
     );
   }
 
-  // open modal when a card clicked
   const openOverviewModal = (fid) => {
     setModalFamilyId(String(fid));
     setModalOpen(true);
@@ -467,26 +816,87 @@ export default function FamilyList() {
           <div>{renderPageButtons()}</div>
         </div>
 
+        {/* ----------------- Family activity logs chart (placed between pagination and cards) ----------------- */}
+        <div className="mb-6 w-full">
+          { (Boolean(effectiveVillageId) && (!filterOption || filterOption === "All") && (!search || search.trim() === "")) ? (
+            logsLoading ? (
+              <div className="h-36 flex items-center justify-center text-sm text-gray-600">Loading activity chart…</div>
+            ) : logsError ? (
+              <div className="h-36 flex items-center justify-center text-sm text-red-600">{logsError}</div>
+            ) : (
+              <LogsLineChart items={logsItems} />
+            )
+          ) : (
+            <div className="text-sm text-gray-400 italic mb-4">Activity chart (family) hidden while server-side filters are active.</div>
+          )}
+        </div>
+
+        {/* existing analytics box (optional, shows when filterOption != All) */}
         {shouldShowChartBox && (
           <div className="mb-6 w-full bg-white rounded-xl p-4 shadow">
             <div className="flex items-center justify-between mb-3">
               <div className="font-semibold text-gray-800">Stage analytics</div>
-              <div className="text-xs text-gray-500">{`Showing ${filterOption.replace(/_/g, " ")}`}</div>
+              <div className="text-xs text-gray-500">{chartKeys.length ? `${chartKeys[0].toString().replace(/_/g, " ")}` : filterOption.replace(/_/g, " ")}</div>
             </div>
 
             <div className="h-64">
-              {chartLoading ? <div className="h-full flex items-center justify-center text-sm text-gray-600">Loading chart…</div> : chartData && chartData.length ? (
+              {chartLoading ? (
+                <div className="h-full flex items-center justify-center text-sm text-gray-600">Loading chart…</div>
+              ) : chartData && chartData.length ? (
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={chartData} margin={{ top: 10, right: 24, left: 8, bottom: 20 }}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="name" tick={{ fontSize: 12 }} interval={0} angle={-20} textAnchor="end" height={60} />
-                    <YAxis />
-                    <Tooltip />
-                    <Legend />
-                    <Bar dataKey={chartKeys[0]} name={chartKeys[0].replace(/_/g, " ")} fill="#4f46e5" />
+                  <BarChart
+                    data={chartData}
+                    margin={{ top: 12, right: 24, left: 8, bottom: 48 }}
+                    barCategoryGap="20%"
+                  >
+                    <defs>
+                      <linearGradient id="gradChart" x1="0" y1="0" x2="1" y2="1">
+                        <stop offset="0%" stopColor="#7c3aed" stopOpacity="0.95" />
+                        <stop offset="100%" stopColor="#4338ca" stopOpacity="0.95" />
+                      </linearGradient>
+                      <filter id="softShadow" x="-20%" y="-50%" width="140%" height="200%">
+                        <feDropShadow dx="0" dy="6" stdDeviation="8" floodColor="#000" floodOpacity="0.12"/>
+                      </filter>
+                    </defs>
+
+                    <CartesianGrid stroke="#e9e9f0" strokeDasharray="4 4" vertical={false} />
+                    <XAxis
+                      dataKey="name"
+                      tick={{ fontSize: 12, fill: "#374151" }}
+                      interval={0}
+                      angle={-25}
+                      textAnchor="end"
+                      height={64}
+                    />
+                    <YAxis
+                      tickFormatter={(v) => Number.isInteger(v) ? v : v}
+                      tick={{ fontSize: 12, fill: "#374151" }}
+                      axisLine={false}
+                      tickLine={false}
+                      width={60}
+                    />
+                    <Tooltip content={<CustomTooltip />} />
+                    <Legend
+                      verticalAlign="top"
+                      align="right"
+                      iconType="square"
+                      wrapperStyle={{ paddingTop: 6, paddingRight: 6, fontSize: 12 }}
+                    />
+                    <Bar
+                      dataKey="count"
+                      name={chartKeys[0] ? chartKeys[0].toString().replace(/_/g, " ") : "Count"}
+                      fill="url(#gradChart)"
+                      radius={[10, 10, 4, 4]}
+                      animationDuration={800}
+                      barSize={28}
+                    >
+                      <LabelList dataKey="count" position="top" formatter={(val) => new Intl.NumberFormat().format(val)} style={{ fontSize: 12, fill: "#111827", fontWeight: 600 }} />
+                    </Bar>
                   </BarChart>
                 </ResponsiveContainer>
-              ) : null}
+              ) : (
+                <div className="h-full flex items-center justify-center text-sm text-gray-500">No analytics available.</div>
+              )}
             </div>
           </div>
         )}

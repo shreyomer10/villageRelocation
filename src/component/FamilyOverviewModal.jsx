@@ -5,7 +5,6 @@ import { API_BASE } from "../config/Api.js";
 import { AuthContext } from "../context/AuthContext";
 import DocsModal from "../component/DocsModal"; // assumed existing component
 import { motion, AnimatePresence } from "framer-motion";
-import { useNavigate } from "react-router-dom";
 
 /**
  * FamilyOverviewModal
@@ -25,7 +24,6 @@ export default function FamilyOverviewModal({
   const { setSelectedFamilyId } = useContext(AuthContext) || {};
   const ctrlRef = useRef(null);
   const mountedRef = useRef(true);
-  const navigate = useNavigate();
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -438,24 +436,18 @@ export default function FamilyOverviewModal({
     }, 150);
   }
 
-  // handle a click on a stage circle
+  // handle a click on a stage circle (kept for reference but circles are now non-clickable)
   function onStageClick(stage, idx) {
     try {
       const timelineSelection = { stage, subStage: null };
       const payload = { familyId: idDisplay, timelineSelection };
 
-      // call parent handler if provided (keeps existing behavior)
+      // call parent handler if provided (keeps existing behavior elsewhere)
       if (typeof onShowDetails === "function") {
         try { onShowDetails(payload); } catch (e) { /* swallow */ }
-      } else {
-        // fallback: set selected family and navigate to a family detail route with timeline state
-        try { if (typeof setSelectedFamilyId === "function") setSelectedFamilyId(idDisplay); } catch (e) {}
-        try {
-          navigate(`/families/${encodeURIComponent(idDisplay)}`, { state: { timelineSelection: { stageId: stage?.id ?? stage?.stageId ?? stage?.stageid ?? stage?.name } } });
-        } catch (e) {}
       }
 
-      // also show the relocation option (if available) in a small inline panel
+      // show the relocation option (if available) in a small inline panel
       setSelectedStageForPopup({ stage, option: currentOptionObj || overview?.relocationOption || overview?.relocation });
 
     } catch (e) {}
@@ -466,9 +458,6 @@ export default function FamilyOverviewModal({
       const payload = { familyId: idDisplay, timelineSelection };
       if (typeof onShowDetails === "function") {
         try { onShowDetails(payload); } catch (e) {}
-      } else {
-        try { if (typeof setSelectedFamilyId === "function") setSelectedFamilyId(idDisplay); } catch (e) {}
-        try { navigate(`/families/${encodeURIComponent(idDisplay)}`, { state: { timelineSelection: { stageId: stage?.id ?? stage?.stageId ?? stage?.stageid ?? stage?.name, subStageId: sub?.id ?? sub?.subStageId ?? sub?.substageId ?? sub?.name } } }); } catch (e) {}
       }
       setSelectedStageForPopup({ stage, sub, option: currentOptionObj || overview?.relocationOption || overview?.relocation });
     } catch (e) {}
@@ -556,12 +545,15 @@ export default function FamilyOverviewModal({
                           return (
                             <div key={stage.id ?? idx} className="flex flex-col items-center w-full max-w-[220px] relative" style={{ width: `${100 / Math.max(1, timelineStages.length)}%`, maxWidth: 220 }}>
                               <div className="h-16 flex items-center justify-center">
+                                {/* Circle is now non-clickable: onClick is a no-op, removed navigation and made unfocusable */}
                                 <button
                                   onMouseEnter={() => handleCircleEnter(idx)}
                                   onMouseLeave={() => handleCircleLeave(idx)}
-                                  onClick={() => onStageClick(stage, idx)}
+                                  onClick={(e) => { e.stopPropagation(); }} // prevent any parent navigation / handlers
                                   title={stage.name}
                                   className={`relative z-20 flex items-center justify-center w-12 h-12 rounded-full focus:outline-none transition ${circleClass}`}
+                                  tabIndex={-1}
+                                  aria-disabled="true"
                                 >
                                   {isCompleted ? <CheckCircle className="w-5 h-5 text-white" /> : <span className={`font-semibold text-sm ${isCurrent ? "text-blue-600" : "text-gray-400"}`}>{idx + 1}</span>}
                                 </button>
@@ -602,7 +594,13 @@ export default function FamilyOverviewModal({
                             const isCompleted = stage.completed || isBefore;
                             return (
                               <div key={stage.id ?? idx} className="flex-shrink-0 w-40">
-                                <button onClick={() => onStageClick(stage, idx)} className="w-full text-left">
+                                {/* mobile item: make the visual circle non-clickable as well */}
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); }} // no navigation
+                                  className="w-full text-left"
+                                  tabIndex={-1}
+                                  aria-disabled="true"
+                                >
                                   <div className="flex items-center gap-3">
                                     <div className={`w-8 h-8 rounded-full flex items-center justify-center ${isCompleted ? "bg-blue-600" : "bg-white border border-gray-300"}`}>
                                       {isCompleted ? <CheckCircle className="w-4 h-4 text-white" /> : <span className={`text-sm ${isCurrent ? "text-blue-600" : "text-gray-400"}`}>{idx + 1}</span>}
@@ -677,8 +675,8 @@ export default function FamilyOverviewModal({
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-center gap-3">
                 <div className="flex flex-wrap gap-2">
                   <ActionChip onClick={() => onShowDetails?.(idDisplay)}>Options Updates</ActionChip>
-                  <ActionChip onClick={() => { setDocsTab("photos"); setDocsOpen(true); }}>View photos</ActionChip>
-                  <ActionChip onClick={() => { setDocsTab("docs"); setDocsOpen(true); }}>View documents</ActionChip>
+                  {/* Merged View Photos + View Documents into single action */}
+                  <ActionChip onClick={() => { setDocsTab("photos"); setDocsOpen(true); }}>View files</ActionChip>
                 </div>
               </div>
             </div>

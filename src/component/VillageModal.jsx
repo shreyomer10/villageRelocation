@@ -1,9 +1,10 @@
 ﻿import React, { useEffect, useState, useContext, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { X, MapPin, Calendar, Layers, User } from "lucide-react";
+import { X, MapPin, Layers, User } from "lucide-react";
 import { AuthContext } from "../context/AuthContext";
 import Timeline from "../component/Timeline";
 import { motion, AnimatePresence } from "framer-motion";
+import { API_BASE } from "../config/Api.js";
 
 export default function VillageModal({
   open = false,
@@ -13,9 +14,12 @@ export default function VillageModal({
   onSaveVillage = null,
 }) {
   const navigate = useNavigate();
-  const { setSelectedVillageId } = useContext(AuthContext) || {};
+  const { setSelectedVillageId, token } = useContext(AuthContext) || {};
 
   const [saving, setSaving] = useState(false);
+  const [stages, setStages] = useState([]);
+  const [loadingStages, setLoadingStages] = useState(false);
+  const [stagesError, setStagesError] = useState(null);
 
   // Helper to close the modal and clear selectedVillageId in context/localStorage
   const closeModal = useCallback(() => {
@@ -69,6 +73,44 @@ export default function VillageModal({
       } catch (e) {}
     };
   }, [village, open, setSelectedVillageId]);
+
+  // fetch /stages when modal opens to map substage ids to names
+  useEffect(() => {
+    if (!open) return;
+    let mounted = true;
+    const fetchStages = async () => {
+      setLoadingStages(true);
+      setStagesError(null);
+      try {
+        const headers = { "Content-Type": "application/json" };
+        if (token) headers["Authorization"] = `Bearer ${token}`;
+        const res = await fetch(`${API_BASE}/stages`, { headers });
+        if (!res.ok) {
+          const txt = await res.text();
+          throw new Error(`Failed to fetch stages: ${res.status} ${txt}`);
+        }
+        const data = await res.json();
+        // The API returns { result: { count, items: [...] } } in your example.
+        // Prefer result.items if present, otherwise fall back to other shapes.
+        const list = Array.isArray(data)
+          ? data
+          : data?.result?.items ?? data?.result ?? data?.stages ?? data?.data ?? [];
+        if (mounted) setStages(list);
+      } catch (err) {
+        // keep UI tolerant: surface error but continue with fallback lookup
+        // eslint-disable-next-line no-console
+        console.warn("Error fetching stages:", err);
+        if (mounted) setStagesError(err?.message ?? String(err));
+      } finally {
+        if (mounted) setLoadingStages(false);
+      }
+    };
+
+    fetchStages();
+    return () => {
+      mounted = false;
+    };
+  }, [open, token]);
 
   // prevent body scrolling while modal is open
   useEffect(() => {
@@ -141,20 +183,123 @@ export default function VillageModal({
   // small helper: present a trimmed id for compact display
   const compactId = (id) => (id ? String(id).slice(0, 8) : "-");
 
+  // --- Helper: find substage name in fetched stages by matching stageId and subStageId ---
+  const findSubstageNameFromFetched = (subId, stageId) => {
+    if (subId == null) return null;
+    const targetSub = String(subId);
+    const targetStage = stageId != null ? String(stageId) : null;
+
+    // If we have a targetStage string, try to find that stage object first (matching common keys)
+    let candidates = stages;
+    if (targetStage) {
+      const found = stages.find((s) => {
+        if (!s) return false;
+        const ids = [s.stageId, s.id, s._id, s.code, s.key];
+        return ids.some((x) => x != null && String(x) === targetStage);
+      });
+      if (found) candidates = [found];
+    }
+
+    // Iterate candidates and look for substage entries using the API's schema (stage.stages -> subStageId/name)
+    for (const st of candidates) {
+      if (!st) continue;
+      // API uses 'stages' for nested substages according to the sample you pasted
+      const subs = st.stages ?? st.substages ?? st.subStages ?? st.children ?? st.items ?? st.steps ?? [];
+      if (!Array.isArray(subs)) continue;
+      for (const ss of subs) {
+        if (!ss) continue;
+        // common substage id keys seen in your API: subStageId
+        const subIds = [ss.subStageId, ss.substageId, ss.id, ss._id, ss.code, ss.key];
+        for (const sid of subIds) {
+          if (sid != null && String(sid) === targetSub) {
+            return ss.name ?? ss.title ?? ss.label ?? ss.displayName ?? String(sid);
+          }
+        }
+      }
+    }
+
+    return null;
+  };
+
+  // --- Fallback lookup using village object and other heuristics
+  const getSubstageNameFallback = (subId, v) => {
+    if (subId == null) return "-";
+
+    const target = String(subId);
+
+    const findInArray = (arr) => {
+      if (!Array.isArray(arr)) return null;
+      for (const item of arr) {
+        if (!item) continue;
+        if (typeof item === "string" || typeof item === "number") {
+          if (String(item) === target) return String(item);
+          continue;
+        }
+        const idCandidates = [item.id, item._id, item.substageId, item.subStageId, item.stageId, item.key, item.code];
+        const nameCandidates = [item.name, item.title, item.label, item.substageName, item.stageName, item.displayName];
+        for (const cand of idCandidates) {
+          if (cand != null && String(cand) === target) {
+            for (const n of nameCandidates) {
+              if (n) return n;
+            }
+            return String(cand);
+          }
+        }
+        const nested = item.substages || item.children || item.items || item.steps || item.stages;
+        if (Array.isArray(nested)) {
+          const found = findInArray(nested);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+
+    const candidates = [
+      v?.subStages,
+      v?.sub_stages,
+      v?.substages,
+      v?.stages,
+      v?.stagesList,
+      v?.stageDetails,
+      v?.timeline,
+      v?.timelineStages,
+      v?.structure?.stages,
+      v?.structure?.timeline,
+      completedSubstages,
+    ];
+
+    for (const c of candidates) {
+      const r = findInArray(c);
+      if (r) return r;
+    }
+
+    if (v?.substageMap && typeof v.substageMap === "object") {
+      const val = v.substageMap[target] ?? v.substageMap[subId];
+      if (val) return val.name ?? val.title ?? String(val);
+    }
+
+    return String(subId);
+  };
+
+  // final: prefer fetched stage mapping, then fallback
+  const currentSubName = (() => {
+    if (currentSub == null) return "-";
+    const fromFetched = findSubstageNameFromFetched(currentSub, currentSeq);
+    if (fromFetched) return fromFetched;
+    if (loadingStages) return null; // signal to UI that we're still loading
+    return getSubstageNameFallback(currentSub, village);
+  })();
+
   // handle timeline clicks (safe, won't throw if callbacks absent)
   const handleTimelineSelect = (stageObj, idx) => {
-    // If the timeline clicked item carried a selectedSub, include it when opening profile.
     try {
       if (stageObj?.selectedSub) {
-        // pass the village and selected stage/sub info to onOpenProfile if present
         if (typeof onOpenProfile === "function") {
           onOpenProfile({ ...village, timelineSelection: { stage: stageObj, index: idx } });
         } else {
-          // fallback: open profile normally
           handleOpenProfile(village);
         }
       } else {
-        // otherwise just open the profile (adjust as needed)
         handleOpenProfile(village);
       }
     } catch (e) {
@@ -229,7 +374,18 @@ export default function VillageModal({
                     <h3 className="text-lg font-semibold text-gray-700">Stages Of Relocation</h3>
                   </div>
 
-                  <div className="text-sm text-gray-500">Current Substage: <span className="font-medium text-gray-800">{currentSub}</span></div>
+                  <div className="text-sm text-gray-500">
+                    Current Substage: <span className="font-medium text-gray-800">
+                      {loadingStages ? (
+                        <span className="inline-flex items-center gap-2">
+                          <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeOpacity="0.2" fill="none"/><path d="M22 12a10 10 0 00-10-10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" fill="none"/></svg>
+                          <span>Loading...</span>
+                        </span>
+                      ) : (
+                        currentSubName ?? "-"
+                      )}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="mt-3">
@@ -306,3 +462,4 @@ function Spinner({ size = 20 }) {
     </svg>
   );
 }
+  

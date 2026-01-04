@@ -10,11 +10,11 @@ import {
 import { API_BASE } from "../config/Api.js";
 
 /* ---------- config ---------- */
-const ADD_ERROR_TIMEOUT_MS = 5000;       // auto-dismiss add-error box after this many ms
-const LOAD_MAX_ATTEMPTS = 4;            // number of attempts to fetch /employee/all
-const LOAD_INITIAL_DELAY_MS = 500;      // initial backoff delay in ms
+const ADD_ERROR_TIMEOUT_MS = 5000;
+const LOAD_MAX_ATTEMPTS = 4;
+const LOAD_INITIAL_DELAY_MS = 500;
 
-/* ---------- role helpers ---------- */
+/* ---------- roles ---------- */
 const ROLE_DEFS = [
   { code: "admin", label: "Admin" },
   { code: "fg", label: "Forest Guard" },
@@ -37,9 +37,16 @@ function getRoleLabel(roleOrLabel) {
   return CODE_TO_LABEL[code] || String(roleOrLabel || "");
 }
 
+/* ---------- auth header helper ---------- */
+function authHeaders(contentType = "application/json") {
+  const token = localStorage.getItem("token");
+  return token
+    ? { "Content-Type": contentType, Authorization: `Bearer ${token}` }
+    : { "Content-Type": contentType };
+}
+
 /* ---------- RolesPie component ---------- */
 const ROLE_COLORS = ["#4f46e5", "#10b981", "#f59e0b", "#ef4444", "#06b6d4", "#a78bfa", "#c084fc", "#60a5fa"];
-
 function RolesPie({ employees = [] }) {
   const data = useMemo(() => {
     const counts = {};
@@ -56,7 +63,6 @@ function RolesPie({ employees = [] }) {
         <h3 className="text-lg font-semibold">Employee Roles</h3>
         <div className="text-sm text-gray-500">Total: {employees.length}</div>
       </div>
-
       <div className="w-full flex justify-center mb-3" style={{ height: 160 }}>
         <div style={{ width: 160, height: 160 }}>
           <ResponsiveContainer width="100%" height="100%">
@@ -107,7 +113,8 @@ function RolesPie({ employees = [] }) {
   );
 }
 
-/* ---------- EmployeeForm: styled, searchable dropdown with chips for villages ---------- */
+/* ---------- EmployeeForm component ---------- */
+/* Note: activated included; role is sent for create but not for update in backend */
 function EmployeeForm({ initial = {}, onCancel, onSubmit }) {
   const [form, setForm] = useState({
     name: initial.name || "",
@@ -115,6 +122,7 @@ function EmployeeForm({ initial = {}, onCancel, onSubmit }) {
     mobile: initial.mobile || "",
     role: initial.role ? getRoleCode(initial.role) : "",
     villageIds: initial.villageID ? (Array.isArray(initial.villageID) ? initial.villageID : [initial.villageID]) : (initial.villageIds || []),
+    activated: initial.activated === undefined ? (initial.activated ?? false) : Boolean(initial.activated),
   });
 
   const [villages, setVillages] = useState([]);
@@ -122,7 +130,6 @@ function EmployeeForm({ initial = {}, onCancel, onSubmit }) {
   const [villError, setVillError] = useState(null);
   const [errors, setErrors] = useState({});
 
-  // dropdown state
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
   const dropdownRef = useRef(null);
@@ -134,6 +141,7 @@ function EmployeeForm({ initial = {}, onCancel, onSubmit }) {
       mobile: initial.mobile || "",
       role: initial.role ? getRoleCode(initial.role) : "",
       villageIds: initial.villageID ? (Array.isArray(initial.villageID) ? initial.villageID : [initial.villageID]) : (initial.villageIds || []),
+      activated: initial.activated === undefined ? (initial.activated ?? false) : Boolean(initial.activated),
     });
   }, [initial]);
 
@@ -143,10 +151,9 @@ function EmployeeForm({ initial = {}, onCancel, onSubmit }) {
       setVillLoading(true);
       setVillError(null);
       try {
-        const res = await fetch(`${API_BASE}/villagesId`);
+        const res = await fetch(`${API_BASE}/villagesId`, { credentials: "include", headers: authHeaders() });
         if (!res.ok) throw new Error(`Failed to load villages (${res.status})`);
         const data = await res.json();
-        // backend may return { result: [...] } or array directly
         const list = Array.isArray(data) ? data : (data.result || []);
         if (!mounted) return;
         setVillages(list);
@@ -189,11 +196,7 @@ function EmployeeForm({ initial = {}, onCancel, onSubmit }) {
       return { ...s, villageIds: Array.from(setIds) };
     });
   }
-
-  function removeChip(id) {
-    setForm((s) => ({ ...s, villageIds: (s.villageIds || []).filter(x => x !== id) }));
-  }
-
+  function removeChip(id) { setForm((s) => ({ ...s, villageIds: (s.villageIds || []).filter(x => x !== id) })); }
   function selectAllVisible(visibleIds) {
     setForm((s) => {
       const setIds = new Set(s.villageIds || []);
@@ -219,7 +222,6 @@ function EmployeeForm({ initial = {}, onCancel, onSubmit }) {
     return Object.keys(e).length === 0;
   }
 
-  // build visible villages from filter (map to {vid, vlabel})
   const visibleVillages = useMemo(() => {
     const q = String(filter || "").trim().toLowerCase();
     return villages
@@ -231,7 +233,6 @@ function EmployeeForm({ initial = {}, onCancel, onSubmit }) {
       .filter((v) => !q || v.vlabel.toLowerCase().includes(q) || String(v.vid).toLowerCase().includes(q));
   }, [villages, filter]);
 
-  // map id -> name (used to render chips with names)
   const idToLabel = useMemo(() => {
     const map = {};
     villages.forEach((v, i) => {
@@ -247,7 +248,6 @@ function EmployeeForm({ initial = {}, onCancel, onSubmit }) {
       onSubmit={(ev) => {
         ev.preventDefault();
         if (!validate()) return;
-        // IMPORTANT: do NOT include userId in payload
         const payload = {
           name: form.name.trim(),
           email: form.email.trim(),
@@ -255,24 +255,18 @@ function EmployeeForm({ initial = {}, onCancel, onSubmit }) {
           role: getRoleCode(form.role),
           villageID: Array.isArray(form.villageIds) ? form.villageIds : (form.villageIds ? [form.villageIds] : []),
         };
+        if (form.activated !== undefined) payload.activated = Boolean(form.activated);
         onSubmit(payload);
       }}
       className="bg-[#f8f0dc] rounded-2xl shadow-2xl p-5 space-y-4"
     >
-      {/* NOTE: User ID is auto-assigned by backend so we DON'T show a userId input */}
-
       <div className="flex flex-col md:flex-row gap-4">
         <div className="flex-1 grid grid-cols-1 gap-3">
           <label className="block">
             <div className="flex items-center gap-2 text-sm text-gray-600 mb-1">
               <User className="w-4 h-4 text-gray-400" /> <span className="font-medium">Full name</span>
             </div>
-            <input
-              value={form.name}
-              onChange={(e) => update("name", e.target.value)}
-              placeholder="e.g. Anil Kumar"
-              className={`w-full p-3 rounded-lg border shadow-sm focus:ring-2 focus:ring-indigo-200 transition ${errors.name ? "border-red-300" : "border-gray-200"}`}
-            />
+            <input value={form.name} onChange={(e) => update("name", e.target.value)} placeholder="e.g. Anil Kumar" className={`w-full p-3 rounded-lg border shadow-sm focus:ring-2 focus:ring-indigo-200 transition`} />
             {errors.name && <div className="text-xs text-red-600 mt-1">{errors.name}</div>}
           </label>
 
@@ -280,12 +274,7 @@ function EmployeeForm({ initial = {}, onCancel, onSubmit }) {
             <div className="flex items-center gap-2 text-sm text-gray-600 mb-1">
               <AtSign className="w-4 h-4 text-gray-400" /> <span className="font-medium">Email</span>
             </div>
-            <input
-              value={form.email}
-              onChange={(e) => update("email", e.target.value)}
-              placeholder="email@example.com"
-              className={`w-full p-3 rounded-lg border shadow-sm focus:ring-2 focus:ring-indigo-200 transition ${errors.email ? "border-red-300" : "border-gray-200"}`}
-            />
+            <input value={form.email} onChange={(e) => update("email", e.target.value)} placeholder="email@example.com" className={`w-full p-3 rounded-lg border shadow-sm focus:ring-2 focus:ring-indigo-200 transition`} />
             {errors.email && <div className="text-xs text-red-600 mt-1">{errors.email}</div>}
           </label>
 
@@ -293,12 +282,7 @@ function EmployeeForm({ initial = {}, onCancel, onSubmit }) {
             <div className="flex items-center gap-2 text-sm text-gray-600 mb-1">
               <Smartphone className="w-4 h-4 text-gray-400" /> <span className="font-medium">Mobile</span>
             </div>
-            <input
-              value={form.mobile}
-              onChange={(e) => update("mobile", e.target.value)}
-              placeholder="+91 98xxxxxx"
-              className={`w-full p-3 rounded-lg border shadow-sm focus:ring-2 focus:ring-indigo-200 transition ${errors.mobile ? "border-red-300" : "border-gray-200"}`}
-            />
+            <input value={form.mobile} onChange={(e) => update("mobile", e.target.value)} placeholder="+91 98xxxxxx" className={`w-full p-3 rounded-lg border shadow-sm focus:ring-2 focus:ring-indigo-200 transition`} />
             {errors.mobile && <div className="text-xs text-red-600 mt-1">{errors.mobile}</div>}
           </label>
         </div>
@@ -308,25 +292,13 @@ function EmployeeForm({ initial = {}, onCancel, onSubmit }) {
             <div className="flex items-center gap-2 text-sm text-gray-600 mb-1">
               <span className="font-medium">Role</span>
             </div>
-            <select
-              value={form.role}
-              onChange={(e) => update("role", e.target.value)}
-              className={`w-full p-3 rounded-lg border shadow-sm focus:ring-2 focus:ring-indigo-200 transition ${
-                errors.role ? "border-red-300" : "border-gray-200"
-              }`}
-            >
+            <select value={form.role} onChange={(e) => update("role", e.target.value)} className={`w-full p-3 rounded-lg border shadow-sm focus:ring-2 focus:ring-indigo-200 transition`}>
               <option value="" disabled hidden className="text-gray-400 italic">Select role</option>
-              {ROLE_DEFS.map((r) => (
-                <option key={r.code} value={r.code}>
-                  {r.label}
-                </option>
-              ))}
+              {ROLE_DEFS.map((r) => (<option key={r.code} value={r.code}>{r.label}</option>))}
             </select>
-
             {errors.role && <div className="text-xs text-red-600 mt-1">{errors.role}</div>}
           </label>
 
-          {/* Villages dropdown with chips */}
           <div ref={dropdownRef}>
             <div className="flex items-center justify-between mb-1">
               <div className="text-sm text-gray-600 font-medium">Villages</div>
@@ -334,25 +306,10 @@ function EmployeeForm({ initial = {}, onCancel, onSubmit }) {
             </div>
 
             <div className="relative">
-              <button
-                type="button"
-                onClick={() => { setOpen((s) => !s); if (!open) setTimeout(() => { const el = dropdownRef.current?.querySelector("input"); if (el) el.focus(); }, 0); }}
-                className="w-full p-3 rounded-lg border flex items-center justify-between gap-2 bg-white shadow-sm hover:shadow-md transition"
-              >
+              <button type="button" onClick={() => { setOpen((s) => !s); if (!open) setTimeout(() => { const el = dropdownRef.current?.querySelector("input"); if (el) el.focus(); }, 0); }} className="w-full p-3 rounded-lg border flex items-center justify-between gap-2 bg-white shadow-sm hover:shadow-md transition">
                 <div className="flex items-center gap-2 min-w-0">
                   <div className="flex flex-wrap gap-2 min-w-0">
-                    {((form.villageIds || []).length === 0) ? (
-                      <div className="text-gray-400 truncate">Select villages</div>
-                    ) : (
-                      (form.villageIds || []).slice(0, 3).map((id) => (
-                        <span key={id} className="flex items-center gap-2 bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full text-xs">
-                          <span className="truncate max-w-[8rem]">{idToLabel[String(id)] ?? id}</span>
-                          <button type="button" onClick={(e) => { e.stopPropagation(); removeChip(id); }} className="ml-1">
-                            <X className="w-3 h-3 text-indigo-600" />
-                          </button>
-                        </span>
-                      ))
-                    )}
+                    {((form.villageIds || []).length === 0) ? (<div className="text-gray-400 truncate">Select villages</div>) : ((form.villageIds || []).slice(0, 3).map((id) => (<span key={id} className="flex items-center gap-2 bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full text-xs"><span className="truncate max-w-[8rem]">{idToLabel[String(id)] ?? id}</span><button type="button" onClick={(e) => { e.stopPropagation(); removeChip(id); }} className="ml-1"><X className="w-3 h-3 text-indigo-600" /></button></span>)))}
                     {(form.villageIds || []).length > 3 && <span className="text-xs text-gray-500">+{(form.villageIds || []).length - 3}</span>}
                   </div>
                 </div>
@@ -367,24 +324,8 @@ function EmployeeForm({ initial = {}, onCancel, onSubmit }) {
                 <div className="absolute z-50 mt-2 w-full bg-white border rounded-lg shadow-xl overflow-hidden">
                   <div className="p-3">
                     <div className="flex gap-2">
-                      <input
-                        value={filter}
-                        onChange={(e) => setFilter(e.target.value)}
-                        placeholder="Search villages..."
-                        className="flex-1 p-2 border rounded text-sm"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const visibleIds = visibleVillages.map(v => v.vid);
-                          const allSelected = visibleIds.length > 0 && visibleIds.every(id => (form.villageIds || []).includes(id));
-                          if (allSelected) deselectAllVisible(visibleIds);
-                          else selectAllVisible(visibleIds);
-                        }}
-                        className="px-3 py-1 text-sm bg-gray-100 rounded"
-                      >
-                        Select all
-                      </button>
+                      <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Search villages..." className="flex-1 p-2 border rounded text-sm" />
+                      <button type="button" onClick={() => { const visibleIds = visibleVillages.map(v => v.vid); const allSelected = visibleIds.length > 0 && visibleIds.every(id => (form.villageIds || []).includes(id)); if (allSelected) deselectAllVisible(visibleIds); else selectAllVisible(visibleIds); }} className="px-3 py-1 text-sm bg-gray-100 rounded">Select all</button>
                     </div>
 
                     <div className="mt-3 max-h-44 overflow-auto">
@@ -417,23 +358,26 @@ function EmployeeForm({ initial = {}, onCancel, onSubmit }) {
 
             <div className="text-xs text-gray-400 mt-2">Tip: search by village name or code, then choose from the list.</div>
           </div>
+
+          <div className="mt-2 flex items-center gap-3">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={Boolean(form.activated)} onChange={(e) => update("activated", e.target.checked)} className="w-4 h-4" />
+              <span className="text-sm text-gray-700">Active user</span>
+            </label>
+            <div className="text-xs text-gray-400">Toggle whether the employee account is active</div>
+          </div>
         </div>
       </div>
 
       <div className="flex items-center justify-end gap-3 pt-2">
         <button type="button" onClick={onCancel} className="px-4 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 transition">Cancel</button>
-        <button
-          type="submit"
-          className="px-5 py-2 rounded-lg bg-gradient-to-r from-indigo-600 to-indigo-500 text-white font-semibold shadow hover:scale-[1.01] transition transform"
-        >
-          Save user
-        </button>
+        <button type="submit" className="px-5 py-2 rounded-lg bg-gradient-to-r from-indigo-600 to-indigo-500 text-white font-semibold shadow hover:scale-[1.01] transition transform">Save user</button>
       </div>
     </form>
   );
 }
 
-/* ---------- (rest of the page - bulk logic and list) ---------- */
+/* ---------- Main EmployeesPage component ---------- */
 export default function EmployeesPage() {
   const navigate = useNavigate();
 
@@ -458,39 +402,147 @@ export default function EmployeesPage() {
   const [selectedLoading, setSelectedLoading] = useState(false);
 
   // villages mappings
-  const [villagesMap, setVillagesMap] = useState({});         // id -> name
-  const [villagesNameToId, setVillagesNameToId] = useState({}); // lower(name) -> id
+  const [villagesMap, setVillagesMap] = useState({});
+  const [villagesNameToId, setVillagesNameToId] = useState({});
 
   // delete modal
   const [pendingDelete, setPendingDelete] = useState(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
 
-  // toggle modal state for activate/deactivate confirmation
-  const [pendingToggle, setPendingToggle] = useState(null); // { emp, action: 'activate'|'deactivate' }
+  // toggle modal
+  const [pendingToggle, setPendingToggle] = useState(null);
   const [toggleLoading, setToggleLoading] = useState(false);
   const [toggleError, setToggleError] = useState(null);
 
-  // update-specific error (render in modal instead of alert)
+  // update/add/delete errors
   const [updateError, setUpdateError] = useState(null);
-
-  // add-specific error
   const [addError, setAddError] = useState(null);
-
-  // delete-specific error (shown inside delete modal)
   const [deleteError, setDeleteError] = useState(null);
 
-  // retry states for loadEmployees
+  // retry
   const [retrying, setRetrying] = useState(false);
   const [retryAttempt, setRetryAttempt] = useState(0);
 
-  // keep a ref to the add-error timer so we can clear on unmount/change
   const addErrorTimerRef = useRef(null);
 
+  /* ---------- Utility helpers ---------- */
+
+  // Robustly extract string id from possible values (handles { $oid: "..." } and ObjectId-like)
+  function stringifyPossibleId(val) {
+    try {
+      if (val === null || val === undefined) return null;
+      if (typeof val === "string") return val.trim();
+      if (typeof val === "number") return String(val);
+      if (typeof val === "object") {
+        // Mongo returned forms: { $oid: "..." } or ObjectId(...) object with toString()
+        if (val.$oid) return String(val.$oid);
+        if (val.$id && val.$id.$oid) return String(val.$id.$oid);
+        if (val.toString && typeof val.toString === "function") {
+          const s = val.toString();
+          if (s && s !== "[object Object]") return s;
+        }
+        // fallback to JSON
+        return JSON.stringify(val);
+      }
+      return String(val);
+    } catch (e) {
+      return String(val);
+    }
+  }
+
+  // Build an ordered list of candidate ids for an employee (most likely first).
+  // Also expands numeric variants so both "123" and 123 are tried.
+  function getIdCandidates(emp) {
+    const ids = [];
+    if (!emp) return ids;
+    const pushUnique = (x) => {
+      if (x === undefined || x === null) return;
+      const s = String(x);
+      if (!s) return;
+      if (!ids.includes(s)) ids.push(s);
+    };
+
+    // try many common fields
+    const candidatesRaw = [
+      emp.userId, emp.userID, emp.user_id, emp.userid, emp.user, // variations
+      emp._id, emp.id, emp._id_str, emp._id?.$oid, // object id shapes
+      emp.email, // last-resort (unlikely to match)
+    ];
+
+    candidatesRaw.forEach((c) => {
+      const s = stringifyPossibleId(c);
+      if (s) pushUnique(s);
+    });
+
+    // if any candidate is a numeric string, also try numeric form (stringified) and unpadded numeric string
+    const extra = [];
+    ids.forEach((id) => {
+      if (/^\d+$/.test(id)) {
+        // numeric form without leading zeros
+        const n = String(Number(id));
+        if (n !== id) extra.push(n);
+      }
+    });
+    extra.forEach((e) => pushUnique(e));
+
+    return ids;
+  }
+
+  // Try pathTemplate for each candidate and candidate-variant until one returns ok.
+  // pathTemplate must include "%ID%" where id will be inserted (we use encodeURIComponent).
+  async function attemptWithIdCandidates(pathTemplate, options = {}, candidates = []) {
+    // ensure candidates is array of strings
+    const expanded = [];
+    candidates.forEach((c) => {
+      if (c === undefined || c === null) return;
+      const s = String(c);
+      if (!s) return;
+      // common variants
+      expanded.push(s);
+      // if numeric string, also try numeric no-leading-zero form
+      if (/^\d+$/.test(s)) {
+        const n = String(Number(s));
+        if (n !== s) expanded.push(n);
+      }
+    });
+
+    // dedupe while preserving order
+    const uniq = Array.from(new Set(expanded));
+
+    let lastErr = null;
+    for (const c of uniq) {
+      const idForUrl = encodeURIComponent(String(c));
+      const url = pathTemplate.replace("%ID%", idForUrl);
+      try {
+        const res = await fetch(url, options);
+        const text = await res.text().catch(() => null);
+        let json = null;
+        try { json = text ? JSON.parse(text) : null; } catch { json = null; }
+        if (res.ok) {
+          return { ok: true, res, json, text, usedId: c };
+        } else {
+          // 404 -> try next candidate
+          if (res.status === 404) {
+            lastErr = { status: res.status, text: text || (json && (json.message || json.error)) || `Not found (${res.status})`, usedId: c };
+            continue;
+          }
+          // other errors -> return immediately
+          return { ok: false, res, json, text, usedId: c };
+        }
+      } catch (err) {
+        lastErr = { status: 0, text: String(err), usedId: c };
+        continue;
+      }
+    }
+    return { ok: false, error: lastErr || { text: "No id candidates", status: 0 } };
+  }
+
+  /* ---------- Villages map load ---------- */
   useEffect(() => {
     let mounted = true;
     async function fetchVillagesMap() {
       try {
-        const res = await fetch(`${API_BASE}/villagesId`);
+        const res = await fetch(`${API_BASE}/villagesId`, { credentials: "include", headers: authHeaders() });
         if (!res.ok) throw new Error(`Failed to fetch villages (${res.status})`);
         const data = await res.json();
         const list = Array.isArray(data) ? data : (data.result || []);
@@ -498,7 +550,7 @@ export default function EmployeesPage() {
         const map = {};
         const nameToId = {};
         list.forEach((v) => {
-          const id = (v.villageID ?? v.villageId ?? v.id ?? v._id ?? v.code ?? v.village_code ?? String(v).trim()) || "";
+          const id = stringifyPossibleId(v.villageID ?? v.villageId ?? v.id ?? v._id ?? v.code ?? v.village_code ?? String(v).trim());
           const name = v.name ?? v.villageName ?? v.village ?? id;
           if (id) map[String(id)] = name;
           if (name) nameToId[String(name).trim().toLowerCase()] = String(id);
@@ -508,17 +560,16 @@ export default function EmployeesPage() {
         setVillagesMap(map);
         setVillagesNameToId(nameToId);
       } catch (e) {
-        // keep quiet - UI will continue to work; village name resolution will show "name not found"
+        // ignore
       }
     }
     fetchVillagesMap();
     return () => { mounted = false; };
   }, []);
 
-  // helper sleep
   const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 
-  // load employees with retry/backoff
+  /* ---------- loadEmployees: ensure employee.userId normalized ---------- */
   async function loadEmployees() {
     setLoading(true);
     setError(null);
@@ -528,13 +579,12 @@ export default function EmployeesPage() {
     let attempt = 0;
     let delay = LOAD_INITIAL_DELAY_MS;
     let lastErr = null;
-    let mounted = true;
 
     try {
       while (attempt < LOAD_MAX_ATTEMPTS) {
         attempt += 1;
         try {
-          const res = await fetch(`${API_BASE}/employee/all`);
+          const res = await fetch(`${API_BASE}/employee/all`, { credentials: "include", headers: authHeaders() });
           const text = await res.text().catch(() => null);
           const json = (() => { try { return text ? JSON.parse(text) : null; } catch { return null; } })();
 
@@ -543,44 +593,51 @@ export default function EmployeesPage() {
             throw lastErr;
           }
 
-          // The backend may return either:
-          // 1) an array of employees (legacy)
-          // 2) an object like { result: { count: N, items: [ ... ] } }
-          // 3) an object like { count: N, items: [ ... ] }
           let list = [];
           if (Array.isArray(json)) list = json;
           else if (json && Array.isArray(json.result)) list = json.result;
           else if (json && json.result && Array.isArray(json.result.items)) list = json.result.items;
           else if (json && Array.isArray(json.items)) list = json.items;
-          else if (json && json.result && Array.isArray(json.result.items)) list = json.result.items;
-          else if (json && typeof json === 'object' && json.result && typeof json.result === 'object' && Array.isArray(json.result.items)) list = json.result.items;
-          else if (json && typeof json === 'object' && json.result && Array.isArray(json.result)) list = json.result;
           else list = [];
 
+          // NORMALIZE: set a stable userId property for each employee (so update/activate/delete can use it)
           const normalized = list.map((e) => {
+            // try to find a server-provided userId field under many common names
+            const maybeUserIdCandidates = [e.userId, e.userID, e.user_id, e.userid, e.user];
+            let maybeUserId = null;
+            for (const c of maybeUserIdCandidates) {
+              const s = stringifyPossibleId(c);
+              if (s) { maybeUserId = s; break; }
+            }
+
+            let primary = maybeUserId;
+            if (!primary) {
+              // fallback to _id or id
+              primary = stringifyPossibleId(e._id) || stringifyPossibleId(e.id) || stringifyPossibleId(e._id?.$oid) || "";
+            }
+            const uid = primary ? String(primary).trim() : "";
+
             const vIDs = e.villageID ?? e.villageIds ?? (e.villageId ? (Array.isArray(e.villageId) ? e.villageId : [e.villageId]) : []);
             return {
               ...e,
+              userId: uid,
               role: getRoleCode(e.role ?? e.roleCode ?? e.role),
               villageIDs: Array.isArray(vIDs) ? vIDs : (vIDs ? [vIDs] : []),
               villageId: Array.isArray(vIDs) ? (vIDs[0] || "") : (vIDs || ""),
               activated: e.activated === true || e.activated === "true" ? true : false,
             };
           });
-          if (mounted) {
-            setEmployees(normalized);
-            setLoading(false);
-            setRetrying(false);
-            setRetryAttempt(0);
-          }
+
+          setEmployees(normalized);
+          setLoading(false);
+          setRetrying(false);
+          setRetryAttempt(0);
           return;
         } catch (err) {
           lastErr = err;
           if (attempt < LOAD_MAX_ATTEMPTS) {
-            if (mounted) {
-              setRetrying(true);
-              setRetryAttempt(attempt);
-            }
+            setRetrying(true);
+            setRetryAttempt(attempt);
             await sleep(delay);
             delay *= 2;
             continue;
@@ -589,19 +646,17 @@ export default function EmployeesPage() {
           }
         }
       }
-      if (mounted) {
-        setError(lastErr ? lastErr.message || String(lastErr) : "Could not load employees");
-        setLoading(false);
-        setRetrying(false);
-      }
-    } finally {
-      mounted = false;
+      setError(lastErr ? lastErr.message || String(lastErr) : "Could not load employees");
+      setLoading(false);
+      setRetrying(false);
+    } catch (e) {
+      setError(e?.message || String(e));
+      setLoading(false);
     }
   }
 
   useEffect(() => { loadEmployees(); }, []);
 
-  // auto-dismiss addError after timeout
   useEffect(() => {
     if (!addError) return;
     if (addErrorTimerRef.current) {
@@ -626,8 +681,7 @@ export default function EmployeesPage() {
     (filterLocation ? (e.district || e.tehsil || "").toLowerCase().includes(filterLocation.toLowerCase()) : true)
   );
 
-  /* ---------- helper: normalize villages tokens -> array of strings (deduped) ---------- */
-  // returns array of trimmed strings (never numbers)
+  /* ---------- Village utilities (unchanged) ---------- */
   const normalizeVillageTokensToIds = (raw) => {
     if (raw === undefined || raw === null) return [];
     const tokens = Array.isArray(raw)
@@ -639,7 +693,6 @@ export default function EmployeesPage() {
     tokens.forEach((t) => {
       const tok = String(t || "").trim();
       if (!tok) return;
-      // try exact id (string)
       if (villagesMap[tok]) {
         if (!seen.has(tok)) { seen.add(tok); out.push(tok); }
         return;
@@ -650,14 +703,12 @@ export default function EmployeesPage() {
         if (!seen.has(mapped)) { seen.add(mapped); out.push(mapped); }
         return;
       }
-      // fuzzy
       const matchKey = Object.keys(villagesNameToId).find(k => k.includes(lower) || lower.includes(k));
       if (matchKey) {
         const mapped = String(villagesNameToId[matchKey]);
         if (!seen.has(mapped)) { seen.add(mapped); out.push(mapped); }
         return;
       }
-      // fallback push original token as string
       if (!seen.has(tok)) { seen.add(tok); out.push(tok); }
     });
     return out;
@@ -667,7 +718,6 @@ export default function EmployeesPage() {
   const handleAdd = async (payload) => {
     setAddError(null);
     try {
-      // normalize village IDs to array of strings (not numbers)
       const rawVill = Array.isArray(payload.villageID) ? payload.villageID : (payload.villageID ? [payload.villageID] : []);
       const normalizedVillageIds = normalizeVillageTokensToIds(rawVill);
 
@@ -678,9 +728,12 @@ export default function EmployeesPage() {
         role: getRoleCode(payload.role),
         villageID: normalizedVillageIds,
       };
+      if (payload.activated !== undefined) toSend.activated = Boolean(payload.activated);
+
       const res = await fetch(`${API_BASE}/employee/add`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        headers: authHeaders(),
         body: JSON.stringify(toSend),
       });
       const text = await res.text().catch(() => null);
@@ -698,7 +751,7 @@ export default function EmployeesPage() {
     }
   };
 
-  /* ---------- helper: find employee in loaded list (we NO LONGER call single-user API) ---------- */
+  /* ---------- helpers to find employee in state ---------- */
   const extractId = (emp) => emp?.userId ?? emp?._id ?? emp?.id;
   const findEmployeeInState = (emp) => {
     const id = extractId(emp);
@@ -730,6 +783,7 @@ export default function EmployeesPage() {
         ...details,
         role: getRoleCode(details.role ?? details.roleCode ?? details.role),
         villageID: Array.isArray(details.villageID) ? details.villageID : (details.villageID ? [details.villageID] : (Array.isArray(details.villageIDs) ? details.villageIDs : (details.villageIds ?? []))),
+        activated: details.activated === true || details.activated === "true" ? true : false,
       };
       setSelectedEmployee(normalized);
       setEditingEmployee(normalized);
@@ -738,29 +792,21 @@ export default function EmployeesPage() {
     }
   };
 
-  /* ---------- activate/deactivate helpers (unchanged) ---------- */
-  // convert id to numeric if possible for URL only (we keep string when not strictly numeric)
-  const normalizeIdForUrl = (id) => {
-    if (!id && id !== 0) return id;
-    return (!isNaN(Number(id)) && String(Number(id)) === String(id)) ? Number(id) : String(id);
-  };
-
+  /* ---------- activate / deactivate (uses attemptWithIdCandidates) ---------- */
   const activateEmployee = async (emp) => {
     setUpdateError(null);
     try {
-      const rawId = emp.userId ?? emp._id ?? emp.id;
-      if (!rawId) throw new Error("Missing user id");
-      const idForUrl = normalizeIdForUrl(rawId);
-      const res = await fetch(`${API_BASE}/employee/activate/${encodeURIComponent(String(idForUrl))}`, { method: "PUT" });
-      const text = await res.text().catch(() => null);
-      const json = (() => { try { return text ? JSON.parse(text) : null; } catch { return null; } })();
-      if (!res.ok) {
-        const msg = (json && (json.message || json.error)) || text || `Activate failed (${res.status})`;
+      const candidates = getIdCandidates(emp);
+      if (candidates.length === 0) throw new Error("Missing user id");
+      const pathTemplate = `${API_BASE}/employee/activate/%ID%`;
+      const options = { method: "PUT", credentials: "include", headers: authHeaders() };
+      const r = await attemptWithIdCandidates(pathTemplate, options, candidates);
+      if (!r.ok) {
+        const msg = r.error?.text || (r.res && (r.json?.message || r.json?.error || r.text)) || "Activate failed";
         throw new Error(msg);
       }
       await loadEmployees();
-      // if the currently selected employee was this one, refresh it
-      if (selectedEmployee && String(extractId(selectedEmployee)) === String(rawId)) {
+      if (selectedEmployee && getIdCandidates(selectedEmployee).includes(r.usedId)) {
         setSelectedEmployee((s) => ({ ...(s || {}), activated: true }));
       }
     } catch (err) {
@@ -772,18 +818,17 @@ export default function EmployeesPage() {
   const deactivateEmployee = async (emp) => {
     setUpdateError(null);
     try {
-      const rawId = emp.userId ?? emp._id ?? emp.id;
-      if (!rawId) throw new Error("Missing user id");
-      const idForUrl = normalizeIdForUrl(rawId);
-      const res = await fetch(`${API_BASE}/employee/deactivate/${encodeURIComponent(String(idForUrl))}`, { method: "PUT" });
-      const text = await res.text().catch(() => null);
-      const json = (() => { try { return text ? JSON.parse(text) : null; } catch { return null; } })();
-      if (!res.ok) {
-        const msg = (json && (json.message || json.error)) || text || `Deactivate failed (${res.status})`;
+      const candidates = getIdCandidates(emp);
+      if (candidates.length === 0) throw new Error("Missing user id");
+      const pathTemplate = `${API_BASE}/employee/deactivate/%ID%`;
+      const options = { method: "PUT", credentials: "include", headers: authHeaders() };
+      const r = await attemptWithIdCandidates(pathTemplate, options, candidates);
+      if (!r.ok) {
+        const msg = r.error?.text || (r.res && (r.json?.message || r.json?.error || r.text)) || "Deactivate failed";
         throw new Error(msg);
       }
       await loadEmployees();
-      if (selectedEmployee && String(extractId(selectedEmployee)) === String(rawId)) {
+      if (selectedEmployee && getIdCandidates(selectedEmployee).includes(r.usedId)) {
         setSelectedEmployee((s) => ({ ...(s || {}), activated: false }));
       }
     } catch (err) {
@@ -792,8 +837,7 @@ export default function EmployeesPage() {
     }
   };
 
-  /* ---------- update (DO NOT SEND userId in body) ---------- */
-  // Normalize phone for submit
+  /* ---------- update (robust candidates + send only allowed fields) ---------- */
   const normalizeMobileForSubmit = (val) => {
     if (val === null || val === undefined) return "";
     let s = String(val).trim();
@@ -807,18 +851,22 @@ export default function EmployeesPage() {
   const handleSaveUpdate = async (payload) => {
     setUpdateError(null);
 
-    // derive id (payload intentionally does not include userId)
-    const idFromPayload = payload?.userId ?? payload?._id ?? payload?.id;
-    const idFromEditing = editingEmployee && (editingEmployee.userId ?? editingEmployee._id ?? editingEmployee.id);
-    const idFromSelected = selectedEmployee && (selectedEmployee.userId ?? selectedEmployee._id ?? selectedEmployee.id);
-    const id = idFromPayload || idFromEditing || idFromSelected;
+    // collect candidate objects (payload may not include id; include editingEmployee / selectedEmployee)
+    const candidateObjs = [];
+    if (payload) candidateObjs.push(payload);
+    if (editingEmployee) candidateObjs.push(editingEmployee);
+    if (selectedEmployee) candidateObjs.push(selectedEmployee);
 
-    if (!id) {
+    // flatten and gather candidate ids
+    const idSet = new Set();
+    candidateObjs.forEach((c) => getIdCandidates(c).forEach((id) => idSet.add(id)));
+    const candidates = Array.from(idSet);
+
+    if (candidates.length === 0) {
       setUpdateError("Missing employee id — cannot update.");
       return;
     }
 
-    // Build minimal payload with only allowed fields (but handle villages specially: send array if provided)
     const toSend = {};
 
     if (payload.name !== undefined) {
@@ -837,65 +885,45 @@ export default function EmployeesPage() {
       if (v !== "") toSend.mobile = v;
     }
 
-    // Role: if provided, always send the short code (even if it's already short)
-    if (payload.role !== undefined) {
-      const code = getRoleCode(payload.role);
-      if (String(code || "").trim() !== "") toSend.role = code;
-    }
-
-    // Villages: if the caller provided any village data (even empty array/string), send villageID array.
+    // NOTE: Do NOT send role on update (backend forbids extra fields)
     if (payload.villageID !== undefined || payload.villageIDs !== undefined || payload.villageIds !== undefined) {
       const villagesRaw = payload.villageID ?? payload.villageIDs ?? payload.villageIds;
       const normalizedVillageIds = normalizeVillageTokensToIds(villagesRaw);
       toSend.villageID = normalizedVillageIds;
     }
 
-    // don't send empty object
+    if (payload.activated !== undefined) toSend.activated = Boolean(payload.activated);
+    if (payload.deleted !== undefined) toSend.deleted = Boolean(payload.deleted);
+
     if (Object.keys(toSend).length === 0) {
       setUpdateError("No fields to update.");
       return;
     }
 
-    // preserve numeric id when possible (backend stores numeric userId in many deployments)
-    const idForUrl = (!isNaN(Number(id)) && String(Number(id)) === String(id)) ? Number(id) : String(id);
-
     try {
-      const res = await fetch(`${API_BASE}/employee/update/${encodeURIComponent(String(idForUrl))}`, {
+      const pathTemplate = `${API_BASE}/employee/update/%ID%`;
+      const options = {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        headers: authHeaders(),
         body: JSON.stringify(toSend),
-      });
+      };
 
-      const text = await res.text().catch(() => null);
-      let json = null;
-      try { json = text ? JSON.parse(text) : null; } catch { json = null; }
-
-      if (!res.ok) {
-        // Format common response shapes into friendly message
-        let messages = [];
-        if (json && Array.isArray(json.detail)) {
-          messages = json.detail.map(d => {
-            const loc = d.loc ? (Array.isArray(d.loc) ? d.loc.join(".") : d.loc) : "body";
-            return `${loc}: ${d.msg || JSON.stringify(d)}`;
-          });
-        } else if (json && (json.message || json.error)) {
-          messages = [json.message || json.error];
-        } else if (json && json.validation_errors && Array.isArray(json.validation_errors)) {
-          messages = json.validation_errors.map(e => typeof e === "string" ? e : (e.error || JSON.stringify(e)));
-        } else if (Array.isArray(json)) {
-          messages = json.map(e => e.msg || e.message || JSON.stringify(e));
-        } else if (text) {
-          messages = [text];
-        } else {
-          messages = [`Update failed (${res.status})`];
+      const r = await attemptWithIdCandidates(pathTemplate, options, candidates);
+      if (!r.ok) {
+        // try to extract friendly validation messages
+        let friendly = (r.error && r.error.text) || `Update failed`;
+        if (r.res && r.json) {
+          const j = r.json;
+          if (Array.isArray(j.detail)) {
+            friendly = j.detail.map(d => (d.msg ? `${(Array.isArray(d.loc) ? d.loc.join(".") : d.loc)}: ${d.msg}` : JSON.stringify(d))).join("; ");
+          } else if (j.message || j.error) friendly = j.message || j.error;
         }
-
-        const friendly = messages.join("; ");
-        setUpdateError(friendly || `Update failed (${res.status})`);
+        setUpdateError(friendly);
         return;
       }
 
-      // success — reload and close modal
+      // success -> reload and clear editing state
       await loadEmployees();
       setEditingEmployee(null);
       setSelectedEmployee(null);
@@ -905,7 +933,7 @@ export default function EmployeesPage() {
     }
   };
 
-  /* ---------- delete flow ---------- */
+  /* ---------- delete flow (robust) ---------- */
   const openDeleteModal = (emp) => { setPendingDelete(emp); setDeleteError(null); };
   const closeDeleteModal = () => { if (deleteLoading) return; setPendingDelete(null); setDeleteError(null); };
 
@@ -914,17 +942,13 @@ export default function EmployeesPage() {
     setDeleteLoading(true);
     setDeleteError(null);
     try {
-      const rawId = pendingDelete.userId ?? pendingDelete._id ?? pendingDelete.id;
-      if (!rawId) throw new Error("Missing user id for delete");
-      const id = rawId;
-      // ensure numeric if possible (backend stores numeric userId)
-      const idForUrl = (!isNaN(Number(id)) && String(Number(id)) === String(id)) ? Number(id) : String(id);
-      const res = await fetch(`${API_BASE}/employee/delete/${encodeURIComponent(String(idForUrl))}`, { method: "DELETE" });
-      const text = await res.text().catch(() => null);
-      let json = {};
-      try { json = text ? JSON.parse(text) : {}; } catch { json = { raw: text }; }
-      if (!res.ok) {
-        const msg = (json && (json.message || json.error)) || text || `Delete failed (${res.status})`;
+      const candidates = getIdCandidates(pendingDelete);
+      if (candidates.length === 0) throw new Error("Missing user id for delete");
+      const pathTemplate = `${API_BASE}/employee/delete/%ID%`;
+      const options = { method: "DELETE", credentials: "include", headers: authHeaders() };
+      const r = await attemptWithIdCandidates(pathTemplate, options, candidates);
+      if (!r.ok) {
+        const msg = r.error?.text || (r.res && (r.json?.message || r.json?.error || r.text)) || `Delete failed`;
         throw new Error(msg);
       }
       await loadEmployees();
@@ -938,7 +962,7 @@ export default function EmployeesPage() {
     }
   };
 
-  /* ---------- bulk parsing helpers (unchanged) ---------- */
+  /* ---------- bulk parsing / upload (unchanged) ---------- */
   const normHeader = (h) => String(h || "").trim().replace(/\s+/g, "").toLowerCase();
   const normalizeMobile = (val) => {
     if (val === null || val === undefined) return "";
@@ -1042,7 +1066,6 @@ export default function EmployeesPage() {
   };
   const handleBulkRemoveRow = (index) => setBulkPreview((s) => s.filter((_, i) => i !== index));
 
-  /* ---------- convert village tokens: name -> id (best-effort) ---------- */
   function convertVillageTokens(villageStr) {
     const tokens = String(villageStr || "").split(/[;,]/).map(s => s.trim()).filter(Boolean);
     const ids = [];
@@ -1070,7 +1093,6 @@ export default function EmployeesPage() {
     return { ids, conversions, unknowns };
   }
 
-  /* ---------- confirm bulk add: convert names and send ---------- */
   const handleConfirmBulkAdd = async () => {
     if (!bulkPreview || bulkPreview.length === 0) { setBulkProgress({ status: "error", message: "No rows to add" }); return; }
     setBulkProgress({ status: "uploading", total: bulkPreview.length, done: 0 });
@@ -1105,7 +1127,8 @@ export default function EmployeesPage() {
 
       const res = await fetch(`${API_BASE}/employee/bulk_add`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        headers: authHeaders(),
         body: JSON.stringify({ employees: employeesPayload }),
       });
 
@@ -1183,7 +1206,7 @@ export default function EmployeesPage() {
     });
   };
 
-  // NEW: show centered modal instead of alert for toggle
+  // toggle from table
   const handleToggleFromTable = (e, emp) => {
     e.stopPropagation();
     const action = emp.activated ? "deactivate" : "activate";
@@ -1209,7 +1232,7 @@ export default function EmployeesPage() {
     }
   };
 
-  /* ---------- UI render ---------- */
+  /* ---------- Render UI (unchanged layout) ---------- */
   return (
     <div className="min-h-screen bg-[#f8f0dc]">
       <div><MainNavbar name={(localStorage.getItem("user") && JSON.parse(localStorage.getItem("user")).name) || "Shrey"} showWelcome /></div>
@@ -1218,8 +1241,8 @@ export default function EmployeesPage() {
         <div className="max-w-6xl mx-auto">
           <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 mb-4">
             <div className="flex gap-2 items-center">
-                <button onClick={() => navigate("/dashboard")} className="px-3 py-2 border rounded-md bg-white text-sm">← Back</button>
-              </div>
+              <button onClick={() => navigate("/dashboard")} className="px-3 py-2 border rounded-md bg-white text-sm">← Back</button>
+            </div>
 
             <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
               <div className="flex gap-2 items-center">
@@ -1238,14 +1261,8 @@ export default function EmployeesPage() {
             </div>
           </div>
 
-          {/* retry indicator */}
-          {retrying && (
-            <div className="mb-3">
-              <div className="text-sm text-yellow-700">Retrying to load employees (attempt {retryAttempt} of {LOAD_MAX_ATTEMPTS})...</div>
-            </div>
-          )}
+          {retrying && (<div className="mb-3"><div className="text-sm text-yellow-700">Retrying to load employees (attempt {retryAttempt} of {LOAD_MAX_ATTEMPTS})...</div></div>)}
 
-          {/* bulk progress */}
           {bulkProgress && (
             <div className="mb-4">
               <div className="bg-white p-3 rounded-2xl shadow">
@@ -1297,7 +1314,6 @@ export default function EmployeesPage() {
             </div>
           )}
 
-          {/* new form */}
           {showNewForm && (
             <div className="mb-4">
               {addError && (
@@ -1338,16 +1354,8 @@ export default function EmployeesPage() {
                       {error && (<tr><td colSpan={7} className="py-6 text-center text-red-600">{error}</td></tr>)}
                       {!loading && !error && filtered.map((emp) => (
                         <tr key={emp.userId || emp._id || emp.id} className="hover:bg-gray-50 cursor-pointer">
-                          {/* single status button column (before UID). Clicking opens centered confirmation modal */}
                           <td className="py-3 pr-4 text-sm" onClick={(e) => e.stopPropagation()}>
-                            <button
-                              onClick={(e) => handleToggleFromTable(e, emp)}
-                              className={`px-3 py-1 text-sm rounded-full font-medium transition focus:outline-none ${emp.activated ? 'bg-green-100 text-green-800 border border-green-200' : 'bg-red-50 text-red-800 border border-red-100'}`}
-                              title={emp.activated ? 'Active' : 'Inactive'}
-                              aria-label={emp.activated ? `Deactivate ${emp.name || ''}` : `Activate ${emp.name || ''}`}
-                            >
-                              {emp.activated ? 'Active' : 'Inactive'}
-                            </button>
+                            <button onClick={(e) => handleToggleFromTable(e, emp)} className={`px-3 py-1 text-sm rounded-full font-medium transition focus:outline-none ${emp.activated ? 'bg-green-100 text-green-800 border border-green-200' : 'bg-red-50 text-red-800 border border-red-100'}`} title={emp.activated ? 'Active' : 'Inactive'} aria-label={emp.activated ? `Deactivate ${emp.name || ''}` : `Activate ${emp.name || ''}`}>{emp.activated ? 'Active' : 'Inactive'}</button>
                           </td>
 
                           <td className="py-3 pr-4 text-sm" onClick={() => handleOpenDetails(emp)}>{emp.userId ?? emp._id ?? emp.id}</td>
@@ -1380,12 +1388,7 @@ export default function EmployeesPage() {
                               {getRoleLabel(emp.role)}{emp.villageId ? ` • ${emp.villageId}` : ""}
                             </div>
                             <div className="mt-2">
-                              {/* mobile view: status badge only */}
-                              {emp.activated ? (
-                                <span className="inline-block px-2 py-1 text-xs rounded bg-green-100 text-green-800">Active</span>
-                              ) : (
-                                <span className="inline-block px-2 py-1 text-xs rounded bg-red-50 text-red-800">Inactive</span>
-                              )}
+                              {emp.activated ? (<span className="inline-block px-2 py-1 text-xs rounded bg-green-100 text-green-800">Active</span>) : (<span className="inline-block px-2 py-1 text-xs rounded bg-red-50 text-red-800">Inactive</span>)}
                             </div>
                           </div>
                           <div className="flex items-start gap-2">
@@ -1458,7 +1461,6 @@ export default function EmployeesPage() {
                       <div>
                         <div className="text-sm text-gray-500">Status</div>
                         <div className="flex items-center gap-3">
-                          {/* status badge only here (toggle moved to table) */}
                           {selectedEmployee.activated ? (
                             <span className="inline-block px-2 py-1 text-xs rounded bg-green-100 text-green-800">Active</span>
                           ) : (
@@ -1514,10 +1516,10 @@ export default function EmployeesPage() {
                   </div>
                 </div>
 
-                <div className="overflow-x-auto max-h-96">
-                  <table className="w-full table-auto text-left">
+                <div className="overflow-auto max-h-[60vh]">
+                  <table className="min-w-full text-sm">
                     <thead>
-                      <tr className="text-gray-600 border-b">
+                      <tr className="text-left border-b">
                         <th className="py-2">#</th>
                         <th className="py-2">Name</th>
                         <th className="py-2">Email</th>
@@ -1573,7 +1575,6 @@ export default function EmployeesPage() {
               </div>
             </div>
           )}
-
         </div>
       </div>
     </div>

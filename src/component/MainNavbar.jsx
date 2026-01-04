@@ -1,6 +1,8 @@
-﻿import React, { useEffect, useRef, useState, useContext } from "react";
+﻿// src/component/MainNavbar.jsx
+import React, { useEffect, useRef, useState, useContext } from "react";
 import { useNavigate } from "react-router-dom";
 import { AuthContext } from "../context/AuthContext"; // adjust path if needed
+import { API_BASE } from "../config/Api";
 
 export default function MainNavbar({
   logoUrl = "/images/logo.png",
@@ -33,8 +35,10 @@ export default function MainNavbar({
 
   const ctxTokenRemaining = typeof auth?.tokenRemaining === "number" ? auth.tokenRemaining : null;
   const ctxExpiresAt = typeof auth?.tokenExpiresAt === "number" ? auth.tokenExpiresAt : null;
-  const ctxForceRefresh = auth?.forceRefresh ?? null;
+  const ctxRefreshFn = auth?.onRefresh ?? auth?.doRefresh ?? auth?.forceRefresh ?? null;
   const ctxLogout = auth?.logout ?? null;
+  const ctxRestartTimer = auth?.restartLogoutTimer ?? null;
+  const ctxSetToken = auth?.setToken ?? null;
 
   // Local state
   const [menuOpen, setMenuOpen] = useState(false);
@@ -42,6 +46,7 @@ export default function MainNavbar({
   const [remaining, setRemaining] = useState(null);
   const [toast, setToast] = useState({ visible: false, text: "", important: false });
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   // scroll refs
   const scrollTextRef = useRef(null);
@@ -53,7 +58,6 @@ export default function MainNavbar({
   const ctxUserRef = useRef(ctxUser);
   const autoRefreshTriggeredRef = useRef(false);
   const calledRefreshRef = useRef(false);
-  const lastShownMinuteRef = useRef(null);
 
   useEffect(() => {
     ctxRemainingRef.current = ctxTokenRemaining;
@@ -70,9 +74,15 @@ export default function MainNavbar({
     if (!ctxUserRef.current) return;
     if (!ctxRemainingRef.current && !ctxExpiresAtRef.current && !calledRefreshRef.current) {
       calledRefreshRef.current = true;
-      ctxForceRefresh?.().catch(() => {});
+      const attempt = onRefreshToken ?? ctxRefreshFn;
+      if (attempt && attempt.then) {
+        attempt().catch(() => {});
+      } else if (attempt) {
+        try { attempt(); } catch {}
+      }
     }
-  }, [ctxForceRefresh]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctxRefreshFn]);
 
   // Unified remaining computation and ticking
   useEffect(() => {
@@ -99,7 +109,7 @@ export default function MainNavbar({
     return () => clearInterval(iv);
   }, []);
 
-  // Toast helpers
+  // Toast helpers (kept for one-off messages like errors/success)
   function showToast(text, important = false) {
     if (toastTimerRef.current) {
       clearTimeout(toastTimerRef.current);
@@ -118,31 +128,6 @@ export default function MainNavbar({
     };
   }, []);
 
-  // Minute-based toast notifications
-  useEffect(() => {
-    let minutes = null;
-    if (ctxExpiresAtRef.current) {
-      const ms = ctxExpiresAtRef.current - Date.now();
-      minutes = ms <= 0 ? 0 : Math.ceil(ms / 60000);
-    } else if (typeof remaining === "number") {
-      minutes = Math.ceil(remaining / 60);
-    }
-
-    if (minutes === null) return;
-
-    // reset lastShownMinute when session appears to have just started
-    if (typeof remaining === "number" && remaining > durationSeconds - 5) {
-      lastShownMinuteRef.current = null;
-    }
-
-    if (minutes !== lastShownMinuteRef.current) {
-      lastShownMinuteRef.current = minutes;
-      if (minutes <= 0) showToast("Session expired", true);
-      else if (minutes <= 10) showToast(`${minutes} min left — refresh token recommended`, true);
-      else showToast(`${minutes} min left`, false);
-    }
-  }, [remaining, ctxExpiresAt, durationSeconds]);
-
   // Auto-refresh trigger (fires once when remaining <= refreshBeforeSeconds)
   useEffect(() => {
     const cur = typeof ctxTokenRemaining === "number" ? ctxTokenRemaining : remaining;
@@ -157,14 +142,36 @@ export default function MainNavbar({
 
     if (cur !== null && cur <= refreshBeforeSeconds && cur > 0 && !autoRefreshTriggeredRef.current) {
       autoRefreshTriggeredRef.current = true;
-      const maybePromise = onRefreshToken?.() ?? ctxForceRefresh?.();
+      const attempt = onRefreshToken ?? ctxRefreshFn;
+      const maybePromise = attempt?.() ?? null;
       if (maybePromise && maybePromise.then) {
         setIsRefreshing(true);
-        maybePromise.catch(() => {}).finally(() => setIsRefreshing(false));
+        maybePromise
+          .then((res) => {
+            if ((!res || (typeof res === "object" && (!res.absExpiry && !res.remaining))) && typeof ctxRestartTimer === "function") {
+              try {
+                const suggested = res?.remaining ?? res?.expiresIn ?? null;
+                if (suggested) ctxRestartTimer({ expiresIn: Number(suggested) });
+                else ctxRestartTimer();
+              } catch {}
+            }
+          })
+          .catch(() => {
+            showToast("Auto-refresh failed", true);
+          })
+          .finally(() => setIsRefreshing(false));
+      } else {
+        if ((!maybePromise || (typeof maybePromise === "object" && (!maybePromise.absExpiry && !maybePromise.remaining))) && typeof ctxRestartTimer === "function") {
+          try {
+            const suggested = maybePromise?.remaining ?? maybePromise?.expiresIn ?? null;
+            if (suggested) ctxRestartTimer({ expiresIn: Number(suggested) });
+            else ctxRestartTimer();
+          } catch {}
+        }
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ctxTokenRemaining, ctxExpiresAt, remaining, refreshBeforeSeconds, onRefreshToken, ctxForceRefresh]);
+  }, [ctxTokenRemaining, ctxExpiresAt, remaining, refreshBeforeSeconds, onRefreshToken, ctxRefreshFn]);
 
   // Formatting helpers
   const formatTime = (sec) => {
@@ -228,66 +235,40 @@ export default function MainNavbar({
     setMenuOpen(true);
   }
 
-  // Updated performRefresh: awaits the refresh result object and prefers absExpiry -> remaining -> context
+  // performRefresh: call server /refresh then restart client timer to 2 hours
   async function performRefresh() {
     setMenuOpen(false);
     setMenuMode(null);
     setIsRefreshing(true);
+
     try {
-      const maybePromise = onRefreshToken?.() ?? ctxForceRefresh?.();
-      let result = null;
+      // call server's refresh endpoint (credentials included so cookie flows work)
+      try {
+        await fetch(`${API_BASE}/refresh`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+        });
+        // per request: we do not require the response to reset client timer
+      } catch (err) {
+        console.warn("Refresh API call failed:", err);
+        showToast("Refresh API call failed (network). Timer restarted locally.", true);
+      }
 
-      if (maybePromise && maybePromise.then) {
-        try {
-          result = await maybePromise;
-        } catch (err) {
-          // if refresh failed, ensure we handle gracefully
-          result = result ?? null;
+      // restart client timer from 2 hours (7200 seconds) — auth.setToken supports setToken(null,{expiresIn})
+      try {
+        if (typeof ctxSetToken === "function") {
+          ctxSetToken(null, { expiresIn: 7200 });
+        } else if (typeof ctxRestartTimer === "function") {
+          ctxRestartTimer({ expiresIn: 7200 });
         }
-      } else {
-        // synchronous result (boolean or object)
-        result = maybePromise ?? null;
+      } catch (e) {
+        console.warn("Failed to restart token timer in context:", e);
       }
 
-      // result might be boolean true/false, or object { ok, absExpiry, remaining, ... }
-      // prefer an object with fields; otherwise attempt to read latest values from context
-
-      let newRemaining = null;
-
-      if (result && typeof result === "object") {
-        if (typeof result.absExpiry === "number" && result.absExpiry > 0) {
-          // we got absolute expiry from server or computed by context
-          ctxExpiresAtRef.current = result.absExpiry;
-          newRemaining = Math.max(0, Math.ceil((result.absExpiry - Date.now()) / 1000));
-        } else if (typeof result.remaining === "number") {
-          ctxRemainingRef.current = result.remaining;
-          newRemaining = Math.max(0, Math.ceil(result.remaining));
-        }
-      }
-
-      // If result didn't contain expiry info, try reading freshest values from auth context
-      if (newRemaining === null) {
-        const latestExpires = typeof auth?.tokenExpiresAt === "number" ? auth.tokenExpiresAt : ctxExpiresAtRef.current;
-        const latestRemaining = typeof auth?.tokenRemaining === "number" ? auth.tokenRemaining : ctxRemainingRef.current;
-        if (typeof latestExpires === "number") {
-          newRemaining = Math.max(0, Math.ceil((latestExpires - Date.now()) / 1000));
-          ctxExpiresAtRef.current = latestExpires;
-        } else if (typeof latestRemaining === "number") {
-          newRemaining = Math.max(0, Math.ceil(latestRemaining));
-          ctxRemainingRef.current = latestRemaining;
-        }
-      }
-
-      // If still null, **do not** forcibly set a 2-hour fallback here.
-      // AuthContext is responsible for deciding when to set a fallback expiry on refresh.
-      if (newRemaining !== null) {
-        setRemaining(newRemaining);
-        lastShownMinuteRef.current = null;
-        showToast("Session refreshed", false);
-      } else {
-        // no expiry info available immediately
-        showToast("Session refreshed (no expiry info)", false);
-      }
+      // update local display immediately
+      setRemaining(7200);
+      showToast("Session refreshed — timer reset to 2 hours", false);
     } catch (err) {
       showToast("Failed to refresh session", true);
     } finally {
@@ -295,16 +276,79 @@ export default function MainNavbar({
     }
   }
 
-  function performLogout() {
+  // performLogout: ensure token and timers are cleared immediately and reliably.
+  async function performLogout() {
     setMenuOpen(false);
     setMenuMode(null);
+    setIsLoggingOut(true);
+
+    // local cleanup helper (best-effort) — ensures MainNavbar sees cleared token/timers immediately
+    function localCleanup() {
+      try {
+        // best-effort clear token in context
+        if (typeof ctxSetToken === "function") {
+          try {
+            // calling without expiresIn clears tokenExpiresAt in your AuthContext implementation
+            ctxSetToken(null);
+          } catch {}
+        }
+        // clear local display / refs
+        setRemaining(null);
+        ctxExpiresAtRef.current = null;
+        ctxRemainingRef.current = null;
+        // clear stored auth payload keys that could persist across login/logout
+        try {
+          localStorage.removeItem("auth_payload");
+          localStorage.removeItem("token");
+          localStorage.removeItem("tokenExpiry");
+          localStorage.removeItem("tokenExpiry"); // defensive
+          // don't aggressively clear everything (leave other app data), but remove auth-specific keys
+          localStorage.removeItem("user");
+          localStorage.removeItem("userId");
+        } catch {}
+      } catch (e) {
+        // swallow
+      }
+    }
+
     try {
-      if (onLogout) return onLogout();
-      if (ctxLogout) return ctxLogout();
-      localStorage.clear();
-      sessionStorage.clear();
-    } catch {}
-    window.location.href = "/login";
+      // first run custom handlers if provided
+      if (onLogout) {
+        try {
+          const res = onLogout();
+          if (res && res.then) await res;
+        } catch (err) {
+          // allow local cleanup even if onLogout throws
+          console.warn("onLogout threw:", err);
+        }
+      }
+
+      // call context logout (if available) and wait for it if it returns a promise
+      if (ctxLogout) {
+        try {
+          const possible = ctxLogout();
+          if (possible && possible.then) {
+            await possible;
+          }
+        } catch (err) {
+          console.warn("auth.logout threw:", err);
+        }
+      }
+
+      // always run local cleanup to guarantee timers/tokens cleared client-side immediately
+      localCleanup();
+
+      // navigate to login page
+      try {
+        navigate("/login");
+      } catch {
+        window.location.href = "/login";
+      }
+    } catch (err) {
+      showToast("Logout failed", true);
+    } finally {
+      setIsLoggingOut(false);
+    }
   }
 
   // keyboard escape to close menu
@@ -449,28 +493,12 @@ export default function MainNavbar({
         }
       `}</style>
 
-      {/* Toast */}
+      {/* Toast (kept only for one-off messages) */}
       <div className="fixed top-4 right-4 z-60">
         {toast.visible && (
-          <div
-            className={`max-w-xs shadow-lg rounded-2xl p-3 border ${
-              toast.important ? "bg-red-50 border-red-200" : "bg-white border-gray-100"
-            }`}
-            role="status"
-            aria-live={toast.important ? "assertive" : "polite"}
-          >
+          <div className={`max-w-xs shadow-lg rounded-2xl p-3 border ${toast.important ? "bg-red-50 border-red-200" : "bg-white border-gray-100"}`} role="status" aria-live={toast.important ? "assertive" : "polite"}>
             <div className="flex items-start gap-3">
               <div className="text-sm leading-tight break-words">{toast.text}</div>
-              {toast.important && (
-                <div className="ml-auto flex items-center gap-2">
-                  <button
-                    onClick={() => openConfirm("refresh")}
-                    className="text-xs px-3 py-1 rounded bg-red-600 text-white shadow-sm"
-                  >
-                    Refresh
-                  </button>
-                </div>
-              )}
             </div>
           </div>
         )}
@@ -509,8 +537,22 @@ export default function MainNavbar({
             <>
               <div className="text-lg font-medium mb-4">Do you want to refresh your session token now?</div>
               <div className="space-y-2">
-                <button onClick={performRefresh} className="w-full text-left px-3 py-2 rounded bg-green-600 text-white">
-                  {isRefreshing ? "Refreshing..." : "Confirm Refresh"}
+                <button
+                  onClick={performRefresh}
+                  className="w-full text-left px-3 py-2 rounded bg-green-600 text-white flex items-center justify-center gap-2"
+                  disabled={isRefreshing}
+                >
+                  {isRefreshing ? (
+                    <>
+                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+                      </svg>
+                      <span>Refreshing...</span>
+                    </>
+                  ) : (
+                    "Confirm Refresh"
+                  )}
                 </button>
                 <button onClick={() => setMenuMode(null)} className="w-full text-left px-3 py-2 rounded border">
                   Back
@@ -522,8 +564,22 @@ export default function MainNavbar({
             <>
               <div className="text-lg font-medium mb-4">Are you sure you want to sign out?</div>
               <div className="space-y-2">
-                <button onClick={performLogout} className="w-full text-left px-3 py-2 rounded bg-red-600 text-white">
-                  Confirm Logout
+                <button
+                  onClick={performLogout}
+                  className="w-full text-left px-3 py-2 rounded bg-red-600 text-white flex items-center justify-center gap-2"
+                  disabled={isLoggingOut}
+                >
+                  {isLoggingOut ? (
+                    <>
+                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+                      </svg>
+                      <span>Signing out...</span>
+                    </>
+                  ) : (
+                    "Confirm Logout"
+                  )}
                 </button>
                 <button onClick={() => setMenuMode(null)} className="w-full text-left px-3 py-2 rounded border">
                   Back

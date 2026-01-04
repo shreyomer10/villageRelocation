@@ -1,4 +1,5 @@
-﻿import React, { createContext, useCallback, useEffect, useRef, useState } from "react";
+﻿// src/context/AuthContext.jsx
+import React, { createContext, useCallback, useEffect, useRef, useState } from "react";
 
 export const AuthContext = createContext({
   user: null,
@@ -47,6 +48,10 @@ export const AuthContext = createContext({
   setFamilyId: () => {},
   setSelectedFamily: () => {},
   selectFamily: () => {},
+
+  // new helpers
+  restartLogoutTimer: () => {},
+  onRefresh: async () => {},
 });
 
 const STORAGE_KEYS = {
@@ -75,7 +80,7 @@ const STORAGE_KEYS = {
   SELECTED_FAMILY: "selectedFamily",
 };
 
-// (aliases and normalizers unchanged — keep full set from your original file)
+// aliases
 const MATERIAL_ID_ALIASES = ["materialId", "MATERIAL_ID", "MATERIAL", "MATERIALID"];
 const SELECTED_MATERIAL_ALIASES = ["selectedMaterial", "SELECTED_MATERIAL", "SELECTED_MATERIALS"];
 const PLOT_ID_ALIASES = ["plotId", "PLOT_ID", "PLOT", "PLOTID"];
@@ -139,7 +144,6 @@ function normalizeSelectedPlot(raw) {
   if (typeof raw === "object") return raw;
   return null;
 }
-/* ------------------------------------------- */
 
 /* ---------- material normalizers ---------- */
 function normalizeMaterialId(raw) {
@@ -161,7 +165,6 @@ function normalizeSelectedMaterial(raw) {
   if (typeof raw === "object") return raw;
   return null;
 }
-/* ------------------------------------------- */
 
 /* ---------- facility normalizers (NEW) ---------- */
 function normalizeFacilityId(raw) {
@@ -183,7 +186,6 @@ function normalizeSelectedFacility(raw) {
   if (typeof raw === "object") return raw;
   return null;
 }
-/* ------------------------------------------- */
 
 /* ---------- family normalizers (ADDED) ---------- */
 function normalizeFamilyId(raw) {
@@ -205,7 +207,6 @@ function normalizeSelectedFamily(raw) {
   if (typeof raw === "object") return raw;
   return null;
 }
-/* ------------------------------------------- */
 
 /** Minimal safe fetch that returns parsed JSON when available and text otherwise */
 async function safeFetch(url, options = {}) {
@@ -238,7 +239,7 @@ function parseJwt(token) {
 
 export function AuthProvider({ children }) {
   const [user, setUserState] = useState(null);
-  const [userId, setUserIdState] = useState(null); // NEW: store canonical userId
+  const [userId, setUserIdState] = useState(null);
   const [villageId, setVillageIdState] = useState(null);
   const [village, setVillageState] = useState(null);
   const [villageName, setVillageNameState] = useState(null);
@@ -249,26 +250,23 @@ export function AuthProvider({ children }) {
 
   const [tokenRemaining, setTokenRemaining] = useState(null);
 
-  // NEW: selected plot state
+  // selected plot/material/facility/family
   const [plotId, setPlotIdState] = useState(null);
   const [selectedPlot, setSelectedPlotState] = useState(null);
 
-  // NEW: selected material state
   const [materialId, setMaterialIdState] = useState(null);
   const [selectedMaterial, setSelectedMaterialState] = useState(null);
 
-  // NEW: selected facility state
   const [facilityId, setFacilityIdState] = useState(null);
   const [selectedFacility, setSelectedFacilityState] = useState(null);
 
-  // NEW: selected family state (ADDED)
   const [familyId, setFamilyIdState] = useState(null);
   const [selectedFamily, setSelectedFamilyState] = useState(null);
 
   const expiryTimerRef = useRef(null);
   const tickIntervalRef = useRef(null);
 
-  // Initialize from localStorage (robust: use aliases for material/plot/facility/family)
+  // --- initialize from localStorage (kept as original) ---
   useEffect(() => {
     try {
       const rawUser = localStorage.getItem(STORAGE_KEYS.USER);
@@ -357,7 +355,6 @@ export function AuthProvider({ children }) {
             try {
               localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify({ name: u.name ?? u.fullName ?? null, role: u.role ?? null, email: u.email ?? null }));
             } catch {}
-            // try extract user id from user object
             const uid = u.id ?? u.userId ?? u.user_id ?? u._id ?? null;
             if (uid) {
               setUserIdState(String(uid));
@@ -455,7 +452,7 @@ export function AuthProvider({ children }) {
           try {
             return JSON.parse(rawSelPlot);
           } catch {
-            return rawSelPlot; // primitive id string
+            return rawSelPlot;
           }
         })();
         const normalized = Array.isArray(parsed) ? parsed[0] ?? null : parsed;
@@ -494,7 +491,7 @@ export function AuthProvider({ children }) {
           try {
             return JSON.parse(rawSelMat);
           } catch {
-            return rawSelMat; // primitive id string
+            return rawSelMat;
           }
         })();
         const normalized = Array.isArray(parsed) ? parsed[0] ?? null : parsed;
@@ -504,7 +501,6 @@ export function AuthProvider({ children }) {
           const mid = normalizeMaterialId(sm);
           if (mid) setMaterialIdState(String(mid));
         } else if (typeof parsed === "string") {
-          // stored as primitive id string
           const sm = normalizeSelectedMaterial(parsed);
           setSelectedMaterialState(sm);
           const mid = normalizeMaterialId(parsed);
@@ -539,14 +535,14 @@ export function AuthProvider({ children }) {
           try {
             return JSON.parse(rawSelFac);
           } catch {
-            return rawSelFac; // primitive id string
+            return rawSelFac;
           }
         })();
         const normalized = Array.isArray(parsed) ? parsed[0] ?? null : parsed;
         if (normalized) {
           const sf = normalizeSelectedFacility(normalized);
           setSelectedFacilityState(sf);
-          const fid = normalizeFacilityId(sf);
+          const fid = normalizeFacilityId(sf.facilityId ?? sf.id ?? sf._id);
           if (fid) setFacilityIdState(String(fid));
         } else if (typeof parsed === "string") {
           const sf = normalizeSelectedFacility(parsed);
@@ -583,7 +579,7 @@ export function AuthProvider({ children }) {
           try {
             return JSON.parse(rawSelFamily);
           } catch {
-            return rawSelFamily; // primitive id string
+            return rawSelFamily;
           }
         })();
         const normalized = Array.isArray(parsed) ? parsed[0] ?? null : parsed;
@@ -800,7 +796,7 @@ export function AuthProvider({ children }) {
     } catch {}
   }, [selectedFamily]);
 
-  // persist full raw payload (include selectedVillage + selectedPlot + selectedMaterial + selectedFacility + selectedFamily + userId)
+  // persist full raw payload
   useEffect(() => {
     try {
       const raw = {
@@ -1070,8 +1066,9 @@ export function AuthProvider({ children }) {
       setTokenState(null);
       setTokenExpiresAt(null);
       try {
-        logout(); // logout defined later, still works
+        logout(); // logout defined later
       } catch {
+        // best-effort cleanup
         setUserState(null);
         setUserIdState(null);
         setVillageIdState(null);
@@ -1447,7 +1444,6 @@ export function AuthProvider({ children }) {
           if (!absExpiry) {
             const parsed = parseJwt(tok);
             if (parsed && parsed.exp) absExpiry = Number(parsed.exp) * 1000;
-            // attempt to get user id from token if not found already
             if (!finalUserId && parsed) {
               finalUserId = parsed.sub ?? parsed.userId ?? parsed.user_id ?? parsed.id ?? finalUserId;
             }
@@ -1656,7 +1652,7 @@ export function AuthProvider({ children }) {
 
   const isAuthenticated = !!(user && token);
 
-  // public setters for plot
+  // plot public setters
   const setPlotId = useCallback((p) => {
     const normalized = normalizePlotId(p);
     setPlotIdState(normalized ?? null);
@@ -1727,7 +1723,7 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
-  // public setters for material (robust)
+  // material public setters
   const setMaterialId = useCallback((m) => {
     const normalized = normalizeMaterialId(m);
     setMaterialIdState(normalized ?? null);
@@ -1796,7 +1792,7 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
-  // public setters for facility (NEW)
+  // facility public setters
   const setFacilityId = useCallback((f) => {
     const normalized = normalizeFacilityId(f);
     setFacilityIdState(normalized ?? null);
@@ -1865,7 +1861,7 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
-  // public setters for family (ADDED)
+  // family public setters
   const setFamilyId = useCallback((f) => {
     const normalized = normalizeFamilyId(f);
     setFamilyIdState(normalized ?? null);
@@ -1934,6 +1930,27 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
+  // --- NEW helper: restartLogoutTimer ---
+  // This allows components (like MainNavbar) to tell the context to restart the client-side
+  // logout timer. For cookie-based web flow, server sets cookie and may return user + no token;
+  // calling restartLogoutTimer({ expiresIn }) => setToken(null, { expiresIn }) will set tokenExpiresAt
+  // and restart timers without putting a token in state (since cookie is HTTP-only).
+  const restartLogoutTimer = useCallback((options = {}) => {
+    try {
+      // re-use setToken behavior: passing null token with options will set tokenExpiresAt
+      // without storing a token string in state.
+      setToken(null, options);
+    } catch (e) {
+      // swallow - best-effort
+    }
+  }, [setToken]);
+
+  // --- NEW alias: onRefresh ---
+  // Convenience wrapper that components can call to perform the refresh action.
+  const onRefresh = useCallback(async (opts = { allowCookieFallback: true }) => {
+    return await doRefresh(opts);
+  }, [doRefresh]);
+
   const value = {
     user,
     setUser,
@@ -1952,6 +1969,9 @@ export function AuthProvider({ children }) {
     login,
     logout,
     forceRefresh,
+    doRefresh,
+    onRefresh,
+    restartLogoutTimer,
     isAuthenticated,
 
     // plot exports

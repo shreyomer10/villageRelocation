@@ -1,398 +1,478 @@
-// src/pages/FeedbackPage.jsx
-import React, { useEffect, useMemo, useState, useContext, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+// src/pages/FeedbackPage.updated.jsx
+import React, { useEffect, useMemo, useState, useRef, useContext } from "react";
+import { useNavigate, useLocation, useParams } from "react-router-dom";
 import MainNavbar from "../component/MainNavbar";
-import { AuthContext } from "../context/AuthContext";
 import { API_BASE } from "../config/Api.js";
-import { ArrowLeft, Search, FileText, User, MapPin, CheckCircle, AlertTriangle, Printer, X } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
+import { FileText, Image as ImageIcon, ArrowLeft, Search } from "lucide-react";
+import { AuthContext } from "../context/AuthContext";
+import DocumentModal from "../component/DocsModal";
 
-/*
-  Pagination-enabled FeedbackPage.
-  - Uses doProtectedFetch (token -> refresh -> cookie fallback)
-  - Expects backend response shape:
-    { error: false, message: "...", result: { count, items, page, limit } }
-*/
+// --------------------------------------------------------------------------------
+// FeedbackPage.updated.jsx — fixed rate-limiting / too-many-requests by:
+// 1) ensuring fetchFeedbacks is called exactly once per relevant change
+// 2) moving logs/chart fetch into a single debounced effect with an AbortController + cache
+// 3) removing duplicate fetch triggers (loadAll no longer calls fetchFeedbacks blindly)
+// --------------------------------------------------------------------------------
+
+function fmtDate(iso) {
+  try {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    if (!isNaN(d.getTime())) return d.toLocaleString();
+    return iso;
+  } catch (e) {
+    return iso;
+  }
+}
+
+function StatusBadge({ status }) {
+  const map = {
+    "-1": { label: "Deleted", color: "bg-gray-100 text-gray-700" },
+    "1": { label: "New", color: "bg-yellow-200 text-yellow-800" },
+    "2": { label: "Acknowledged", color: "bg-blue-300 text-blue-800" },
+    "3": { label: "In Progress", color: "bg-indigo-300 text-indigo-800" },
+    "4": { label: "Resolved", color: "bg-green-300 text-green-800" },
+  };
+  const entry = map[String(status)] || { label: `Status ${status}`, color: "bg-gray-100 text-gray-800" };
+  return <span className={`text-xs px-2 py-1 rounded ${entry.color}`}>{entry.label}</span>;
+}
+
+function FeedbackTypeBadge({ type }) {
+  const t = (type || "").toString().toLowerCase();
+  const map = {
+    complaint: { label: "Complaint", classes: "bg-red-100 text-red-800" },
+    suggestion: { label: "Suggestion", classes: "bg-green-100 text-green-800" },
+  };
+  const entry = map[t] || { label: (type || "—"), classes: "bg-gray-100 text-gray-800" };
+  return <span className={`text-xs px-2 py-1 rounded ${entry.classes}`}>{entry.label}</span>;
+}
 
 export default function FeedbackPage() {
+  const params = useParams();
+  const location = useLocation();
   const navigate = useNavigate();
-  const auth = useContext(AuthContext) || {};
-  const { selectedVillageId } = auth;
+  const authCtx = useContext(AuthContext);
 
-  // localStorage fallback for village id
-  const villageFromLS = (() => {
+  // Resolve village id from route/auth/localStorage
+  const resolveVillageIdFromStorage = () => {
     try {
-      if (typeof window === "undefined") return null;
-      return localStorage.getItem("villageId");
-    } catch {
-      return null;
-    }
-  })();
-  const villageId = selectedVillageId ?? villageFromLS ?? null;
-
-  // read token helper
-  const readToken = useCallback(() => {
-    if (auth?.token) return auth.token;
-    if (auth?.authToken) return auth.authToken;
-    if (auth?.user?.token) return auth.user.token;
-    if (auth?.user?.accessToken) return auth.user.accessToken;
-    try {
-      if (typeof window === "undefined") return null;
-      const keys = ["token", "authToken", "accessToken", "maati_token", "maatiAuth", "id_token", "auth_token"];
-      for (const k of keys) {
-        const v = localStorage.getItem(k);
-        if (v) return v;
+      const byKey = localStorage.getItem("villageId") || localStorage.getItem("VILLAGE") || localStorage.getItem("villageID");
+      if (byKey) return byKey;
+      const rawSel = localStorage.getItem("selectedPlot") || localStorage.getItem("selectedVillage");
+      if (rawSel) {
+        const parsed = JSON.parse(rawSel);
+        const normalized = Array.isArray(parsed) ? parsed[0] ?? null : parsed;
+        if (normalized) return normalized.villageId ?? normalized.village ?? null;
       }
     } catch {}
     return null;
-  }, [auth]);
+  };
 
-  // doProtectedFetch: tries token then refresh then cookie-only fallback
-  const doProtectedFetch = useCallback(
-    async (url, options = {}) => {
-      const opts = { method: options.method ?? "GET", headers: { ...(options.headers || {}) }, body: options.body, signal: options.signal };
-      const token = readToken();
-
-      async function attemptFetch(sendAuthHeader) {
-        const headers = { ...(opts.headers || {}) };
-        if (sendAuthHeader && token) headers["Authorization"] = `Bearer ${token}`;
-        if (!headers.Accept) headers.Accept = "application/json";
-        if (opts.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
-
-        const resp = await fetch(url, {
-          method: opts.method,
-          headers,
-          body: opts.body,
-          credentials: "include",
-          signal: opts.signal,
-        });
-        return resp;
-      }
-
-      // If token available, try token flow first
-      if (token) {
-        try {
-          const r1 = await attemptFetch(true);
-          if (r1.status !== 401) return r1;
-
-          // try refresh -> retry once
-          if (typeof auth?.forceRefresh === "function") {
-            try {
-              const refreshResult = await auth.forceRefresh();
-              if (refreshResult && refreshResult.ok) {
-                const r2 = await attemptFetch(true);
-                if (r2.status !== 401) return r2;
-              }
-            } catch {}
-          }
-        } catch (e) {
-          // network/abort -> rethrow
-          throw e;
-        }
-      }
-
-      // cookie-only fallback
-      try {
-        const rCookie = await attemptFetch(false);
-        return rCookie;
-      } catch (e) {
-        throw e;
-      }
-    },
-    [auth, readToken]
-  );
-
-  // safe JSON parse
-  function safeParseJson(text, res) {
-    const ct = (res?.headers?.get?.("content-type") || "").toLowerCase();
-    const trimmed = String(text || "").trim();
-    if (!ct.includes("application/json") && !trimmed.startsWith("{") && !trimmed.startsWith("[")) {
-      const snippet = trimmed.slice(0, 400);
-      throw new Error(`Expected JSON but got content-type="${ct}". Response starts with: ${snippet}`);
-    }
+  const extractVillageIdFromAuth = (ctx) => {
+    if (!ctx) return null;
     try {
-      return JSON.parse(trimmed);
-    } catch (err) {
-      const snippet = trimmed.slice(0, 400);
-      throw new Error(`Invalid JSON: ${err.message}. Response (first 400 chars): ${snippet}`);
+      if (ctx.villageId) return ctx.villageId;
+      if (ctx.VILLAGE) return ctx.VILLAGE;
+      if (ctx.selectedPlot) {
+        const sp = ctx.selectedPlot;
+        if (typeof sp === "string") return sp;
+        if (Array.isArray(sp)) {
+          const first = sp[0] ?? null;
+          if (first) return first.villageId ?? first.village ?? null;
+        }
+        return sp.villageId ?? sp.village ?? null;
+      }
+    } catch {}
+    return null;
+  };
+
+  const getInitialVillage = () => {
+    const fromRoute = params.villageId;
+    if (fromRoute) return String(fromRoute);
+    const fromLocation = location?.state?.selectedVillage && (location.state.selectedVillage.villageId ?? location.state.selectedVillage.village);
+    if (fromLocation) return String(fromLocation);
+    const fromAuth = extractVillageIdFromAuth(authCtx);
+    if (fromAuth) return String(fromAuth);
+    const fromStorage = resolveVillageIdFromStorage();
+    if (fromStorage) return String(fromStorage);
+    return null;
+  };
+
+  const [villageId, setVillageId] = useState(getInitialVillage());
+
+  useEffect(() => {
+    const fromRoute = params.villageId ?? null;
+    const fromLocation = location?.state?.selectedVillage && (location.state.selectedVillage.villageId ?? location.state.selectedVillage.village);
+    const fromAuth = extractVillageIdFromAuth(authCtx);
+    const fromStorage = resolveVillageIdFromStorage();
+    const resolved = fromRoute || fromLocation || fromAuth || fromStorage || null;
+    if (resolved && String(resolved) !== villageId) setVillageId(String(resolved));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.villageId, location?.state?.selectedVillage, authCtx]);
+
+  useEffect(() => {
+    function onStorage(e) {
+      if (!e.key) return;
+      if (e.key === "villageId" || e.key === "villageID") {
+        if (e.newValue) setVillageId(String(e.newValue));
+      }
+      if (e.key === "selectedVillage" || e.key === "selectedPlot") {
+        try {
+          const parsed = e.newValue ? JSON.parse(e.newValue) : null;
+          const normalized = Array.isArray(parsed) ? parsed[0] ?? null : parsed;
+          if (normalized && (normalized.villageId || normalized.village)) setVillageId(String(normalized.villageId ?? normalized.village));
+        } catch {}
+      }
     }
-  }
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
 
-  // extract list and meta from backend response shape
-  function parseListResponse(payload) {
-    if (!payload) return { items: [], count: 0, page: 1, limit: 15 };
-    const result = payload.result ?? payload;
-    const items = Array.isArray(result?.items) ? result.items : Array.isArray(result) ? result : [];
-    const count = Number(result?.count ?? result?.total ?? items.length) || 0;
-    const page = Number(result?.page ?? result?.pageno ?? 1) || 1;
-    const limit = Number(result?.limit ?? result?.pageSize ?? 15) || 15;
-    return { items, count, page, limit };
-  }
+  const [loading, setLoading] = useState(true);
+  const [pageError, setPageError] = useState(null);
 
-  // state for pagination + data
   const [feedbacks, setFeedbacks] = useState([]);
-  const [totalCount, setTotalCount] = useState(0);
+  const [feedbacksLoading, setFeedbacksLoading] = useState(false);
+
+  // filters
+  const [nameFilter, setNameFilter] = useState("");
+  const [feedbackTypeFilter, setFeedbackTypeFilter] = useState("");
+  const [fromDateFilter, setFromDateFilter] = useState("");
+  const [toDateFilter, setToDateFilter] = useState("");
+
+  const [search, setSearch] = useState("");
+  const searchDebounceRef = useRef(null);
+
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(15);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [totalCount, setTotalCount] = useState(0);
 
-  // search & tabs + modal state (kept from prior)
-  const [tab, setTab] = useState("all");
-  const [searchAll, setSearchAll] = useState("");
-  const [searchSuggestion, setSearchSuggestion] = useState("");
-  const [searchComplaint, setSearchComplaint] = useState("");
+  // modal states
   const [modalOpen, setModalOpen] = useState(false);
+  const [modalFeedback, setModalFeedback] = useState(null);
   const [modalLoading, setModalLoading] = useState(false);
-  const [modalError, setModalError] = useState(null);
-  const [modalDetail, setModalDetail] = useState(null);
-  const [historyExpanded, setHistoryExpanded] = useState(false);
+  const [modalTargetId, setModalTargetId] = useState(null);
 
-  // reset page when village changes
+  const [docsOpen, setDocsOpen] = useState(false);
+  const [docsDocs, setDocsDocs] = useState([]);
+  const [docsTitle, setDocsTitle] = useState("Documents");
+  const [docsLoading, setDocsLoading] = useState(false);
+  const [docsTargetId, setDocsTargetId] = useState(null);
+
+  const [expandedNotesFor, setExpandedNotesFor] = useState(null);
+  const feedbackRefs = useRef({});
+
+  // abort controllers & caches
+  const fetchControllersRef = useRef({}); // for detail/docs per item
+  const feedbackCacheRef = useRef({}); // per-feedback details cache
+  const docsCacheRef = useRef({}); // per-feedback docs cache
+
+  // LOGS (chart) state + controller + cache
+  const [logsItems, setLogsItems] = useState([]);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [logsError, setLogsError] = useState(null);
+  const logsControllerRef = useRef(null);
+  const logsCacheRef = useRef({}); // keyed by village + filters
+
+  // debounce search -> set nameFilter
   useEffect(() => {
-    setPage(1);
-  }, [villageId]);
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = setTimeout(() => {
+      const trimmed = (search || "").trim();
+      if (trimmed !== nameFilter) {
+        setNameFilter(trimmed);
+        setPage(1);
+      }
+    }, 400);
+    return () => { if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
 
-  // load feedbacks with pagination
-  useEffect(() => {
-    let mounted = true;
-    const ctrl = new AbortController();
+  // auth headers util
+  function authHeaders() {
+    const token = localStorage.getItem("token");
+    return token ? { "Content-Type": "application/json", Authorization: `Bearer ${token}` } : { "Content-Type": "application/json" };
+  }
 
-    async function load() {
-      setLoading(true);
-      setError(null);
+  async function fetchWithCreds(url, opts = {}) {
+    try {
+      const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
+      const res = await fetch(url, {
+        credentials: "include",
+        headers,
+        method: opts.method || "GET",
+        body: opts.body,
+        signal: opts.signal,
+      });
+      const text = await res.text().catch(() => "");
+      let json = null;
+      try { json = text ? JSON.parse(text) : null; } catch { json = null; }
+      return { res, ok: res.ok, status: res.status, json, text };
+    } catch (err) {
+      if (err && err.name === "AbortError") return { res: null, ok: false, status: 0, json: null, text: "aborted", aborted: true };
+      return { res: null, ok: false, status: 0, json: null, text: String(err) };
+    }
+  }
 
+  function dateStartOfDay(d) { if (!d) return null; return `${d} 00:00:00`; }
+  function dateEndOfDay(d) { if (!d) return null; return `${d} 23:59:59`; }
+
+  // loadAll: when village changes we want to reset page to 1 and fetch once.
+  async function loadAll() {
+    setLoading(true);
+    setPageError(null);
+    try {
       if (!villageId) {
         setFeedbacks([]);
         setTotalCount(0);
-        setLoading(false);
         return;
       }
-
-      try {
-        const url = `${API_BASE}/feedbacks/${encodeURIComponent(villageId)}?limit=${encodeURIComponent(limit)}&page=${encodeURIComponent(page)}`;
-        const res = await doProtectedFetch(url, { method: "GET", signal: ctrl.signal });
-        const text = await res.text().catch(() => "");
-
-        if (res.status === 401) {
-          if (!mounted) return;
-          setFeedbacks([]);
-          setTotalCount(0);
-          setError("Unauthorized — please sign in or your session expired.");
-          setLoading(false);
-          return;
-        }
-
-        if (res.status === 404) {
-          if (!mounted) return;
-          setFeedbacks([]);
-          setTotalCount(0);
-          setLoading(false);
-          return;
-        }
-
-        if (!res.ok) {
-          const snippet = text.slice(0, 400);
-          throw new Error(`HTTP ${res.status} ${res.statusText} — ${snippet}`);
-        }
-
-        const payload = safeParseJson(text, res);
-        const { items, count, page: serverPage, limit: serverLimit } = parseListResponse(payload);
-
-        if (!mounted) return;
-        setFeedbacks(Array.isArray(items) ? items : []);
-        setTotalCount(Number(count) || 0);
-        // align client page/limit with server's returned values (if any)
-        if (serverPage && serverPage !== page) setPage(serverPage);
-        if (serverLimit && serverLimit !== limit) setLimit(serverLimit);
-      } catch (err) {
-        if (!mounted) return;
-        if (err.name === "AbortError") {
-          // ignore abort
-        } else {
-          setError(err.message || "Failed to fetch feedbacks");
-          setFeedbacks([]);
-          setTotalCount(0);
-        }
-      } finally {
-        if (mounted) setLoading(false);
+      // If page is already 1, call fetchFeedbacks immediately (single call).
+      // Otherwise set page to 1 and the effect watching page will fetch.
+      if (page === 1) {
+        await fetchFeedbacks(1, limit);
+      } else {
+        setPage(1);
       }
+    } catch (err) {
+      console.error("loadAll:", err);
+      setPageError(err.message || "Error loading feedbacks");
+    } finally {
+      setLoading(false);
     }
-
-    load();
-    return () => {
-      mounted = false;
-      ctrl.abort();
-    };
-  }, [villageId, page, limit, doProtectedFetch]);
-
-  // helpers for UI classification and search (unchanged)
-  function getFeedbackTag(f) {
-    const idCandidates = [f.feedbackTypeId, f.typeId, f.type_id, f.feedback_type_id];
-    for (const id of idCandidates) {
-      if (id === undefined || id === null) continue;
-      const n = Number(id);
-      if (!Number.isNaN(n)) {
-        if (n === 1) return { label: "Suggestion", color: "bg-indigo-50 text-indigo-700", icon: <CheckCircle size={14} /> };
-        if (n === 2) return { label: "Complaint", color: "bg-red-50 text-red-700", icon: <AlertTriangle size={14} /> };
-      }
-    }
-    const s = ((f.feedbackType || f.type || "") + "").toLowerCase();
-    if (s.includes("complaint")) return { label: "Complaint", color: "bg-red-50 text-red-700", icon: <AlertTriangle size={14} /> };
-    if (s.includes("suggest")) return { label: "Suggestion", color: "bg-indigo-50 text-indigo-700", icon: <CheckCircle size={14} /> };
-    return { label: f.feedbackType || f.type || "Open", color: "bg-gray-50 text-gray-700", icon: null };
   }
 
-  const allList = useMemo(() => (Array.isArray(feedbacks) ? feedbacks.slice().reverse() : []), [feedbacks]);
-  const suggestionList = useMemo(() => allList.filter((f) => (getFeedbackTag(f).label || "").toLowerCase().includes("suggest")), [allList]);
-  const complaintList = useMemo(() => allList.filter((f) => (getFeedbackTag(f).label || "").toLowerCase().includes("complaint")), [allList]);
-
-  const matchSearch = (item, q) => {
-    if (!q) return true;
-    const s = String(q).toLowerCase().trim();
-    const fields = [item.villageId, item.feedbackType, item.type, item.familyId, item.feedbackId, item.comments, item.name, item.plotId, item.mobile, item.email];
-    return fields.some((f) => String(f ?? "").toLowerCase().includes(s));
-  };
-
-  const filteredAll = useMemo(() => allList.filter((f) => matchSearch(f, searchAll)), [allList, searchAll]);
-  const filteredSuggestion = useMemo(() => suggestionList.filter((f) => matchSearch(f, searchSuggestion)), [suggestionList, searchSuggestion]);
-  const filteredComplaint = useMemo(() => complaintList.filter((f) => matchSearch(f, searchComplaint)), [complaintList, searchComplaint]);
-
-  function maybeThumbnail(docs) {
-    const arr = Array.isArray(docs) ? docs : null;
-    if (!arr || arr.length === 0) return null;
-    const u = arr[0];
-    if (typeof u !== "string") return null;
-    if (u.match(/\.(jpg|jpeg|png|webp|gif|svg)(\?|$)/i)) return u;
-    return null;
+  function normalizeListResponse(payload) {
+    if (!payload) return { items: [], count: 0 };
+    if (payload.result) {
+      const result = payload.result;
+      const items = result.items ?? result ?? [];
+      const count = result.count ?? result.total ?? (Array.isArray(result) ? result.length : 0);
+      return { items: Array.isArray(items) ? items : [], count: Number(count) || 0 };
+    }
+    if (Array.isArray(payload)) return { items: payload, count: payload.length };
+    const items = payload.items ?? payload.result ?? [];
+    const count = payload.count ?? (Array.isArray(items) ? items.length : 0);
+    return { items: Array.isArray(items) ? items : [], count: Number(count) || 0 };
   }
 
-  // open modal (uses doProtectedFetch)
-  async function openModalWithFetch(feedbackId) {
-    if (!feedbackId) return;
-    setModalOpen(true);
-    setModalLoading(true);
-    setModalError(null);
-    setModalDetail(null);
-    setHistoryExpanded(false);
+  // Fetch feedback list. This function no longer triggers logs fetch to avoid duplicates.
+  async function fetchFeedbacks(pageArg = page, limitArg = limit) {
+    setFeedbacksLoading(true);
+    setPageError(null);
+    try {
+      if (!villageId) {
+        setFeedbacks([]);
+        setTotalCount(0);
+        return;
+      }
+      const qs = new URLSearchParams();
+      qs.set("page", String(pageArg || 1));
+      qs.set("limit", String(limitArg || 15));
+      if (nameFilter) qs.set("name", nameFilter);
+      if (feedbackTypeFilter) qs.set("feedbackType", feedbackTypeFilter);
+      if (fromDateFilter) qs.set("fromDate", dateStartOfDay(fromDateFilter));
+      if (toDateFilter) qs.set("toDate", dateEndOfDay(toDateFilter));
 
+      const url = `${API_BASE}/feedbacks/${encodeURIComponent(villageId)}?${qs.toString()}`;
+      const { ok, status, json, text } = await fetchWithCreds(url, { method: "GET", headers: authHeaders() });
+
+      if (!ok) {
+        const msg = (json && (json.message || json.error)) || text || `Failed to fetch feedbacks: ${status}`;
+        if (status === 404) {
+          setFeedbacks([]);
+          setTotalCount(0);
+          setFeedbacksLoading(false);
+          return;
+        }
+        if (status === 401) {
+          setPageError((json && (json.message || json.error)) || "Unauthorized — please sign in");
+          setFeedbacks([]);
+          setTotalCount(0);
+          setFeedbacksLoading(false);
+          return;
+        }
+        throw new Error(msg);
+      }
+
+      const payload = json ?? {};
+      const { items, count } = normalizeListResponse(payload ?? {});
+      setFeedbacks(items);
+      setTotalCount(Number(count) || items.length || 0);
+    } catch (err) {
+      console.error("fetchFeedbacks:", err);
+      setPageError(err.message || "Failed to fetch feedbacks");
+      setFeedbacks([]);
+      setTotalCount(0);
+    } finally {
+      setFeedbacksLoading(false);
+    }
+  }
+
+  // --- Robust single feedback fetch with abort + cache ---
+  async function fetchFeedbackOne(feedbackId) {
+    if (!feedbackId) return null;
+    if (feedbackCacheRef.current[feedbackId]) return feedbackCacheRef.current[feedbackId];
+
+    const key = `feedbackOne:${feedbackId}`;
+    try { if (fetchControllersRef.current[key]) fetchControllersRef.current[key].abort(); } catch {}
+    const controller = new AbortController();
+    fetchControllersRef.current[key] = controller;
+
+    setPageError(null);
     try {
       const url = `${API_BASE}/feedback/${encodeURIComponent(feedbackId)}`;
-      const res = await doProtectedFetch(url, { method: "GET" });
-      const text = await res.text().catch(() => "");
-
-      if (res.status === 401) {
-        setModalError("Unauthorized — please log in again.");
-        setModalLoading(false);
-        return;
+      const { ok, status, json, text, aborted } = await fetchWithCreds(url, { method: "GET", headers: authHeaders(), signal: controller.signal });
+      if (aborted) return null;
+      if (!ok) {
+        const msg = (json && (json.message || json.error)) || text || `Failed to fetch feedback: ${status}`;
+        if (status === 401) setPageError("Unauthorized — please sign in");
+        throw new Error(msg);
       }
-      if (res.status === 404) {
-        setModalError("Feedback not found.");
-        setModalLoading(false);
-        return;
-      }
-      if (!res.ok) {
-        const snippet = text.slice(0, 400);
-        throw new Error(`HTTP ${res.status} ${res.statusText} — response: ${snippet}`);
-      }
-
-      const payload = safeParseJson(text, res);
-      const rawDetail = payload?.result?.feedback ?? payload?.feedback ?? payload?.result ?? payload ?? null;
-
-      const rawHistory = rawDetail?.statusHistory ?? rawDetail?.status_history ?? rawDetail?.history ?? rawDetail?.statusHist ?? [];
-      const normalizedHistory = Array.isArray(rawHistory)
-        ? rawHistory.map((h) => {
-            const comments = h.comments ?? h.message ?? h.note ?? h.status ?? "-";
-            const verifier = h.verifier ?? h.by ?? h.user ?? h.handledBy ?? null;
-            const time = h.time ?? h.insertedAt ?? h.created_at ?? h.timestamp ?? h.updatedAt ?? "-";
-            return { ...h, comments, verifier, time };
-          })
-        : [];
-
-      const docsArr = Array.isArray(rawDetail?.docs) ? rawDetail.docs : Array.isArray(rawDetail?.attachments) ? rawDetail.attachments : [];
-
-      setModalDetail({ ...rawDetail, docs: docsArr, statusHistory: normalizedHistory });
+      const payload = json ?? {};
+      const fb = payload.result?.feedback ?? payload.feedback ?? payload.result ?? payload;
+      feedbackCacheRef.current[feedbackId] = fb ?? null;
+      return fb ?? null;
     } catch (err) {
-      setModalError(err.message || "Failed to fetch feedback detail");
+      if (err && err.name === "AbortError") return null;
+      console.error("fetchFeedbackOne:", err);
+      setPageError(err.message || "Failed to fetch feedback");
+      return null;
+    } finally {
+      try { delete fetchControllersRef.current[key]; } catch {}
+    }
+  }
+
+  // --- Docs fetch with abort + cache ---
+  async function fetchFeedbackDocs(feedbackId) {
+    if (!feedbackId) return [];
+    if (docsCacheRef.current[feedbackId]) return docsCacheRef.current[feedbackId];
+    const key = `docs:${feedbackId}`;
+    try { if (fetchControllersRef.current[key]) fetchControllersRef.current[key].abort(); } catch {}
+    const controller = new AbortController();
+    fetchControllersRef.current[key] = controller;
+    setPageError(null);
+    try {
+      const url = `${API_BASE}/feedback/${encodeURIComponent(feedbackId)}`;
+      const { ok, status, json, text, aborted } = await fetchWithCreds(url, { method: "GET", headers: authHeaders(), signal: controller.signal });
+      if (aborted) return [];
+      if (!ok) {
+        if (status === 404) return [];
+        const msg = (json && (json.message || json.error)) || text || `Failed to fetch docs: ${status}`;
+        throw new Error(msg);
+      }
+      const payload = json ?? {};
+      const fb = payload.result?.feedback ?? payload.feedback ?? payload.result ?? payload;
+      let docsArr = fb?.docs ?? fb?.documents ?? fb?.files ?? fb?.attachments ?? fb?.photos ?? null;
+      if (!Array.isArray(docsArr) && typeof fb === "object") {
+        const candidates = ["docs", "documents", "files", "attachments", "photos", "images"];
+        for (const c of candidates) if (Array.isArray(fb[c])) { docsArr = fb[c]; break; }
+      }
+      if (!Array.isArray(docsArr)) docsArr = [];
+      const normalized = docsArr.map((item) => {
+        if (!item) return null;
+        if (typeof item === "string") return item;
+        if (typeof item === "object") return item.url ?? item.link ?? item.path ?? item.file ?? item.src ?? item.location ?? null;
+        return null;
+      }).filter(Boolean);
+      docsCacheRef.current[feedbackId] = normalized;
+      return normalized;
+    } catch (err) {
+      if (err && err.name === "AbortError") return [];
+      console.error("fetchFeedbackDocs:", err);
+      setPageError(err.message || "Failed to fetch docs");
+      return [];
+    } finally {
+      try { delete fetchControllersRef.current[key]; } catch {}
+    }
+  }
+
+  async function openFeedbackModalById(e, feedbackId) {
+    e?.stopPropagation?.();
+    if (!feedbackId) return;
+    if (modalOpen && modalTargetId === feedbackId && modalFeedback) return;
+    setModalTargetId(feedbackId);
+    setModalLoading(true);
+    setModalFeedback(null);
+    setModalOpen(true);
+    try {
+      const data = await fetchFeedbackOne(feedbackId);
+      if (data) setModalFeedback(data);
+    } catch (err) {
+      console.error("openFeedbackModalById:", err);
+      setModalFeedback(null);
     } finally {
       setModalLoading(false);
+      setModalTargetId(null);
+    }
+  }
+
+  async function openFeedbackDocsModalById(e, feedbackId) {
+    e?.stopPropagation?.();
+    if (!feedbackId) return;
+    if (docsOpen && docsTargetId === feedbackId && docsDocs.length > 0) return;
+    setDocsTargetId(feedbackId);
+    setDocsLoading(true);
+    setDocsDocs([]);
+    setDocsTitle("Documents");
+    setDocsOpen(true);
+    try {
+      const docsList = await fetchFeedbackDocs(feedbackId);
+      setDocsDocs(docsList || []);
+      try {
+        const maybe = await fetchFeedbackOne(feedbackId);
+        const title = (maybe && (maybe.name ?? maybe.title ?? maybe.feedbackId ?? maybe.id)) || "Documents";
+        setDocsTitle(title);
+      } catch (e) { /* ignore */ }
+    } catch (err) {
+      console.error("openFeedbackDocsModalById:", err);
+      setDocsDocs([]);
+      setDocsTitle("Documents");
+    } finally {
+      setDocsLoading(false);
+      setDocsTargetId(null);
     }
   }
 
   function closeModal() {
+    try {
+      const key = modalTargetId ? `feedbackOne:${modalTargetId}` : null;
+      if (key && fetchControllersRef.current[key]) { try { fetchControllersRef.current[key].abort(); } catch {} delete fetchControllersRef.current[key]; }
+    } catch {}
     setModalOpen(false);
-    setModalDetail(null);
-    setModalError(null);
-    setHistoryExpanded(false);
+    setModalFeedback(null);
+    setModalLoading(false);
+    setModalTargetId(null);
   }
 
-  function FeedbackCard({ f }) {
-    const tag = getFeedbackTag(f) || { label: "-", color: "bg-gray-50 text-gray-700", icon: null };
-    const attachmentUrl = (Array.isArray(f.docs) && f.docs[0]) || (Array.isArray(f.attachments) && f.attachments[0]) || null;
-
-    return (
-      <div onClick={() => openModalWithFetch(f.feedbackId)} className="w-full bg-white rounded-2xl p-4 shadow-md border mb-4 cursor-pointer hover:shadow-lg transition">
-        <div className="flex gap-4 items-start">
-          <div className="flex-1 gap-4">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <div className="flex items-center gap-3">
-                  <div className="text-lg font-semibold text-slate-800">{f.name ?? "—"}</div>
-                  {tab === "all" && tag && (
-                    <div className={`inline-flex items-center gap-2 px-3 py-1 text-xs font-medium rounded-full ${tag.color}`} onClick={(e) => e.stopPropagation()}>
-                      {tag.icon}
-                      <span>{tag.label}</span>
-                    </div>
-                  )}
-                </div>
-                <div className="text-sm text-gray-500 mt-1">{f.comments ?? "—"}</div>
-              </div>
-
-              <div className="flex flex-col items-end gap-2">
-                <div className="text-xs text-gray-400">{f.insertedAt ?? f.updatedAt ?? "-"}</div>
-              </div>
-            </div>
-
-            <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm text-gray-600">
-              <div className="flex items-center gap-2">
-                <MapPin size={14} /> <span className="truncate">{f.villageId ?? "—"} · {f.plotId ?? "—"}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <User size={14} /> <span>{f.familyId ?? "—"}</span>
-              </div>
-              {attachmentUrl ? (
-                <a onClick={(e) => e.stopPropagation()} href={attachmentUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm border hover:bg-gray-50">
-                  <FileText size={14} /> Open attachment
-                </a>
-              ) : (
-                <div className="text-sm text-gray-400 px-3 py-2">No attachment</div>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-    );
+  function closeDocsModal() {
+    try {
+      const key = docsTargetId ? `docs:${docsTargetId}` : null;
+      if (key && fetchControllersRef.current[key]) { try { fetchControllersRef.current[key].abort(); } catch {} delete fetchControllersRef.current[key]; }
+    } catch {}
+    setDocsOpen(false);
+    setDocsDocs([]);
+    setDocsTitle("Documents");
+    setDocsLoading(false);
+    setDocsTargetId(null);
   }
-
-  // --- Pagination UI helpers ---
-  const totalPages = Math.max(1, Math.ceil((totalCount || 0) / (limit || 1)));
 
   function gotoPage(p) {
+    const totalPages = Math.max(1, Math.ceil((totalCount || 0) / (limit || 1)));
     const np = Math.max(1, Math.min(totalPages, Number(p) || 1));
     if (np === page) return;
     setPage(np);
-    // optional: scroll to top of list
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function renderPageButtons() {
-    // show up to 7 buttons with truncation
+    const totalPages = Math.max(1, Math.ceil((totalCount || 0) / (limit || 1)));
     const maxButtons = 7;
     const pages = [];
     if (totalPages <= maxButtons) {
       for (let i = 1; i <= totalPages; i++) pages.push(i);
     } else {
-      // always include first, last, current +/- 1
       const left = Math.max(2, page - 1);
       const right = Math.min(totalPages - 1, page + 1);
       pages.push(1);
@@ -401,11 +481,8 @@ export default function FeedbackPage() {
       if (right < totalPages - 1) pages.push("right-ellipsis");
       pages.push(totalPages);
     }
-
     return pages.map((p, idx) => {
-      if (p === "left-ellipsis" || p === "right-ellipsis") {
-        return <span key={`e-${idx}`} className="px-3 py-1">…</span>;
-      }
+      if (p === "left-ellipsis" || p === "right-ellipsis") return <span key={`e-${idx}`} className="px-3 py-1">…</span>;
       return (
         <button
           key={p}
@@ -418,256 +495,530 @@ export default function FeedbackPage() {
     });
   }
 
-  // Modal component (keeps earlier modal UI)
-  function Modal() {
-    const history = modalDetail?.statusHistory ?? [];
-    const toShow = historyExpanded ? history : [];
+  // ----------------- LOGS (line chart) with debounce + cache + abort -----------------
+  // Chart visible only when NO filters active
+  const showLogsChart = Boolean(villageId) && !nameFilter && !feedbackTypeFilter && !fromDateFilter && !toDateFilter;
+
+  useEffect(() => {
+    // Debounce logs fetch to avoid spam when filters change quickly
+    const key = `${villageId || ""}|${nameFilter || ""}|${feedbackTypeFilter || ""}|${fromDateFilter || ""}|${toDateFilter || ""}`;
+    // If chart shouldn't be shown, clear and don't fetch
+    if (!showLogsChart) {
+      // cancel any running logs fetch
+      try { if (logsControllerRef.current) { logsControllerRef.current.abort(); logsControllerRef.current = null; } } catch {}
+      setLogsItems([]);
+      setLogsError(null);
+      setLogsLoading(false);
+      return;
+    }
+
+    let mounted = true;
+    const tid = setTimeout(async () => {
+      try {
+        // cache hit?
+        if (logsCacheRef.current[key]) {
+          if (!mounted) return;
+          setLogsItems(logsCacheRef.current[key]);
+          setLogsError(null);
+          setLogsLoading(false);
+          return;
+        }
+
+        // abort previous
+        try { if (logsControllerRef.current) { logsControllerRef.current.abort(); } } catch {}
+        const controller = new AbortController();
+        logsControllerRef.current = controller;
+        setLogsLoading(true);
+        setLogsError(null);
+
+        const params = new URLSearchParams();
+        params.append("type", "Feedback");
+        if (villageId) params.append("villageId", villageId);
+        params.append("page", "1");
+        params.append("limit", String(Math.max(100, limit)));
+        const url = `${API_BASE}/logs?${params.toString()}`;
+        const { ok, status, json, text, aborted } = await fetchWithCreds(url, { method: "GET", headers: authHeaders(), signal: controller.signal });
+
+        if (!mounted) return;
+        if (aborted) return;
+
+        if (!ok) {
+          if (status === 404) {
+            setLogsItems([]);
+            setLogsError(null);
+            setLogsLoading(false);
+            return;
+          }
+          throw new Error((json && (json.message || json.error)) || text || `Failed to fetch logs: ${status}`);
+        }
+
+        const payload = json ?? {};
+        const result = payload.result ?? payload ?? {};
+        const items = result.items ?? (Array.isArray(result) ? result : []);
+        const finalItems = Array.isArray(items) ? items : [];
+        logsCacheRef.current[key] = finalItems;
+        setLogsItems(finalItems);
+        setLogsError(null);
+      } catch (err) {
+        if (err && err.name === "AbortError") return;
+        console.error("fetch logs error:", err);
+        setLogsError(err.message || "Failed to load logs");
+        setLogsItems([]);
+      } finally {
+        if (mounted) setLogsLoading(false);
+      }
+    }, 420); // 420ms debounce
+
+    return () => {
+      mounted = false;
+      clearTimeout(tid);
+      // Abort controller left to next run or explicit cancel above
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [villageId, nameFilter, feedbackTypeFilter, fromDateFilter, toDateFilter, limit]);
+
+  // ---------------- data loading effects ----------------
+  // On mount / village change -> load list (loadAll ensures we don't double call)
+  useEffect(() => { loadAll(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [villageId]);
+
+  // fetch list when page/limit/filters change
+  useEffect(() => {
+    // call fetchFeedbacks whenever page/limit/filters change
+    // note: loadAll handles the village-change initial fetch path
+    fetchFeedbacks(page, limit);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, limit, nameFilter, feedbackTypeFilter, fromDateFilter, toDateFilter]);
+
+  // cleanup on unmount: abort controllers
+  useEffect(() => {
+    return () => {
+      try {
+        if (logsControllerRef.current) { logsControllerRef.current.abort(); logsControllerRef.current = null; }
+      } catch {}
+      const keys = Object.keys(fetchControllersRef.current);
+      for (const k of keys) {
+        try { fetchControllersRef.current[k]?.abort?.(); } catch {}
+      }
+      fetchControllersRef.current = {};
+    };
+  }, []);
+
+  // ----------------- Small chart render helper -----------------
+  function LogsLineChart({ items }) {
+    if (!items || items.length === 0) {
+      return <div className="text-sm text-gray-500">No activity logs available to plot.</div>;
+    }
+
+    function normalizeAction(a) {
+      if (!a) return "other";
+      const lower = String(a).toLowerCase();
+      if (lower.includes("delete")) return "Delete";
+      if (lower.includes("edited") || lower.includes("edit")) return "Edited";
+      if (lower.includes("insert") || lower.includes("create") || lower.includes("added")) return "Insert";
+      return "other";
+    }
+
+    const map = {};
+    items.forEach((it) => {
+      const timeStr = it.updateTime || it.update_time || it.time || it.createdAt || it.insertedAt || "";
+      let monthKey = null;
+      if (typeof timeStr === "string" && timeStr.length >= 7) {
+        const m = timeStr.match(/^(\d{4})[-\/](\d{2})/);
+        if (m) monthKey = `${m[1]}-${m[2]}`;
+        else {
+          const parsed = new Date(timeStr);
+          if (!Number.isNaN(parsed.getTime())) {
+            const y = parsed.getFullYear();
+            const mm = String(parsed.getMonth() + 1).padStart(2, "0");
+            monthKey = `${y}-${mm}`;
+          }
+        }
+      } else if (timeStr instanceof Date) {
+        const y = timeStr.getFullYear();
+        const mm = String(timeStr.getMonth() + 1).padStart(2, "0");
+        monthKey = `${y}-${mm}`;
+      }
+      if (!monthKey) monthKey = "unknown";
+      if (!map[monthKey]) map[monthKey] = { Insert: 0, Edited: 0, Delete: 0 };
+      const act = normalizeAction(it.action ?? it.event ?? it.type ?? it.activity);
+      if (act === "Insert" || act === "Edited" || act === "Delete") {
+        map[monthKey][act] = (map[monthKey][act] || 0) + 1;
+      }
+    });
+
+    const months = Object.keys(map).filter(k => k !== "unknown").sort((a, b) => a.localeCompare(b));
+    if (months.length === 0) months.push("unknown");
+
+    const insertSeries = months.map(m => map[m]?.Insert ?? 0);
+    const editedSeries = months.map(m => map[m]?.Edited ?? 0);
+    const deleteSeries = months.map(m => map[m]?.Delete ?? 0);
+
+    const maxVal = Math.max(...insertSeries, ...editedSeries, ...deleteSeries, 1);
+
+    const width = 820;
+    const height = 260;
+    const paddingLeft = 72;
+    const paddingRight = 24;
+    const paddingTop = 24;
+    const paddingBottom = 48;
+    const plotWidth = width - paddingLeft - paddingRight;
+    const plotHeight = height - paddingTop - paddingBottom;
+
+    const xForIndex = (i) => {
+      if (months.length === 1) return paddingLeft + plotWidth / 2;
+      return paddingLeft + (i / (months.length - 1)) * plotWidth;
+    };
+    const yForValue = (v) => {
+      const frac = v / maxVal;
+      return paddingTop + (1 - frac) * plotHeight;
+    };
+
+    const ticks = 4;
+    const tickVals = Array.from({ length: ticks + 1 }).map((_, i) => Math.round((i / ticks) * maxVal));
+    const colors = { Insert: "#10b981", Edited: "#f59e0b", Delete: "#ef4444" };
 
     return (
-      <AnimatePresence>
-        {modalOpen && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={closeModal}>
-            <motion.div key={modalDetail?.feedbackId ?? "feedback-modal"} initial={{ y: 20, scale: 0.98 }} animate={{ y: 0, scale: 1 }} exit={{ y: 10, scale: 0.98 }} transition={{ type: "spring", stiffness: 320, damping: 28 }} className="max-w-4xl w-full bg-white rounded-2xl shadow-2xl border overflow-hidden" onClick={(e) => e.stopPropagation()}>
-              <div className="flex items-center gap-4 p-4 border-b">
-                <div className="w-1 h-12 bg-indigo-600 rounded" />
-                <div className="flex items-center gap-4 flex-1">
-                  <div className="w-20 h-20 rounded-md overflow-hidden bg-gray-100 flex-shrink-0">
-                    <img src={maybeThumbnail(modalDetail?.docs) || "/placeholder-attachment.png"} alt="thumb" className="w-full h-full object-cover" />
-                  </div>
-                  <div>
-                    <div className="text-xs text-gray-400">Feedback ID</div>
-                    <div className="font-semibold text-xl">{modalDetail?.feedbackId ?? "—"}</div>
-                    <div className="text-sm text-gray-600 mt-1">{modalDetail?.name ?? "—"} · {modalDetail?.familyId ?? "—"}</div>
-                    <div className="text-xs text-gray-500 mt-1">{modalDetail?.insertedAt ?? modalDetail?.updatedAt ?? "-"}</div>
-                  </div>
-                </div>
+      <div className="bg-white rounded-lg border p-3 shadow-sm w-full">
+        <div className="flex items-start justify-between mb-2">
+          <div>
+            <div className="text-sm text-gray-600">Activity over time (logs)</div>
+            <div className="text-lg font-semibold">Insert / Edited / Delete — Feedback</div>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="text-sm text-gray-500">Showing logs (recent)</div>
+            <div className="text-xs text-gray-400">• Chart hidden when filters active</div>
+          </div>
+        </div>
 
-                <div className="flex items-center gap-2">
-                  <button onClick={() => window.print()} className="inline-flex items-center gap-2 px-3 py-2 rounded-md border bg-white hover:bg-gray-50">
-                    <Printer size={14} /> Print
-                  </button>
-                  <button onClick={closeModal} className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-indigo-600 text-white hover:bg-indigo-700">
-                    <X size={16} />
-                  </button>
-                </div>
-              </div>
+        <div className="overflow-auto">
+          <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label="Feedback activity chart">
+            <defs>
+              <filter id="softShadow2" x="-50%" y="-50%" width="200%" height="200%">
+                <feDropShadow dx="0" dy="4" stdDeviation="6" floodColor="#0b1220" floodOpacity="0.06" />
+              </filter>
+            </defs>
 
-              <div className="p-6 grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="md:col-span-1">
-                  <div className="text-sm font-medium text-gray-700 mb-3">Status timeline</div>
-                  {modalLoading ? <div className="text-sm text-gray-500">Loading…</div> : modalError ? <div className="text-sm text-red-600">{modalError}</div> : !history || history.length === 0 ? <div className="text-sm text-gray-500">No history.</div> : <>
-                    {!historyExpanded && (
-                      <div className="border rounded-md p-3 bg-white text-sm text-gray-600">
-                        <div className="mb-2">Status history is hidden.</div>
-                        <button onClick={(e) => { e.stopPropagation(); setHistoryExpanded(true); }} className="inline-flex items-center gap-2 text-indigo-600 text-sm underline">Show status history ({history.length})</button>
-                      </div>
-                    )}
-                    {historyExpanded && (
-                      <div className="relative pl-4">
-                        <div className="absolute left-2 top-0 bottom-0 w-0.5 bg-gray-200" />
-                        <div className="space-y-6">
-                          {toShow.slice().reverse().map((h, idx) => (
-                            <div key={idx} className="relative">
-                              <div className="absolute -left-0.5 top-1 w-3 h-3 rounded-full bg-white border border-gray-300 flex items-center justify-center">
-                                <div className={`w-2 h-2 rounded-full ${idx === 0 ? "bg-indigo-600" : "bg-gray-300"}`} />
-                              </div>
-                              <div className="ml-6">
-                                <div className="text-sm font-medium text-slate-800">{h.comments ?? "—"}</div>
-                                <div className="text-xs text-gray-500 mt-1">{h.verifier ?? "System"} · {h.time ?? "-"}</div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                        <div className="mt-4"><button onClick={(e) => { e.stopPropagation(); setHistoryExpanded(false); }} className="text-sm text-indigo-600 underline">Hide status history</button></div>
-                      </div>
-                    )}
-                  </>}
-                </div>
+            {tickVals.map((tv, i) => {
+              const y = yForValue(tv);
+              return (
+                <g key={`tick_${i}`}>
+                  <line x1={paddingLeft} x2={width - paddingRight} y1={y} y2={y} stroke="#eef2ff" strokeWidth="1" />
+                  <text x={paddingLeft - 12} y={y + 4} fontSize="11" fill="#475569" textAnchor="end" style={{ fontFamily: "Inter, system-ui" }}>{tv}</text>
+                </g>
+              );
+            })}
 
-                <div className="md:col-span-2">
-                  <div className="grid grid-cols-1 gap-4">
-                    <div>
-                      <div className="text-xs text-gray-500">Comments</div>
-                      <div className="mt-2 text-sm text-gray-800 whitespace-pre-wrap">{modalLoading ? "Loading…" : modalDetail?.comments ?? "-"}</div>
-                    </div>
+            {months.map((m, i) => {
+              const x = xForIndex(i);
+              return (
+                <g key={`x_${m}`}>
+                  <text x={x} y={height - 18} fontSize="11" fill="#475569" textAnchor="middle" style={{ fontFamily: "Inter, system-ui" }}>{m}</text>
+                </g>
+              );
+            })}
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div>
-                        <div className="text-xs text-gray-500">Type</div>
-                        <div className="font-medium">{modalDetail?.feedbackType ?? modalDetail?.type ?? "-"}</div>
-                        <div className="text-xs text-gray-500 mt-3">Inserted</div>
-                        <div className="text-sm">{modalDetail?.insertedAt ?? modalDetail?.updatedAt ?? "-"}</div>
-                      </div>
+            {["Insert", "Edited", "Delete"].map((key) => {
+              const series = key === "Insert" ? insertSeries : key === "Edited" ? editedSeries : deleteSeries;
+              const path = series.map((val, idx) => {
+                const x = xForIndex(idx);
+                const y = yForValue(val);
+                return `${idx === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+              }).join(" ");
+              const lastX = xForIndex(series.length - 1);
+              const firstX = xForIndex(0);
+              const baseY = yForValue(0);
+              const areaPath = `${path} L ${lastX.toFixed(2)} ${baseY.toFixed(2)} L ${firstX.toFixed(2)} ${baseY.toFixed(2)} Z`;
+              return <path key={`area_${key}`} d={areaPath} fill={colors[key]} opacity="0.06" />;
+            })}
 
-                      <div>
-                        <div className="text-xs text-gray-500">Contact</div>
-                        <div className="font-medium">{modalDetail?.mobile ?? modalDetail?.email ?? "-"}</div>
-                        <div className="text-xs text-gray-500 mt-3">Family / Plot</div>
-                        <div className="text-sm">{modalDetail?.familyId ?? "-"} · {modalDetail?.plotId ?? "-"}</div>
-                      </div>
-                    </div>
+            {["Insert", "Edited", "Delete"].map((key) => {
+              const series = key === "Insert" ? insertSeries : key === "Edited" ? editedSeries : deleteSeries;
+              const d = series.map((val, idx) => {
+                const x = xForIndex(idx);
+                const y = yForValue(val);
+                return `${idx === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+              }).join(" ");
+              return (
+                <g key={`line_${key}`}>
+                  <path d={d} fill="none" stroke={colors[key]} strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" style={{ filter: "url(#softShadow2)" }} />
+                  {series.map((val, idx) => {
+                    const x = xForIndex(idx);
+                    const y = yForValue(val);
+                    return <circle key={`pt_${key}_${idx}`} cx={x} cy={y} r={3.6} fill="#fff" stroke={colors[key]} strokeWidth={2} />;
+                  })}
+                </g>
+              );
+            })}
 
-                    {Array.isArray(modalDetail?.docs) && modalDetail.docs.length > 0 && (
-                      <div>
-                        <div className="text-xs text-gray-500">Attachments</div>
-                        <div className="mt-2 flex gap-2 flex-wrap">
-                          {modalDetail.docs.map((d, i) => (
-                            <a key={i} href={d} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 px-3 py-2 border rounded-md text-sm hover:bg-gray-50">
-                              <FileText size={14} /> View {i + 1}
-                            </a>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+            <g transform={`translate(${paddingLeft}, ${paddingTop - 6})`}>
+              {["Insert", "Edited", "Delete"].map((k, i) => (
+                <g key={`leg_${k}`} transform={`translate(${i * 110}, 0)`}>
+                  <rect x={0} y={-12} width={14} height={8} rx={2} fill={colors[k]} />
+                  <text x={20} y={-4} fontSize="12" fill="#0f172a" style={{ fontFamily: "Inter, system-ui" }}>{k}</text>
+                </g>
+              ))}
+            </g>
+          </svg>
+        </div>
+      </div>
     );
   }
+
+  // ----------------- Rendering -----------------
+  if (loading) return (
+    <div className="min-h-screen bg-[#f8f0dc] font-sans">
+      <MainNavbar showVillageInNavbar={true} />
+      <div className="max-w-4xl mx-auto px-4 py-20 text-center">Loading …</div>
+    </div>
+  );
+
+  if (!villageId) return (
+    <div className="min-h-screen bg-[#f8f0dc] font-sans">
+      <MainNavbar showVillageInNavbar={true} />
+      <div className="max-w-4xl mx-auto px-4 py-20 text-center">
+        <div className="rounded-lg shadow p-6">
+          <div className="text-lg font-semibold mb-2">No village selected</div>
+          <div className="text-sm text-slate-600">Please select a village first.</div>
+          <div className="mt-4">
+            <button onClick={() => navigate(-1)} className="px-4 py-2 bg-blue-600 text-white rounded">Go back</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-[#f8f0dc] font-sans">
       <MainNavbar showVillageInNavbar={true} />
-
-      <main className="max-w-6xl mx-auto px-6 py-8">
-        <div className="flex items-center justify-between mb-6 ">
-          <div className="flex items-center gap-4">
-            <button onClick={() => navigate(-1)} className="inline-flex items-center gap-2 px-3 py-2 bg-white border rounded-lg shadow-sm hover:bg-gray-50">
-              <ArrowLeft size={16} /> Back
-            </button>
-            
-          </div>
+      <div className="max-w-6xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
+        <div className="flex items-center justify-between mb-4">
           <div>
-              <h1 className="text-2xl font-bold">Feedbacks</h1>
-            </div>
+            <button onClick={() => navigate(-1)} className="px-3 py-2 border rounded bg-white flex items-center gap-2 text-sm text-slate-700"><ArrowLeft size={16} /> Back</button>
+          </div>
+
+          <div className="flex items-center flex-col">
+            <h1 className="text-2xl font-semibold text-slate-800">Feedbacks</h1>
+          </div>
+
+          <div style={{ width: 120 }} />
+        </div>
+
+        {/* Filters */}
+        <div className="bg-yellow-100 border rounded-xl p-4 shadow-sm flex flex-wrap gap-3 items-end mb-4">
+          <div className="flex flex-col">
+            <label className="text-xs text-slate-600">Feedback type</label>
+            <select value={feedbackTypeFilter} onChange={(e) => { setFeedbackTypeFilter(e.target.value); setPage(1); }} className="mt-1 px-3 py-2 border rounded-md shadow-sm">
+              <option value="">ALL</option>
+              <option value="complaint">Complaint</option>
+              <option value="suggestion">Suggestion</option>
+            </select>
+          </div>
+
+          <div className="flex flex-col">
+            <label className="text-xs text-slate-600">From date</label>
+            <input type="date" value={fromDateFilter} onChange={(e) => { setFromDateFilter(e.target.value); setPage(1); }} className="mt-1 px-3 py-2 border rounded-md shadow-sm" />
+          </div>
+
+          <div className="flex flex-col">
+            <label className="text-xs text-slate-600">To date</label>
+            <input type="date" value={toDateFilter} onChange={(e) => { setToDateFilter(e.target.value); setPage(1); }} className="mt-1 px-3 py-2 border rounded-md shadow-sm" />
+          </div>
+
+          <div className="relative">
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filter name/notes/inserted by..." className="pl-9 pr-3 py-2 border rounded w-64" />
+            <div className="absolute left-3 top-2.5 text-slate-400"><Search size={16} /></div>
+          </div>
+
+          <div className="ml-auto flex items-center gap-2">
+            <button onClick={() => { setPage(1); fetchFeedbacks(1, limit); }} className="px-4 py-2 bg-gradient-to-br from-sky-600 to-indigo-600 text-white rounded-md">Apply</button>
+            <button onClick={() => { setSearch(""); setNameFilter(""); setFeedbackTypeFilter(""); setFromDateFilter(""); setToDateFilter(""); setPage(1); fetchFeedbacks(1, limit); }} className="px-4 py-2 bg-white border rounded-md">Clear</button>
+          </div>
+        </div>
+
+        {/* Pagination top */}
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-sm text-slate-600">
+            <span className="text-sm px-3">Per page :</span>
+            <select value={limit} onChange={async (e) => { const newLimit = Number(e.target.value) || 15; setLimit(newLimit); setPage(1); await fetchFeedbacks(1, newLimit); }} className="border rounded px-2 py-1">
+              <option value={5}>5</option>
+              <option value={15}>15</option>
+              <option value={30}>30</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+            </select>
+          </div>
 
           <div className="flex items-center gap-2">
-            <button onClick={() => setTab("all")} className={`px-4 py-2 rounded-md ${tab === "all" ? "bg-indigo-600 text-white shadow" : "bg-white hover:bg-gray-50"}`}>All</button>
-            <button onClick={() => setTab("suggestion")} className={`px-4 py-2 rounded-md ${tab === "suggestion" ? "bg-indigo-600 text-white shadow" : "bg-white hover:bg-gray-50"}`}>Suggestions</button>
-            <button onClick={() => setTab("complaint")} className={`px-4 py-2 rounded-md ${tab === "complaint" ? "bg-indigo-600 text-white shadow" : "bg-white hover:bg-gray-50"}`}>Complaints</button>
+            <button onClick={() => gotoPage(page - 1)} disabled={page <= 1} className={`px-3 py-1 rounded ${page <= 1 ? "bg-gray-100 text-gray-400" : "bg-white border hover:bg-gray-50"}`}>Prev</button>
+            <div className="flex items-center gap-1">{renderPageButtons()}</div>
+            <button onClick={() => gotoPage(page + 1)} disabled={page >= Math.max(1, Math.ceil((totalCount || 0) / (limit || 1)))} className={`px-3 py-1 rounded ${page >= Math.max(1, Math.ceil((totalCount || 0) / (limit || 1))) ? "bg-gray-100 text-gray-400" : "bg-white border hover:bg-gray-50"}`}>Next</button>
           </div>
         </div>
 
-        <div className="w-full bg-white rounded-2xl p-4 shadow-sm border mb-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="text-xs text-gray-500">Selected village</div>
-              <div className="text-lg font-semibold">{villageId ?? "—"}</div>
-            </div>
+        {pageError && <div className="mb-3 text-sm text-red-600">Error: {pageError}</div>}
 
-            <div className="flex items-center gap-6">
-              <div className="text-sm text-gray-600">
-                <div className="text-xs text-gray-400">All</div>
-                <div className="font-semibold">{allList.length}</div>
-              </div>
-              <div className="text-sm text-gray-600">
-                <div className="text-xs text-gray-400">Suggestions</div>
-                <div className="font-semibold">{suggestionList.length}</div>
-              </div>
-              <div className="text-sm text-gray-600">
-                <div className="text-xs text-gray-400">Complaints</div>
-                <div className="font-semibold">{complaintList.length}</div>
-              </div>
-            </div>
-          </div>
+        {/* Logs chart */}
+        <div className="mb-4">
+          {showLogsChart ? (
+            logsLoading ? (
+              <div className="text-sm text-gray-600 py-2">Loading activity chart…</div>
+            ) : logsError ? (
+              <div className="text-sm text-red-600 py-2">{logsError}</div>
+            ) : (
+              <LogsLineChart items={logsItems} />
+            )
+          ) : (
+            <div className="text-sm text-gray-400 italic">Activity chart (Feedback) hidden while filters are active or village is not selected.</div>
+          )}
         </div>
 
-        <section>
-          {error && <div className="mb-6 p-4 bg-red-50 border rounded-lg text-red-700">{error}</div>}
+        {/* List */}
+        {feedbacksLoading ? (
+          <div className="text-sm text-slate-500">Loading feedbacks…</div>
+        ) : (feedbacks || []).length === 0 ? (
+          <div className="text-sm text-slate-500">No feedbacks found.</div>
+        ) : (
+          <div className="space-y-4">
+            {feedbacks.map((u, idx) => {
+              const key = u.feedbackId ?? u._id ?? u.id ?? `fb-${idx}`;
+              const rawNotes = (u.comments ?? u.notes ?? u.description ?? u.message ?? "");
+              const shortNotes = rawNotes.replace(/\s+/g, " ").slice(0, 400);
+              const isExpanded = expandedNotesFor === key;
+              const detailsLoadingForThis = modalLoading && modalTargetId === key;
+              const docsLoadingForThis = docsLoading && docsTargetId === key;
 
-          {tab === "all" && (
-            <div>
-              <div className="mb-4 flex items-center justify-between">
-                <div className="text-sm font-medium text-gray-700">All feedbacks</div>
-                <div className="text-sm text-gray-500">Total: {totalCount}</div>
-              </div>
+              return (
+                <motion.div
+                  key={key}
+                  ref={(el) => { if (el) feedbackRefs.current[key] = el; }}
+                  tabIndex={0}
+                  className={`relative overflow-hidden rounded-xl p-4 bg-blue-100 border border-slate-200 hover:shadow-lg transition transform hover:-translate-y-0.5 ${u.deleted ? "opacity-60" : ""}`}
+                >
+                  <div className="flex gap-4">
+                    <div className="flex-1">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-3">
+                            <div className="text-sm font-semibold text-slate-800 truncate">{u.name ?? u.title ?? `Feedback ${idx + 1}`}</div>
+                            <div className="flex-shrink-0"><FeedbackTypeBadge type={u.feedbackType ?? u.type} /></div>
+                          </div>
 
-              <div className="mb-4 flex items-center gap-3">
-                <div className="flex items-center gap-3 border rounded-lg px-3 py-2  bg-white flex-1">
-                  <Search size={18} />
-                  <input value={searchAll} onChange={(e) => setSearchAll(e.target.value)} placeholder="Search villageId / feedbackType / familyId / feedbackId / comments" className="bg-transparent outline-none text-sm w-full" />
-                  <button onClick={() => setSearchAll("")} className="text-sm px-3 py-1 rounded-md bg-gray-50">Clear</button>
-                </div>
+                          <div className="mt-3 text-sm text-slate-700 leading-relaxed">
+                            {isExpanded ? rawNotes : `${shortNotes}${rawNotes.length > 400 ? "…" : ""}`}
+                          </div>
 
-                <div className="flex items-center gap-2">
-                  <div className="text-sm text-gray-600">Page size</div>
-                  <select value={limit} onChange={(e) => { setLimit(Number(e.target.value)); setPage(1); }} className="px-2 py-1 border rounded">
-                    {[5, 10, 15, 25, 50].map(n => <option key={n} value={n}>{n}</option>)}
-                  </select>
-                </div>
-              </div>
+                          <div className="mt-2 text-xs text-slate-600">Inserted by <span className="font-medium">{u.insertedBy ?? "—"}</span><span className="mx-2">•</span><span>{fmtDate(u.insertedAt)}</span></div>
+                        </div>
 
-              {/* Pagination controls */}
-              <div className=" flex items-center justify-between gap-4 py-5">
-                <div className="text-sm text-gray-600">Showing {(Math.min(totalCount, (page - 1) * limit + 1))}–{Math.min(totalCount, page * limit)} of {totalCount}</div>
-                <div className="flex items-center gap-2">
-                  <button onClick={() => gotoPage(page - 1)} disabled={page <= 1} className={`px-3 py-1 rounded ${page <= 1 ? "bg-gray-100 text-gray-400" : "bg-white border hover:bg-gray-50"}`}>Prev</button>
-                  <div className="flex items-center gap-1">{renderPageButtons()}</div>
-                  <button onClick={() => gotoPage(page + 1)} disabled={page >= totalPages} className={`px-3 py-1 rounded ${page >= totalPages ? "bg-gray-100 text-gray-400" : "bg-white border hover:bg-gray-50"}`}>Next</button>
-                </div>
-              </div>
+                        <div className="flex flex-col items-end gap-2">
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={(e) => openFeedbackModalById(e, u.feedbackId ?? u._id ?? u.id)}
+                              disabled={detailsLoadingForThis}
+                              className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm ${detailsLoadingForThis ? "bg-gray-200 text-slate-500 cursor-not-allowed" : "bg-gradient-to-br from-sky-600 to-indigo-600 text-white hover:scale-[1.01]"}`}
+                            >
+                              {detailsLoadingForThis ? (
+                                <>
+                                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" strokeOpacity="0.25"></circle><path d="M22 12a10 10 0 0 1-10 10" stroke="currentColor" strokeWidth="4" strokeLinecap="round"></path></svg>
+                                  <span>Loading</span>
+                                </>
+                              ) : (
+                                <><span>Details</span></>
+                              )}
+                            </button>
 
-              <div>
-                {loading ? <div className="text-sm text-gray-500">Loading…</div> : filteredAll.length === 0 ? <div className="text-sm text-gray-500">No items.</div> : (
-                  <div>
-                    {filteredAll.map((f) => <FeedbackCard key={f.feedbackId ?? `${f.villageId}_${f.insertedAt}`} f={f} />)}
+                            <button
+                              onClick={(e) => openFeedbackDocsModalById(e, u.feedbackId ?? u._id ?? u.id)}
+                              disabled={docsLoadingForThis}
+                              className={`inline-flex items-center gap-2 px-3 py-1.5 ${docsLoadingForThis ? "bg-gray-50 text-slate-400 cursor-not-allowed border" : "bg-white border rounded-lg text-sm hover:shadow-sm"}`}
+                            >
+                              {docsLoadingForThis ? <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" strokeOpacity="0.25"></circle><path d="M22 12a10 10 0 0 1-10 10" stroke="currentColor" strokeWidth="4" strokeLinecap="round"></path></svg> : <ImageIcon size={16} />}
+                              <span>Docs</span>
+                            </button>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            {rawNotes.length > 400 && (
+                              <button onClick={() => setExpandedNotesFor(isExpanded ? null : key)} className="text-sm px-3 py-1 rounded bg-white border">{isExpanded ? "Show less" : "Show more"}</button>
+                            )}
+                            <div className="text-xs text-slate-500">{u.deleted ? "Deleted" : ""}</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
+                </motion.div>
+              );
+            })}
+          </div>
+        )}
+
+        <div className="h-24" />
+      </div>
+
+      {/* Details modal */}
+      {modalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black opacity-40" onClick={closeModal} style={{ backdropFilter: "blur(6px)" }} />
+          <div role="dialog" aria-modal="true" className="relative z-10 w-full max-w-2xl mx-4">
+            <div className="bg-[#f8f0dc] rounded-lg shadow-lg overflow-hidden">
+              <div className="flex items-center justify-between p-4 border-b">
+                <div>
+                  <div className="text-lg font-semibold">Feedback details</div>
+                  <div className="text-xs text-slate-500">{modalLoading ? "Loading…" : (modalFeedback?.name ?? modalFeedback?.title ?? modalFeedback?.feedbackId ?? "Feedback")}</div>
+                </div>
+                <button onClick={closeModal} aria-label="Close" className="px-3 py-1 rounded bg-gray-100">Close</button>
+              </div>
+
+              <div className="p-4 max-h-[75vh] overflow-y-auto space-y-4">
+                {modalLoading ? (
+                  <div className="text-sm text-slate-500">Loading…</div>
+                ) : modalFeedback ? (
+                  <>
+                    <div className="text-sm text-slate-700 leading-relaxed">{modalFeedback.comments ?? modalFeedback.notes ?? modalFeedback.description ?? "—"}</div>
+
+                    <div className="grid grid-cols-2 gap-3 text-xs text-slate-600 mt-3">
+                      <div>Feedback Type: <span className="font-medium">{modalFeedback.feedbackType ?? modalFeedback.type ?? "—"}</span></div>
+                      <div>Type: <span className="font-medium">{modalFeedback.type ?? "—"}</span></div>
+                      <div>Family ID: <span className="font-medium">{modalFeedback.familyId ?? "—"}</span></div>
+                      <div>Email: <span className="font-medium">{modalFeedback.email ?? "—"}</span></div>
+                      <div>Mobile: <span className="font-medium">{modalFeedback.mobile ?? "—"}</span></div>
+                      <div>Inserted at: <span className="font-medium">{fmtDate(modalFeedback.insertedAt)}</span></div>
+                      <div>Updated at: <span className="font-medium">{fmtDate(modalFeedback.updatedAt)}</span></div>
+                    </div>
+
+                    {Array.isArray(modalFeedback.statusHistory) && modalFeedback.statusHistory.length > 0 ? (
+                      <div className="mt-4 space-y-2">
+                        <div className="font-medium">Status history</div>
+                        {modalFeedback.statusHistory.map((h, i) => (
+                          <div key={i} className="border flex justify-between rounded-lg p-3 bg-indigo-100">
+                            <div>
+                              <div className="font-medium">{h.comments ?? "—"}</div>
+                              <div className="text-xs text-slate-500 mt-1">By {h.verifier ?? "—"} • {fmtDate(h.time)}</div>
+                            </div>
+                            <div className="px-3 py-1"><StatusBadge status={h.status} /></div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </>
+                ) : (
+                  <div className="text-sm text-slate-500">No details available.</div>
                 )}
               </div>
-
-              
             </div>
-          )}
+          </div>
+        </div>
+      )}
 
-          {tab === "suggestion" && (
-            <div>
-              <div className="mb-4 flex items-center justify-between">
-                <div className="text-sm font-medium text-gray-700">Suggestions</div>
-                <div className="text-sm text-gray-500">Total: {suggestionList.length}</div>
-              </div>
-
-              <div className="mb-4">
-                <div className="flex items-center gap-3 border rounded-lg px-3 py-2 bg-white">
-                  <Search size={18} />
-                  <input value={searchSuggestion} onChange={(e) => setSearchSuggestion(e.target.value)} placeholder="Search by familyId / feedbackId / comments" className="bg-transparent outline-none text-sm w-full" />
-                  <button onClick={() => setSearchSuggestion("")} className="text-sm px-3 py-1 rounded-md bg-gray-50">Clear</button>
-                </div>
-              </div>
-
-              <div>
-                {loading ? <div className="text-sm text-gray-500">Loading…</div> : filteredSuggestion.length === 0 ? <div className="text-sm text-gray-500">No items.</div> : <div>{filteredSuggestion.map((f) => <FeedbackCard key={f.feedbackId ?? `${f.villageId}_${f.insertedAt}`} f={f} />)}</div>}
-              </div>
-            </div>
-          )}
-
-          {tab === "complaint" && (
-            <div>
-              <div className="mb-4 flex items-center justify-between">
-                <div className="text-sm font-medium text-gray-700">Complaints</div>
-                <div className="text-sm text-gray-500">Total: {complaintList.length}</div>
-              </div>
-
-              <div className="mb-4">
-                <div className="flex items-center gap-3 border rounded-lg px-3 py-2 bg-white">
-                  <Search size={18} />
-                  <input value={searchComplaint} onChange={(e) => setSearchComplaint(e.target.value)} placeholder="Search by familyId / feedbackId / comments" className="bg-transparent outline-none text-sm w-full" />
-                  <button onClick={() => setSearchComplaint("")} className="text-sm px-3 py-1 rounded-md bg-gray-50">Clear</button>
-                </div>
-              </div>
-
-              <div>
-                {loading ? <div className="text-sm text-gray-500">Loading…</div> : filteredComplaint.length === 0 ? <div className="text-sm text-gray-500">No items.</div> : <div>{filteredComplaint.map((f) => <FeedbackCard key={f.feedbackId ?? `${f.villageId}_${f.insertedAt}`} f={f} />)}</div>}
-              </div>
-            </div>
-          )}
-        </section>
-
-        <Modal />
-      </main>
+      {/* Document modal */}
+      <DocumentModal
+        open={docsOpen}
+        onClose={closeDocsModal}
+        docs={docsDocs}
+        title={docsTitle}
+        loading={docsLoading}
+      />
     </div>
   );
 }
