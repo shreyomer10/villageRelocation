@@ -2,6 +2,7 @@
 import datetime as dt
 from flask import Blueprint,request, jsonify
 from pydantic import ValidationError
+from back.utils.verificationPipeline import run_verification_pipeline
 from models.village import Logs
 from models.complaints import StatusHistory
 from utils.tokenAuth import auth_required
@@ -76,6 +77,7 @@ def insert_verification(decoded_data, plotId):
             return make_response(True, "Building type not found", status=404)
 
         stages = [s for s in building.get("stages", []) if not s.get("deleted", False)]
+        stage_names = [s["name"].lower() for s in stages]
         stage_ids = [s["stageId"] for s in stages]
 
         current_stage = verification_obj.currentStage
@@ -100,6 +102,11 @@ def insert_verification(decoded_data, plotId):
             return make_response(True, f"Cannot verify {current_stage}. Missing previous: {', '.join(missing_names)}", status=400)
 
         # ✅ Passed validation → Create verification record
+        pipeline_result = run_verification_pipeline(
+            verification_doc.model_dump(),
+            target,
+            stage_names
+        )
         new_verification_id = get_next_verification_id(db, villageId, typeId)
         now = nowIST()
         history = statusHistory(
@@ -122,8 +129,15 @@ def insert_verification(decoded_data, plotId):
             insertedBy=userId,
             insertedAt=str(now),
             statusHistory=[history.model_dump()],  # ✅ Important fix
+            geoFlag=pipeline_result["geoFlag"],
+            timeFlag=pipeline_result["timeFlag"],
+            stageFlag=pipeline_result["stageFlag"],
+            fraudScore=pipeline_result["fraudScore"],
+            flag=pipeline_result["flag"],
             **verification_obj.model_dump(exclude_none=True)
         )
+        # verification_data = verification_doc.model_dump(exclude_none=True)
+        # verification_data.update(pipeline_result)
 
         updates.insert_one(verification_doc.model_dump(exclude_none=True))
         #print("OK hai yaha tak")

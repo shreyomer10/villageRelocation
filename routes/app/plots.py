@@ -367,9 +367,6 @@ def update_house(decoded_data,plotId):
         return make_response(True, f"Error updating house: {str(e)}", status=500)
 
 
-
-
-
 @plots_BP.route("/plots/<plotId>", methods=["DELETE"])
 @auth_required
 def delete_plot(decoded_data,plotId):

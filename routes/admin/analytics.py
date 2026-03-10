@@ -75,7 +75,6 @@ def get_option_analytics(decoded_data, option_id):
     except Exception as e:
         return make_response(True, f"Internal server error: {str(e)}", status=500)
 
-
 @analytics_BP.route("/analytics/building/<villageId>/<type_id>", methods=["GET"])
 @auth_required
 def get_building_analytics(decoded_data, villageId, type_id):

@@ -16,7 +16,8 @@ def verify_password(plain: str, hashed: bytes) -> bool:
     except Exception:
         return False
 
-
+def parse_ist(time_str: str):
+    return dt.datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
 
 
 def to_village_card(doc: dict):

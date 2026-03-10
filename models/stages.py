@@ -144,6 +144,9 @@ class FieldLevelVerificationInsert(BaseModel):
     name:str
     docs:List[str]=Field(default_factory=list)
     notes:str
+    latitude: float
+    longitude: float
+    capturedAt: str
     class Config:
         extra = "forbid"
 
@@ -198,7 +201,11 @@ class FieldLevelVerification(FieldLevelVerificationInsert):
     verifiedBy:str
     insertedBy:str
     insertedAt:str
-
+    geoFlag: bool = False               #new
+    timeFlag: bool = False              #new
+    stageFlag: bool = False             #new
+    fraudScore: Optional[int] = None
+    flag:bool = False         #new
     statusHistory:List[statusHistory]
     @field_validator("type")
     @classmethod
@@ -225,7 +232,8 @@ class PlotsInsert(BaseModel):
     typeId: str            
     villageId: str   # required for community projects
     docs:List[str]=Field(default_factory=list)
-
+    latitude: float = Field(None, ge=-90, le=90)                    #new
+    longitude: float = Field(None, ge=-180, le=180)                 #new
     class Config:
         extra = "forbid"
 
@@ -235,7 +243,8 @@ class PlotsUpdate(BaseModel):
     name: Optional[str]
     typeId: Optional[str]  
     docs:List[str]=Field(default_factory=list)
-          
+    latitude: Optional[float] = Field(None, ge=-90, le=90)              #new
+    longitude: Optional[float] = Field(None, ge=-180, le=180)           #new
     class Config:
         extra = "forbid"
 
@@ -245,7 +254,6 @@ class Plots(PlotsInsert):
     currentStage:str
     stagesCompleted:Optional[List[str]]=Field(default_factory=list)
     deleted:bool=False
-
 #house is also a type of plot but have some other properties so made it different !!!
 
 class homeDetails(BaseModel):    #for insert update
@@ -271,6 +279,9 @@ class HouseInsert(BaseModel):
     familyId: str    
     numberOfHome:int=1
     homeDetails:List[homeDetailsComplete]=Field(default_factory=list)
+
+    latitude: float = Field(None, ge=-90, le=90)                        #new
+    longitude: float = Field(None, ge=-180, le=180)                 #new#new
     class Config:
         extra = "forbid"
 
@@ -279,7 +290,8 @@ class HouseUpdate(BaseModel):
     familyId: Optional[str] = None    
     numberOfHome:int=1
     homeDetails:List[homeDetailsComplete]=Field(default_factory=list)
-
+    latitude: Optional[float] = Field(None, ge=-90, le=90)                  #new
+    longitude: Optional[float] = Field(None, ge=-180, le=180)               #new    
     class Config:
         extra = "forbid"
 
