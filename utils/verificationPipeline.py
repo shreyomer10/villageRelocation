@@ -1,5 +1,5 @@
 import requests
-import google.generativeai as genai
+from google import genai
 from datetime import timedelta
 import math
 
@@ -9,8 +9,9 @@ from config import GEMINI_API, GEMINI_MODEL
 
 # ---------------- GEMINI SETUP ----------------
 
-genai.configure(api_key=GEMINI_API)
-model = genai.GenerativeModel(GEMINI_MODEL)
+
+client = genai.Client(api_key=GEMINI_API
+)
 
 
 # ---------------- HAVERSINE DISTANCE ----------------
@@ -109,8 +110,9 @@ def classify_stage(image_url, stages):
         <stage_name>
         """
 
-        response = model.generate_content(
-            [
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=[
                 prompt,
                 {"mime_type": "image/jpeg", "data": image_bytes}
             ]
