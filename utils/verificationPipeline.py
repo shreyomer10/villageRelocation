@@ -89,12 +89,24 @@ def classify_stage(image_url, stages):
         stage_list = "\n".join(stages)
 
         prompt = f"""
-        Identify the construction stage shown in this image.
+        You are performing a strict classification task.
 
-        Possible stages:
+        The image shows a construction site. Your task is to determine the stage of construction.
+
+        You MUST choose exactly ONE stage from the list below.
+
+        Allowed stages:
         {stage_list}
 
-        Return only the exact stage name from the list.
+        Rules:
+        - Return ONLY one stage name.
+        - The output MUST exactly match one of the stage names above.
+        - Do NOT explain your answer.
+        - Do NOT add punctuation, sentences, or extra words.
+        - If the stage cannot be determined confidently, return: UNKNOWN
+
+        Output format:
+        <stage_name>
         """
 
         response = model.generate_content(

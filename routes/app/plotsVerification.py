@@ -2,7 +2,7 @@
 import datetime as dt
 from flask import Blueprint,request, jsonify
 from pydantic import ValidationError
-from back.utils.verificationPipeline import run_verification_pipeline
+from utils.verificationPipeline import run_verification_pipeline
 from models.village import Logs
 from models.complaints import StatusHistory
 from utils.tokenAuth import auth_required
