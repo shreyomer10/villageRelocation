@@ -477,31 +477,33 @@ export default function MaterialsPage() {
       return "other";
     }
 
-    const map = {}; // { 'YYYY-MM': { Insert, Edited, Delete } }
+    const map = {}; // { 'YYYY-MM-DD': { Insert, Edited, Delete } }
     items.forEach((it) => {
       const timeStr = it.updateTime || it.update_time || "";
-      let monthKey = null;
-      if (typeof timeStr === "string" && timeStr.length >= 7) {
-        const m = timeStr.match(/^(\d{4})[-\/](\d{2})/);
-        if (m) monthKey = `${m[1]}-${m[2]}`;
+      let dayKey = null;
+      if (typeof timeStr === "string" && timeStr.length >= 10) {
+        const m = timeStr.match(/^(\d{4})[-\/](\d{2})[-\/](\d{2})/);
+        if (m) dayKey = `${m[1]}-${m[2]}-${m[3]}`;
         else {
           const parsed = new Date(timeStr);
           if (!Number.isNaN(parsed.getTime())) {
             const y = parsed.getFullYear();
             const mm = String(parsed.getMonth() + 1).padStart(2, "0");
-            monthKey = `${y}-${mm}`;
+            const dd = String(parsed.getDate()).padStart(2, "0");
+            dayKey = `${y}-${mm}-${dd}`;
           }
         }
       } else if (timeStr instanceof Date) {
         const y = timeStr.getFullYear();
         const mm = String(timeStr.getMonth() + 1).padStart(2, "0");
-        monthKey = `${y}-${mm}`;
+        const dd = String(timeStr.getDate()).padStart(2, "0");
+        dayKey = `${y}-${mm}-${dd}`;
       }
-      if (!monthKey) monthKey = "unknown";
-      if (!map[monthKey]) map[monthKey] = { Insert: 0, Edited: 0, Delete: 0 };
+      if (!dayKey) dayKey = "unknown";
+      if (!map[dayKey]) map[dayKey] = { Insert: 0, Edited: 0, Delete: 0 };
       const act = normalizeAction(it.action);
       if (act === "Insert" || act === "Edited" || act === "Delete") {
-        map[monthKey][act] = (map[monthKey][act] || 0) + 1;
+        map[dayKey][act] = (map[dayKey][act] || 0) + 1;
       }
     });
 

@@ -757,65 +757,60 @@ export default function PlotsPage() {
   /* ------------------------------------------------------------------ */
 
   // --- LogsLineChart component (renders line chart for Insert/Edited/Delete counts by month-year) ---
-  function LogsLineChart({ items }) {
-    // items: array of logs with { action, updateTime, ... }
-    // We'll aggregate by month-year (YYYY-MM) and count occurrences for Insert, Edited, Delete.
-    if (!items || items.length === 0) {
-      return <div className="text-sm text-gray-500">No activity logs on this page to plot.</div>;
-    }
+  // --- LogsLineChart component (renders line chart for Insert/Edited/Delete counts by day) ---
+function LogsLineChart({ items }) {
+  if (!items || items.length === 0) {
+    return <div className="text-sm text-gray-500">No activity logs on this page to plot.</div>;
+  }
 
-    // helper to normalize action into one of three keys
-    function normalizeAction(a) {
-      if (!a) return "other";
-      const lower = String(a).toLowerCase();
-      if (lower.includes("delete")) return "Delete";
-      if (lower.includes("edited") || lower.includes("edit")) return "Edited";
-      if (lower.includes("insert")) return "Insert";
-      return "other";
-    }
+  function normalizeAction(a) {
+    if (!a) return "other";
+    const lower = String(a).toLowerCase();
+    if (lower.includes("delete")) return "Delete";
+    if (lower.includes("edited") || lower.includes("edit")) return "Edited";
+    if (lower.includes("insert")) return "Insert";
+    return "other";
+  }
 
-    // aggregate counts by month-year
-    const map = {}; // { "YYYY-MM": { Insert: n, Edited: n, Delete: n } }
-    items.forEach((it) => {
-      const timeStr = it.updateTime || it.update_time || "";
-      // try to extract yyyy-mm from "YYYY-MM-DD ..." or "YYYY/MM/DD"
-      let monthKey = null;
-      if (typeof timeStr === "string" && timeStr.length >= 7) {
-        // common format "YYYY-MM-DD"
-        const m = timeStr.match(/^(\d{4})[-\/](\d{2})/);
-        if (m) monthKey = `${m[1]}-${m[2]}`;
-        else {
-          // fallback: try parse Date
-          const parsed = new Date(timeStr);
-          if (!Number.isNaN(parsed.getTime())) {
-            const y = parsed.getFullYear();
-            const mm = String(parsed.getMonth() + 1).padStart(2, "0");
-            monthKey = `${y}-${mm}`;
-          }
+  // aggregate counts by day (YYYY-MM-DD)
+  const map = {}; // { "YYYY-MM-DD": { Insert: n, Edited: n, Delete: n } }
+  items.forEach((it) => {
+    const timeStr = it.updateTime || it.update_time || "";
+    let dayKey = null;
+    if (typeof timeStr === "string" && timeStr.length >= 10) {
+      const m = timeStr.match(/^(\d{4})[-\/](\d{2})[-\/](\d{2})/);
+      if (m) dayKey = `${m[1]}-${m[2]}-${m[3]}`;
+      else {
+        const parsed = new Date(timeStr);
+        if (!Number.isNaN(parsed.getTime())) {
+          const y = parsed.getFullYear();
+          const mm = String(parsed.getMonth() + 1).padStart(2, "0");
+          const dd = String(parsed.getDate()).padStart(2, "0");
+          dayKey = `${y}-${mm}-${dd}`;
         }
-      } else if (timeStr instanceof Date) {
-        const y = timeStr.getFullYear();
-        const mm = String(timeStr.getMonth() + 1).padStart(2, "0");
-        monthKey = `${y}-${mm}`;
       }
+    } else if (timeStr instanceof Date) {
+      const y = timeStr.getFullYear();
+      const mm = String(timeStr.getMonth() + 1).padStart(2, "0");
+      const dd = String(timeStr.getDate()).padStart(2, "0");
+      dayKey = `${y}-${mm}-${dd}`;
+    }
 
-      if (!monthKey) monthKey = "unknown";
+    if (!dayKey) dayKey = "unknown";
+    if (!map[dayKey]) map[dayKey] = { Insert: 0, Edited: 0, Delete: 0 };
+    const act = normalizeAction(it.action);
+    if (act === "Insert" || act === "Edited" || act === "Delete") {
+      map[dayKey][act] = (map[dayKey][act] || 0) + 1;
+    }
+  });
 
-      if (!map[monthKey]) map[monthKey] = { Insert: 0, Edited: 0, Delete: 0 };
-      const act = normalizeAction(it.action);
-      if (act === "Insert" || act === "Edited" || act === "Delete") {
-        map[monthKey][act] = (map[monthKey][act] || 0) + 1;
-      }
-    });
+  // sorted days ascending
+  const months = Object.keys(map).filter(k => k !== "unknown").sort((a, b) => a.localeCompare(b));
+  if (months.length === 0) months.push("unknown");
 
-    // create sorted months array (ascending)
-    const months = Object.keys(map).filter(k => k !== "unknown").sort((a, b) => a.localeCompare(b));
-    if (months.length === 0) months.push("unknown");
-
-    // arrays of numbers for each action
-    const insertSeries = months.map(m => map[m]?.Insert ?? 0);
-    const editedSeries = months.map(m => map[m]?.Edited ?? 0);
-    const deleteSeries = months.map(m => map[m]?.Delete ?? 0);
+  const insertSeries = months.map(m => map[m]?.Insert ?? 0);
+  const editedSeries = months.map(m => map[m]?.Edited ?? 0);
+  const deleteSeries = months.map(m => map[m]?.Delete ?? 0);
 
     const maxVal = Math.max(...insertSeries, ...editedSeries, ...deleteSeries, 1);
 
@@ -864,7 +859,7 @@ export default function PlotsPage() {
         <div className="flex items-start justify-between mb-2">
           <div>
             <div className="text-sm text-gray-600">Activity over time (page logs)</div>
-            <div className="text-lg font-semibold">Insert / Edited / Delete — by month</div>
+            <div className="text-lg font-semibold">Insert / Edited / Delete — by date</div>
           </div>
           <div className="flex items-center gap-3">
             <div className="text-sm text-gray-500">Showing logs for page {page}</div>

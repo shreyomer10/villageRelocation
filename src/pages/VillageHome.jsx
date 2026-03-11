@@ -75,7 +75,7 @@ export default function VillageDashboard() {
       try {
         const parsed = JSON.parse(storedUserRaw);
         if (parsed?.name) setVillageName(parsed.name);
-      } catch {}
+      } catch { }
     }
   }, [storedUserRaw]);
 
@@ -192,9 +192,14 @@ export default function VillageDashboard() {
           return;
         }
         const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-        const headers = token ? { Authorization: `Bearer ${token}` } : {};
-        const res = await fetch(`${API_BASE}/villages/${encodeURIComponent(villageId)}/family-count`, { method: "GET", headers, signal: controllerCounts.signal });
-        if (!res.ok) throw new Error(`Failed to fetch family counts`);
+        const headers = { "Content-Type": "application/json" };
+        if (token) headers["Authorization"] = `Bearer ${token}`;
+        const res = await fetch(`${API_BASE}/villages/${encodeURIComponent(villageId)}/family-count`, {
+          method: "GET",
+          headers,
+          signal: controllerCounts.signal
+        });
+        if (!res.ok) throw new Error(`Failed to fetch family counts: ${res.status}`);
         const data = await res.json();
         if (!mounted) return;
         setTotal(Number(data.totalFamilies ?? data.total_families ?? 0));
