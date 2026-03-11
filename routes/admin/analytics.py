@@ -197,9 +197,9 @@ def get_family_count(village_id):
         counts = {"total": 0, "option1": 0, "option2": 0}
         for row in families.aggregate(pipeline):
             counts["total"] += row["count"]
-            if row["_id"] in (1, "1", "Option1"):
+            if row["_id"] in (1, "1", "Option_1"):
                 counts["option1"] = row["count"]
-            elif row["_id"] in (2, "2", "Option2"):
+            elif row["_id"] in (2, "2", "Option_2"):
                 counts["option2"] = row["count"]
 
         # Use Pydantic to validate/output
