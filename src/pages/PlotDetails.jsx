@@ -782,40 +782,131 @@ export default function PlotStagesPage() {
               const refKey = s.verificationId ?? s.verification_id ?? s.verification ?? key;
               const shortNotes = (s.notes || '').replace(/\s+/g, ' ').slice(0, 500);
 
-              return (
-                <motion.div ref={el => { if (el) stageRefs.current[refKey] = el; }} tabIndex={0} key={key} className={`relative overflow-hidden rounded-xl p-4 bg-blue-100 border border-slate-200 hover:shadow-lg transition transform hover:-translate-y-0.5 ${s.deleted ? 'opacity-60' : ''}`}>
-                  <div className="flex gap-4">
-                    <div className="flex-1">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-3">
-                            <div className="text-sm font-semibold text-slate-800 truncate">{s.name ?? s.currentStage ?? `Stage ${idx + 1}`}</div>
-                            <div className="flex-shrink-0"><StatusBadge status={s.status ?? 0} /></div>
-                          </div>
+{/* Inside the verifications.map, replace the motion.div card content */}
 
-                          <div className="mt-2 text-sm text-slate-700 leading-relaxed max-h-28 overflow-hidden">{shortNotes}{(s.notes || '').length > 500 ? '…' : ''}</div>
+return (
+  <motion.div
+    ref={el => { if (el) stageRefs.current[refKey] = el; }}
+    tabIndex={0}
+    key={key}
+    initial={{ opacity: 0, y: 6 }}
+    animate={{ opacity: 1, y: 0 }}
+    transition={{ duration: 0.2, delay: idx * 0.03 }}
+    className={`group relative overflow-hidden rounded-2xl bg-white border border-slate-100 shadow-sm hover:shadow-md transition-all duration-200 ${s.deleted ? 'opacity-50' : ''}`}
+  >
+    {/* Left accent bar — color reflects risk */}
+    <div className={`absolute left-0 top-0 bottom-0 w-1 rounded-l-2xl ${
+      s.flag
+        ? s.fraudScore >= 3 ? 'bg-red-400'
+        : s.fraudScore === 2 ? 'bg-orange-400'
+        : 'bg-amber-400'
+        : 'bg-emerald-400'
+    }`} />
 
-                          <div className="mt-3 text-xs text-slate-600">Inserted by <span className="font-medium">{s.insertedBy ?? '—'}</span><span className="mx-2">•</span><span>{fmtDate(s.insertedAt)}</span></div>
+    <div className="pl-5 pr-4 py-4">
+      {/* ── Top row: title + status + flag ── */}
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-semibold text-slate-800 truncate">
+              {s.name ?? s.currentStage ?? `Stage ${idx + 1}`}
+            </span>
+            <StatusBadge status={s.status ?? 0} />
+            {s.flag && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-50 border border-red-200 text-red-600 text-xs font-semibold tracking-wide">
+                ⚑ Flagged
+              </span>
+            )}
+          </div>
 
-                          <div className="mt-2 text-xs text-slate-600">Verification: <span className="font-medium">{s.verifiedBy ?? '—'}</span><span className="mx-2">•</span><span>{fmtDate(s.verifiedAt)}</span></div>
-                        </div>
+          {/* Notes */}
+          {shortNotes ? (
+            <p className="mt-2 text-sm text-slate-500 leading-relaxed line-clamp-3">
+              {shortNotes}{(s.notes || '').length > 500 ? '…' : ''}
+            </p>
+          ) : null}
+        </div>
 
-                        <div className="flex flex-col items-end gap-2">
-                          <div className="flex items-center gap-2">
-                            <button onClick={(e) => { e.stopPropagation(); openHistoryModalById(e, s.verificationId ?? s.verification_id ?? s.verification ?? s._id); }} className="inline-flex items-center gap-2 px-3 py-1.5 bg-gradient-to-br from-sky-600 to-indigo-600 text-white rounded-lg text-sm hover:scale-[1.01] focus:outline-none">Status history</button>
+        {/* Action buttons */}
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={(e) => { e.stopPropagation(); openHistoryModalById(e, s.verificationId ?? s.verification_id ?? s.verification ?? s._id); }}
+            className="px-3 py-1.5 bg-slate-800 text-white rounded-lg text-xs font-medium hover:bg-slate-700 transition-colors"
+          >
+            History
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); openDocsModalById(e, s.verificationId ?? s.verification_id ?? s.verification ?? s._id); }}
+            className="px-3 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg text-xs font-medium hover:bg-slate-50 transition-colors flex items-center gap-1.5"
+          >
+            <ImageIcon size={13} /> Docs
+          </button>
+        </div>
+      </div>
 
-                            <button onClick={(e) => { e.stopPropagation(); openDocsModalById(e, s.verificationId ?? s.verification_id ?? s.verification ?? s._id); }} className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border rounded-lg text-sm hover:shadow-sm">
-                              <ImageIcon size={16} /> <span>Docs</span>
-                            </button>
-                          </div>
+      {/* ── Divider ── */}
+      <div className="my-3 border-t border-slate-100" />
 
-                          <div className="text-xs text-slate-500">{s.deleted ? 'Deleted' : ''}</div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </motion.div>
-              );
+      {/* ── Fraud / Validation indicators ── */}
+      <div className="flex flex-wrap items-center gap-2">
+        {/* Geo */}
+        <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium ${
+          s.geoFlag ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'
+        }`}>
+          <span className={`w-1.5 h-1.5 rounded-full ${s.geoFlag ? 'bg-emerald-500' : 'bg-red-500'}`} />
+          {s.geoFlag ? 'Geo Verified' : 'Geo Mismatch'}
+        </div>
+
+        {/* Time */}
+        <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium ${
+          s.timeFlag ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+        }`}>
+          <span className={`w-1.5 h-1.5 rounded-full ${s.timeFlag ? 'bg-emerald-500' : 'bg-amber-400'}`} />
+          {s.timeFlag ? 'Time Valid' : 'Time Suspect'}
+        </div>
+
+        {/* Stage */}
+        <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium ${
+          s.stageFlag ? 'bg-emerald-50 text-emerald-700' : 'bg-orange-50 text-orange-700'
+        }`}>
+          <span className={`w-1.5 h-1.5 rounded-full ${s.stageFlag ? 'bg-emerald-500' : 'bg-orange-400'}`} />
+          {s.stageFlag ? 'Stage OK' : 'Stage Issue'}
+        </div>
+
+        {/* Risk score — separated with a soft divider */}
+        <div className="ml-auto flex items-center gap-2">
+          <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-lg text-xs font-semibold ${
+            s.fraudScore === 0 ? 'bg-emerald-50 text-emerald-700'
+            : s.fraudScore === 1 ? 'bg-amber-50 text-amber-800'
+            : s.fraudScore === 2 ? 'bg-orange-50 text-orange-800'
+            : 'bg-red-50 text-red-700'
+          }`}>
+            {/* Mini score bar */}
+            <span className="flex gap-0.5">
+              {[0, 1, 2].map(i => (
+                <span key={i} className={`w-2 h-2 rounded-sm ${
+                  i < s.fraudScore
+                    ? s.fraudScore === 1 ? 'bg-amber-400'
+                    : s.fraudScore === 2 ? 'bg-orange-400'
+                    : 'bg-red-500'
+                    : 'bg-slate-200'
+                }`} />
+              ))}
+            </span>
+            Risk {s.fraudScore}/3
+          </div>
+        </div>
+      </div>
+
+      {/* ── Meta row ── */}
+      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-400">
+        <span>Inserted by <span className="text-slate-600 font-medium">{s.insertedBy ?? '—'}</span> · {fmtDate(s.insertedAt)}</span>
+        <span>Verified by <span className="text-slate-600 font-medium">{s.verifiedBy ?? '—'}</span> · {fmtDate(s.verifiedAt)}</span>
+        {s.deleted && <span className="text-red-400 font-medium">Deleted</span>}
+      </div>
+    </div>
+  </motion.div>
+);
             })}
           </motion.div>
         </div>
