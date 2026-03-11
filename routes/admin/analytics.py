@@ -178,7 +178,7 @@ def numberOfHomes(decoded_data, villageId):
 
 @analytics_BP.route("/villages/family-count", defaults={"village_id": None}, methods=["GET"])
 @analytics_BP.route("/villages/<village_id>/family-count", methods=["GET"])
-def get_family_count(decoded_data,village_id):
+def get_family_count(village_id):
     try:
         pipeline = []
 
