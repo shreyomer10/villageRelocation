@@ -3,55 +3,55 @@ import React, { createContext, useCallback, useEffect, useRef, useState } from "
 
 export const AuthContext = createContext({
   user: null,
-  setUser: () => {},
+  setUser: () => { },
   userId: null,
-  setUserId: () => {},
+  setUserId: () => { },
   villageId: null,
-  setVillageId: () => {},
+  setVillageId: () => { },
   village: null,
-  setVillage: () => {},
+  setVillage: () => { },
   villageName: null,
   token: null,
   tokenExpiresAt: null,
   tokenRemaining: null,
   refreshTokenString: null,
-  setToken: () => {},
-  login: async () => {},
-  logout: () => {},
-  forceRefresh: async () => {},
+  setToken: () => { },
+  login: async () => { },
+  logout: () => { },
+  forceRefresh: async () => { },
   isAuthenticated: false,
 
   // plot
   plotId: null,
   selectedPlot: null,
-  setPlotId: () => {},
-  setSelectedPlot: () => {},
-  selectPlot: () => {},
+  setPlotId: () => { },
+  setSelectedPlot: () => { },
+  selectPlot: () => { },
 
   // material
   materialId: null,
   selectedMaterial: null,
-  setMaterialId: () => {},
-  setSelectedMaterial: () => {},
-  selectMaterial: () => {},
+  setMaterialId: () => { },
+  setSelectedMaterial: () => { },
+  selectMaterial: () => { },
 
   // facility (NEW)
   facilityId: null,
   selectedFacility: null,
-  setFacilityId: () => {},
-  setSelectedFacility: () => {},
-  selectFacility: () => {},
+  setFacilityId: () => { },
+  setSelectedFacility: () => { },
+  selectFacility: () => { },
 
   // family (ADDED)
   familyId: null,
   selectedFamily: null,
-  setFamilyId: () => {},
-  setSelectedFamily: () => {},
-  selectFamily: () => {},
+  setFamilyId: () => { },
+  setSelectedFamily: () => { },
+  selectFamily: () => { },
 
   // new helpers
-  restartLogoutTimer: () => {},
-  onRefresh: async () => {},
+  restartLogoutTimer: () => { },
+  onRefresh: async () => { },
 });
 
 const STORAGE_KEYS = {
@@ -216,7 +216,7 @@ async function safeFetch(url, options = {}) {
     let json = null;
     try {
       json = text ? JSON.parse(text) : null;
-    } catch {}
+    } catch { }
     return { ok: res.ok, status: res.status, json, text };
   } catch (err) {
     return { ok: false, status: 0, json: null, text: String(err) };
@@ -238,7 +238,25 @@ function parseJwt(token) {
 }
 
 export function AuthProvider({ children }) {
-  const [user, setUserState] = useState(null);
+  const [user, setUserState] = useState(() => {
+    try {
+      const rawUser = localStorage.getItem(STORAGE_KEYS.USER);
+      if (rawUser) {
+        const parsed = JSON.parse(rawUser);
+        if (parsed?.name) return { name: parsed.name, role: parsed.role, email: parsed.email };
+      }
+      // fallback: try auth_payload
+      const rawAuth = localStorage.getItem(STORAGE_KEYS.AUTH_PAYLOAD);
+      if (rawAuth) {
+        const parsed = JSON.parse(rawAuth);
+        if (parsed?.user) {
+          const u = parsed.user;
+          return { name: u.name ?? u.fullName ?? null, role: u.role ?? null, email: u.email ?? null };
+        }
+      }
+    } catch { }
+    return null;
+  });
   const [userId, setUserIdState] = useState(null);
   const [villageId, setVillageIdState] = useState(null);
   const [village, setVillageState] = useState(null);
@@ -262,6 +280,7 @@ export function AuthProvider({ children }) {
 
   const [familyId, setFamilyIdState] = useState(null);
   const [selectedFamily, setSelectedFamilyState] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
 
   const expiryTimerRef = useRef(null);
   const tickIntervalRef = useRef(null);
@@ -274,7 +293,7 @@ export function AuthProvider({ children }) {
         const parsed = JSON.parse(rawUser);
         if (parsed?.name) setUserState({ name: parsed.name, role: parsed.role, email: parsed.email });
       }
-    } catch {}
+    } catch { }
 
     const savedUserId = localStorage.getItem(STORAGE_KEYS.USERID);
     if (savedUserId) setUserIdState(savedUserId);
@@ -295,7 +314,7 @@ export function AuthProvider({ children }) {
           if (name) setVillageNameState(String(name));
         }
       }
-    } catch {}
+    } catch { }
 
     const vn = localStorage.getItem(STORAGE_KEYS.VILLAGE_NAME);
     if (vn) setVillageNameState(vn);
@@ -325,7 +344,7 @@ export function AuthProvider({ children }) {
           localStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
         }
       }
-    } catch {}
+    } catch { }
 
     try {
       const rawAuth = localStorage.getItem(STORAGE_KEYS.AUTH_PAYLOAD);
@@ -354,13 +373,13 @@ export function AuthProvider({ children }) {
             setUserState({ name: u.name ?? u.fullName ?? u.name ?? null, role: u.role ?? null, email: u.email ?? null });
             try {
               localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify({ name: u.name ?? u.fullName ?? null, role: u.role ?? null, email: u.email ?? null }));
-            } catch {}
+            } catch { }
             const uid = u.id ?? u.userId ?? u.user_id ?? u._id ?? null;
             if (uid) {
               setUserIdState(String(uid));
               try {
                 localStorage.setItem(STORAGE_KEYS.USERID, String(uid));
-              } catch {}
+              } catch { }
             }
             const vidRawFromUser = u.villageID ?? u.villageId ?? u.village_id ?? u.villageIDList ?? null;
             const normalizedFromUser = normalizeVillageId(vidRawFromUser);
@@ -371,16 +390,16 @@ export function AuthProvider({ children }) {
               try {
                 localStorage.setItem(STORAGE_KEYS.VILLAGE, normalizedFromUser);
                 localStorage.setItem(STORAGE_KEYS.SELECTED_VILLAGE, JSON.stringify(minimalSv));
-              } catch {}
+              } catch { }
             }
-          } catch {}
+          } catch { }
         } else if (parsed?.userId || parsed?.user_id) {
           const uid = parsed.userId ?? parsed.user_id;
           if (uid) {
             setUserIdState(String(uid));
             try {
               localStorage.setItem(STORAGE_KEYS.USERID, String(uid));
-            } catch {}
+            } catch { }
           }
         }
 
@@ -424,7 +443,7 @@ export function AuthProvider({ children }) {
           }
         }
       }
-    } catch {}
+    } catch { }
 
     // read plot keys directly from localStorage (aliases)
     try {
@@ -437,7 +456,7 @@ export function AuthProvider({ children }) {
         }
       }
       if (foundPlotId) setPlotIdState(normalizePlotId(foundPlotId));
-    } catch {}
+    } catch { }
     try {
       let rawSelPlot = null;
       for (const k of SELECTED_PLOT_ALIASES) {
@@ -463,7 +482,7 @@ export function AuthProvider({ children }) {
           if (pid) setPlotIdState(String(pid));
         }
       }
-    } catch {}
+    } catch { }
 
     // read material keys from localStorage (aliases)
     try {
@@ -476,7 +495,7 @@ export function AuthProvider({ children }) {
         }
       }
       if (foundMatId) setMaterialIdState(normalizeMaterialId(foundMatId));
-    } catch {}
+    } catch { }
     try {
       let rawSelMat = null;
       for (const k of SELECTED_MATERIAL_ALIASES) {
@@ -507,7 +526,7 @@ export function AuthProvider({ children }) {
           if (mid) setMaterialIdState(String(mid));
         }
       }
-    } catch {}
+    } catch { }
 
     // read facility keys from localStorage (aliases) (NEW)
     try {
@@ -520,7 +539,7 @@ export function AuthProvider({ children }) {
         }
       }
       if (foundFacId) setFacilityIdState(normalizeFacilityId(foundFacId));
-    } catch {}
+    } catch { }
     try {
       let rawSelFac = null;
       for (const k of SELECTED_FACILITY_ALIASES) {
@@ -551,7 +570,7 @@ export function AuthProvider({ children }) {
           if (fid) setFacilityIdState(String(fid));
         }
       }
-    } catch {}
+    } catch { }
 
     // read family keys from localStorage (aliases) (ADDED)
     try {
@@ -564,7 +583,7 @@ export function AuthProvider({ children }) {
         }
       }
       if (foundFamilyId) setFamilyIdState(normalizeFamilyId(foundFamilyId));
-    } catch {}
+    } catch { }
     try {
       let rawSelFamily = null;
       for (const k of SELECTED_FAMILY_ALIASES) {
@@ -595,7 +614,9 @@ export function AuthProvider({ children }) {
           if (fid) setFamilyIdState(String(fid));
         }
       }
-    } catch {}
+    } catch { }
+
+    setAuthReady(true);
   }, []);
 
   // persist user
@@ -603,7 +624,7 @@ export function AuthProvider({ children }) {
     try {
       if (user && user.name) localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(user));
       else localStorage.removeItem(STORAGE_KEYS.USER);
-    } catch {}
+    } catch { }
   }, [user]);
 
   // persist userId
@@ -611,42 +632,42 @@ export function AuthProvider({ children }) {
     try {
       if (userId) localStorage.setItem(STORAGE_KEYS.USERID, String(userId));
       else localStorage.removeItem(STORAGE_KEYS.USERID);
-    } catch {}
+    } catch { }
   }, [userId]);
 
   useEffect(() => {
     try {
       if (villageId) localStorage.setItem(STORAGE_KEYS.VILLAGE, villageId);
       else localStorage.removeItem(STORAGE_KEYS.VILLAGE);
-    } catch {}
+    } catch { }
   }, [villageId]);
 
   useEffect(() => {
     try {
       if (village && typeof village === "object") localStorage.setItem(STORAGE_KEYS.SELECTED_VILLAGE, JSON.stringify(village));
       else localStorage.removeItem(STORAGE_KEYS.SELECTED_VILLAGE);
-    } catch {}
+    } catch { }
   }, [village]);
 
   useEffect(() => {
     try {
       if (villageName) localStorage.setItem(STORAGE_KEYS.VILLAGE_NAME, villageName);
       else localStorage.removeItem(STORAGE_KEYS.VILLAGE_NAME);
-    } catch {}
+    } catch { }
   }, [villageName]);
 
   useEffect(() => {
     try {
       if (token) localStorage.setItem(STORAGE_KEYS.TOKEN, token);
       else localStorage.removeItem(STORAGE_KEYS.TOKEN);
-    } catch {}
+    } catch { }
   }, [token]);
 
   useEffect(() => {
     try {
       if (tokenExpiresAt) localStorage.setItem(STORAGE_KEYS.TOKEN_EXPIRY, String(tokenExpiresAt));
       else localStorage.removeItem(STORAGE_KEYS.TOKEN_EXPIRY);
-    } catch {}
+    } catch { }
   }, [tokenExpiresAt]);
 
   useEffect(() => {
@@ -654,7 +675,7 @@ export function AuthProvider({ children }) {
       const normalized = normalizeRefreshToken(refreshTokenString);
       if (normalized) localStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, normalized);
       else localStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
-    } catch {}
+    } catch { }
   }, [refreshTokenString]);
 
   // persist plot state (canonical keys)
@@ -662,14 +683,14 @@ export function AuthProvider({ children }) {
     try {
       if (plotId) localStorage.setItem(STORAGE_KEYS.PLOT_ID, String(plotId));
       else localStorage.removeItem(STORAGE_KEYS.PLOT_ID);
-    } catch {}
+    } catch { }
     // also write aliases for backwards compat (optional)
     try {
       for (const k of PLOT_ID_ALIASES) {
         if (plotId) localStorage.setItem(k, String(plotId));
         else localStorage.removeItem(k);
       }
-    } catch {}
+    } catch { }
   }, [plotId]);
 
   useEffect(() => {
@@ -679,7 +700,7 @@ export function AuthProvider({ children }) {
         const preview = normalizeSelectedPlot(selectedPlot);
         if (preview) localStorage.setItem(STORAGE_KEYS.SELECTED_PLOT, JSON.stringify(preview));
       } else localStorage.removeItem(STORAGE_KEYS.SELECTED_PLOT);
-    } catch {}
+    } catch { }
     // write aliases
     try {
       for (const k of SELECTED_PLOT_ALIASES) {
@@ -689,7 +710,7 @@ export function AuthProvider({ children }) {
           if (preview) localStorage.setItem(k, JSON.stringify(preview));
         } else localStorage.removeItem(k);
       }
-    } catch {}
+    } catch { }
   }, [selectedPlot]);
 
   // persist material state (canonical + aliases)
@@ -697,13 +718,13 @@ export function AuthProvider({ children }) {
     try {
       if (materialId) localStorage.setItem(STORAGE_KEYS.MATERIAL_ID, String(materialId));
       else localStorage.removeItem(STORAGE_KEYS.MATERIAL_ID);
-    } catch {}
+    } catch { }
     try {
       for (const k of MATERIAL_ID_ALIASES) {
         if (materialId) localStorage.setItem(k, String(materialId));
         else localStorage.removeItem(k);
       }
-    } catch {}
+    } catch { }
   }, [materialId]);
 
   useEffect(() => {
@@ -714,7 +735,7 @@ export function AuthProvider({ children }) {
         const preview = normalizeSelectedMaterial(selectedMaterial);
         if (preview) localStorage.setItem(STORAGE_KEYS.SELECTED_MATERIAL, JSON.stringify(preview));
       } else localStorage.removeItem(STORAGE_KEYS.SELECTED_MATERIAL);
-    } catch {}
+    } catch { }
 
     try {
       for (const k of SELECTED_MATERIAL_ALIASES) {
@@ -725,7 +746,7 @@ export function AuthProvider({ children }) {
           if (preview) localStorage.setItem(k, JSON.stringify(preview));
         } else localStorage.removeItem(k);
       }
-    } catch {}
+    } catch { }
   }, [selectedMaterial]);
 
   // persist facility state (canonical + aliases) (NEW)
@@ -733,13 +754,13 @@ export function AuthProvider({ children }) {
     try {
       if (facilityId) localStorage.setItem(STORAGE_KEYS.FACILITY_ID, String(facilityId));
       else localStorage.removeItem(STORAGE_KEYS.FACILITY_ID);
-    } catch {}
+    } catch { }
     try {
       for (const k of FACILITY_ID_ALIASES) {
         if (facilityId) localStorage.setItem(k, String(facilityId));
         else localStorage.removeItem(k);
       }
-    } catch {}
+    } catch { }
   }, [facilityId]);
 
   useEffect(() => {
@@ -749,7 +770,7 @@ export function AuthProvider({ children }) {
         const preview = normalizeSelectedFacility(selectedFacility);
         if (preview) localStorage.setItem(STORAGE_KEYS.SELECTED_FACILITY, JSON.stringify(preview));
       } else localStorage.removeItem(STORAGE_KEYS.SELECTED_FACILITY);
-    } catch {}
+    } catch { }
 
     try {
       for (const k of SELECTED_FACILITY_ALIASES) {
@@ -759,7 +780,7 @@ export function AuthProvider({ children }) {
           if (preview) localStorage.setItem(k, JSON.stringify(preview));
         } else localStorage.removeItem(k);
       }
-    } catch {}
+    } catch { }
   }, [selectedFacility]);
 
   // persist family state (canonical + aliases) (ADDED)
@@ -767,13 +788,13 @@ export function AuthProvider({ children }) {
     try {
       if (familyId) localStorage.setItem(STORAGE_KEYS.FAMILY_ID, String(familyId));
       else localStorage.removeItem(STORAGE_KEYS.FAMILY_ID);
-    } catch {}
+    } catch { }
     try {
       for (const k of FAMILY_ID_ALIASES) {
         if (familyId) localStorage.setItem(k, String(familyId));
         else localStorage.removeItem(k);
       }
-    } catch {}
+    } catch { }
   }, [familyId]);
 
   useEffect(() => {
@@ -783,7 +804,7 @@ export function AuthProvider({ children }) {
         const preview = normalizeSelectedFamily(selectedFamily);
         if (preview) localStorage.setItem(STORAGE_KEYS.SELECTED_FAMILY, JSON.stringify(preview));
       } else localStorage.removeItem(STORAGE_KEYS.SELECTED_FAMILY);
-    } catch {}
+    } catch { }
 
     try {
       for (const k of SELECTED_FAMILY_ALIASES) {
@@ -793,7 +814,7 @@ export function AuthProvider({ children }) {
           if (preview) localStorage.setItem(k, JSON.stringify(preview));
         } else localStorage.removeItem(k);
       }
-    } catch {}
+    } catch { }
   }, [selectedFamily]);
 
   // persist full raw payload
@@ -815,13 +836,13 @@ export function AuthProvider({ children }) {
       if (hasAny) {
         try {
           localStorage.setItem(STORAGE_KEYS.AUTH_PAYLOAD, JSON.stringify(raw));
-        } catch {}
+        } catch { }
       } else {
         try {
           localStorage.removeItem(STORAGE_KEYS.AUTH_PAYLOAD);
-        } catch {}
+        } catch { }
       }
-    } catch {}
+    } catch { }
   }, [token, tokenExpiresAt, refreshTokenString, user, userId, village, selectedPlot, selectedMaterial, selectedFacility, selectedFamily]);
 
   // storage sync across tabs (robust with aliases)
@@ -1012,7 +1033,7 @@ export function AuthProvider({ children }) {
             setSelectedFamilyState(null);
             setFamilyIdState(null);
           }
-        } catch {}
+        } catch { }
       }
     }
     window.addEventListener("storage", onStorage);
@@ -1101,7 +1122,7 @@ export function AuthProvider({ children }) {
           localStorage.removeItem(STORAGE_KEYS.SELECTED_FACILITY);
           localStorage.removeItem(STORAGE_KEYS.FAMILY_ID);
           localStorage.removeItem(STORAGE_KEYS.SELECTED_FAMILY);
-        } catch {}
+        } catch { }
       }
       return undefined;
     }
@@ -1185,14 +1206,14 @@ export function AuthProvider({ children }) {
             setUserState({ name: payload.user.name, role: payload.user.role, email: payload.user.email });
             try {
               localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify({ name: payload.user.name, role: payload.user.role, email: payload.user.email }));
-            } catch {}
+            } catch { }
           } else if (newToken) {
             const parsed = parseJwt(newToken);
             if (parsed && (parsed.name || parsed.email || parsed.sub)) {
               setUserState({ name: parsed.name ?? parsed.sub ?? null, role: parsed.role ?? null, email: parsed.email ?? null });
               try {
                 localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify({ name: parsed.name ?? parsed.sub ?? null, role: parsed.role ?? null, email: parsed.email ?? null }));
-              } catch {}
+              } catch { }
             }
           }
 
@@ -1202,7 +1223,7 @@ export function AuthProvider({ children }) {
             setUserIdState(String(uid));
             try {
               localStorage.setItem(STORAGE_KEYS.USERID, String(uid));
-            } catch {}
+            } catch { }
           } else if (newToken) {
             const parsed = parseJwt(newToken);
             const maybeUid = parsed?.sub ?? parsed?.userId ?? parsed?.user_id ?? parsed?.id ?? null;
@@ -1210,7 +1231,7 @@ export function AuthProvider({ children }) {
               setUserIdState(String(maybeUid));
               try {
                 localStorage.setItem(STORAGE_KEYS.USERID, String(maybeUid));
-              } catch {}
+              } catch { }
             }
           }
 
@@ -1224,7 +1245,7 @@ export function AuthProvider({ children }) {
               setVillageNameState(name ? String(name) : null);
               try {
                 localStorage.setItem(STORAGE_KEYS.SELECTED_VILLAGE, JSON.stringify(sv));
-              } catch {}
+              } catch { }
             }
           }
 
@@ -1237,7 +1258,7 @@ export function AuthProvider({ children }) {
               if (pid) setPlotIdState(pid);
               try {
                 localStorage.setItem(STORAGE_KEYS.SELECTED_PLOT, JSON.stringify(sp));
-              } catch {}
+              } catch { }
             }
           }
 
@@ -1250,7 +1271,7 @@ export function AuthProvider({ children }) {
               if (mid) setMaterialIdState(mid);
               try {
                 localStorage.setItem(STORAGE_KEYS.SELECTED_MATERIAL, JSON.stringify(sm));
-              } catch {}
+              } catch { }
             }
           }
 
@@ -1263,7 +1284,7 @@ export function AuthProvider({ children }) {
               if (fid) setFacilityIdState(fid);
               try {
                 localStorage.setItem(STORAGE_KEYS.SELECTED_FACILITY, JSON.stringify(sf));
-              } catch {}
+              } catch { }
             }
           }
 
@@ -1276,7 +1297,7 @@ export function AuthProvider({ children }) {
               if (fid) setFamilyIdState(fid);
               try {
                 localStorage.setItem(STORAGE_KEYS.SELECTED_FAMILY, JSON.stringify(sfam));
-              } catch {}
+              } catch { }
             }
           }
 
@@ -1331,7 +1352,7 @@ export function AuthProvider({ children }) {
     try {
       if (normalized) localStorage.setItem(STORAGE_KEYS.USERID, normalized);
       else localStorage.removeItem(STORAGE_KEYS.USERID);
-    } catch {}
+    } catch { }
   }, []);
 
   const setVillageId = useCallback((id) => {
@@ -1343,7 +1364,7 @@ export function AuthProvider({ children }) {
       try {
         localStorage.removeItem(STORAGE_KEYS.SELECTED_VILLAGE);
         localStorage.removeItem(STORAGE_KEYS.VILLAGE_NAME);
-      } catch {}
+      } catch { }
     }
   }, []);
 
@@ -1357,7 +1378,7 @@ export function AuthProvider({ children }) {
         try {
           localStorage.removeItem(STORAGE_KEYS.SELECTED_VILLAGE);
           localStorage.removeItem(STORAGE_KEYS.VILLAGE_NAME);
-        } catch {}
+        } catch { }
         return;
       }
       setVillageState(normalized);
@@ -1367,7 +1388,7 @@ export function AuthProvider({ children }) {
       setVillageNameState(name ? String(name) : null);
       try {
         localStorage.setItem(STORAGE_KEYS.SELECTED_VILLAGE, JSON.stringify(normalized));
-      } catch {}
+      } catch { }
     } else {
       setVillageState(null);
       setVillageIdState(null);
@@ -1375,7 +1396,7 @@ export function AuthProvider({ children }) {
       try {
         localStorage.removeItem(STORAGE_KEYS.SELECTED_VILLAGE);
         localStorage.removeItem(STORAGE_KEYS.VILLAGE_NAME);
-      } catch {}
+      } catch { }
     }
   }, []);
 
@@ -1421,7 +1442,7 @@ export function AuthProvider({ children }) {
           setUserState({ name: userObj.name, role: userObj.role, email: userObj.email });
           try {
             localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify({ name: userObj.name, role: userObj.role, email: userObj.email }));
-          } catch {}
+          } catch { }
         }
 
         // set userId if available in payload.user or top-level
@@ -1457,7 +1478,7 @@ export function AuthProvider({ children }) {
               setUserState({ name: parsed.name ?? parsed.sub ?? null, role: parsed.role ?? null, email: parsed.email ?? null });
               try {
                 localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify({ name: parsed.name ?? parsed.sub ?? null, role: parsed.role ?? null, email: parsed.email ?? null }));
-              } catch {}
+              } catch { }
             }
           }
         }
@@ -1490,7 +1511,7 @@ export function AuthProvider({ children }) {
             setVillageIdState(normalizedId);
             try {
               localStorage.setItem(STORAGE_KEYS.VILLAGE, normalizedId);
-            } catch {}
+            } catch { }
           }
         }
 
@@ -1503,7 +1524,7 @@ export function AuthProvider({ children }) {
             try {
               const preview = { plotId: normalizedPid };
               setSelectedPlotState(preview);
-            } catch {}
+            } catch { }
           }
         }
 
@@ -1525,7 +1546,7 @@ export function AuthProvider({ children }) {
             try {
               const preview = { materialId: normalizedMid };
               setSelectedMaterialState(preview);
-            } catch {}
+            } catch { }
           }
         }
 
@@ -1547,7 +1568,7 @@ export function AuthProvider({ children }) {
             try {
               const preview = { facilityId: normalizedFid };
               setSelectedFacilityState(preview);
-            } catch {}
+            } catch { }
           }
         }
 
@@ -1569,7 +1590,7 @@ export function AuthProvider({ children }) {
             try {
               const preview = { familyId: normalizedFid };
               setSelectedFamilyState(preview);
-            } catch {}
+            } catch { }
           }
         }
 
@@ -1578,12 +1599,12 @@ export function AuthProvider({ children }) {
           setUserIdState(String(finalUserId));
           try {
             localStorage.setItem(STORAGE_KEYS.USERID, String(finalUserId));
-          } catch {}
+          } catch { }
         }
 
         try {
           localStorage.setItem(STORAGE_KEYS.AUTH_PAYLOAD, JSON.stringify(p));
-        } catch {}
+        } catch { }
 
         const serverProvidedExpiry = (p.expiresIn ?? p.expires_in) || (p.expiresAt ?? p.expires_at) || null;
         if (!tok && userObj && !serverProvidedExpiry && !tokenExpiresAt) {
@@ -1645,9 +1666,9 @@ export function AuthProvider({ children }) {
       localStorage.removeItem(STORAGE_KEYS.SELECTED_FAMILY);
       // remove aliases too for best effort
       for (const k of [...PLOT_ID_ALIASES, ...SELECTED_PLOT_ALIASES, ...MATERIAL_ID_ALIASES, ...SELECTED_MATERIAL_ALIASES, ...FACILITY_ID_ALIASES, ...SELECTED_FACILITY_ALIASES, ...FAMILY_ID_ALIASES, ...SELECTED_FAMILY_ALIASES]) {
-        try { localStorage.removeItem(k); } catch {}
+        try { localStorage.removeItem(k); } catch { }
       }
-    } catch {}
+    } catch { }
   }, [clearTimers]);
 
   const isAuthenticated = !!(user && token);
@@ -1660,7 +1681,7 @@ export function AuthProvider({ children }) {
       setSelectedPlotState(null);
       try {
         localStorage.removeItem(STORAGE_KEYS.SELECTED_PLOT);
-      } catch {}
+      } catch { }
     }
   }, []);
 
@@ -1673,7 +1694,7 @@ export function AuthProvider({ children }) {
         try {
           localStorage.removeItem(STORAGE_KEYS.SELECTED_PLOT);
           localStorage.removeItem(STORAGE_KEYS.PLOT_ID);
-        } catch {}
+        } catch { }
         return;
       }
       setSelectedPlotState(normalized);
@@ -1681,14 +1702,14 @@ export function AuthProvider({ children }) {
       if (id !== undefined && id !== null) setPlotIdState(String(id));
       try {
         localStorage.setItem(STORAGE_KEYS.SELECTED_PLOT, JSON.stringify(normalized));
-      } catch {}
+      } catch { }
     } else if (sp == null) {
       setSelectedPlotState(null);
       setPlotIdState(null);
       try {
         localStorage.removeItem(STORAGE_KEYS.SELECTED_PLOT);
         localStorage.removeItem(STORAGE_KEYS.PLOT_ID);
-      } catch {}
+      } catch { }
     } else {
       const normalizedId = normalizePlotId(sp);
       if (normalizedId) {
@@ -1697,7 +1718,7 @@ export function AuthProvider({ children }) {
         setSelectedPlotState(preview);
         try {
           localStorage.setItem(STORAGE_KEYS.SELECTED_PLOT, JSON.stringify(preview));
-        } catch {}
+        } catch { }
       } else {
         setSelectedPlotState(null);
         setPlotIdState(null);
@@ -1731,7 +1752,7 @@ export function AuthProvider({ children }) {
       setSelectedMaterialState(null);
       try {
         localStorage.removeItem(STORAGE_KEYS.SELECTED_MATERIAL);
-      } catch {}
+      } catch { }
     }
   }, []);
 
@@ -1744,7 +1765,7 @@ export function AuthProvider({ children }) {
         try {
           localStorage.removeItem(STORAGE_KEYS.SELECTED_MATERIAL);
           localStorage.removeItem(STORAGE_KEYS.MATERIAL_ID);
-        } catch {}
+        } catch { }
         return;
       }
       setSelectedMaterialState(normalized);
@@ -1752,14 +1773,14 @@ export function AuthProvider({ children }) {
       if (id !== undefined && id !== null) setMaterialIdState(String(id));
       try {
         localStorage.setItem(STORAGE_KEYS.SELECTED_MATERIAL, JSON.stringify(normalized));
-      } catch {}
+      } catch { }
     } else if (sm == null) {
       setSelectedMaterialState(null);
       setMaterialIdState(null);
       try {
         localStorage.removeItem(STORAGE_KEYS.SELECTED_MATERIAL);
         localStorage.removeItem(STORAGE_KEYS.MATERIAL_ID);
-      } catch {}
+      } catch { }
     } else {
       const normalizedId = normalizeMaterialId(sm);
       if (normalizedId) {
@@ -1768,7 +1789,7 @@ export function AuthProvider({ children }) {
         setSelectedMaterialState(preview);
         try {
           localStorage.setItem(STORAGE_KEYS.SELECTED_MATERIAL, JSON.stringify(preview));
-        } catch {}
+        } catch { }
       } else {
         setSelectedMaterialState(null);
         setMaterialIdState(null);
@@ -1800,7 +1821,7 @@ export function AuthProvider({ children }) {
       setSelectedFacilityState(null);
       try {
         localStorage.removeItem(STORAGE_KEYS.SELECTED_FACILITY);
-      } catch {}
+      } catch { }
     }
   }, []);
 
@@ -1813,7 +1834,7 @@ export function AuthProvider({ children }) {
         try {
           localStorage.removeItem(STORAGE_KEYS.SELECTED_FACILITY);
           localStorage.removeItem(STORAGE_KEYS.FACILITY_ID);
-        } catch {}
+        } catch { }
         return;
       }
       setSelectedFacilityState(normalized);
@@ -1821,14 +1842,14 @@ export function AuthProvider({ children }) {
       if (id !== undefined && id !== null) setFacilityIdState(String(id));
       try {
         localStorage.setItem(STORAGE_KEYS.SELECTED_FACILITY, JSON.stringify(normalized));
-      } catch {}
+      } catch { }
     } else if (sf == null) {
       setSelectedFacilityState(null);
       setFacilityIdState(null);
       try {
         localStorage.removeItem(STORAGE_KEYS.SELECTED_FACILITY);
         localStorage.removeItem(STORAGE_KEYS.FACILITY_ID);
-      } catch {}
+      } catch { }
     } else {
       const normalizedId = normalizeFacilityId(sf);
       if (normalizedId) {
@@ -1837,7 +1858,7 @@ export function AuthProvider({ children }) {
         setSelectedFacilityState(preview);
         try {
           localStorage.setItem(STORAGE_KEYS.SELECTED_FACILITY, JSON.stringify(preview));
-        } catch {}
+        } catch { }
       } else {
         setSelectedFacilityState(null);
         setFacilityIdState(null);
@@ -1869,7 +1890,7 @@ export function AuthProvider({ children }) {
       setSelectedFamilyState(null);
       try {
         localStorage.removeItem(STORAGE_KEYS.SELECTED_FAMILY);
-      } catch {}
+      } catch { }
     }
   }, []);
 
@@ -1882,7 +1903,7 @@ export function AuthProvider({ children }) {
         try {
           localStorage.removeItem(STORAGE_KEYS.SELECTED_FAMILY);
           localStorage.removeItem(STORAGE_KEYS.FAMILY_ID);
-        } catch {}
+        } catch { }
         return;
       }
       setSelectedFamilyState(normalized);
@@ -1890,14 +1911,14 @@ export function AuthProvider({ children }) {
       if (id !== undefined && id !== null) setFamilyIdState(String(id));
       try {
         localStorage.setItem(STORAGE_KEYS.SELECTED_FAMILY, JSON.stringify(normalized));
-      } catch {}
+      } catch { }
     } else if (sfam == null) {
       setSelectedFamilyState(null);
       setFamilyIdState(null);
       try {
         localStorage.removeItem(STORAGE_KEYS.SELECTED_FAMILY);
         localStorage.removeItem(STORAGE_KEYS.FAMILY_ID);
-      } catch {}
+      } catch { }
     } else {
       const normalizedId = normalizeFamilyId(sfam);
       if (normalizedId) {
@@ -1906,7 +1927,7 @@ export function AuthProvider({ children }) {
         setSelectedFamilyState(preview);
         try {
           localStorage.setItem(STORAGE_KEYS.SELECTED_FAMILY, JSON.stringify(preview));
-        } catch {}
+        } catch { }
       } else {
         setSelectedFamilyState(null);
         setFamilyIdState(null);

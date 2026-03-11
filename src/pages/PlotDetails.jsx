@@ -839,7 +839,7 @@ return (
             onClick={(e) => { e.stopPropagation(); openDocsModalById(e, s.verificationId ?? s.verification_id ?? s.verification ?? s._id); }}
             className="px-3 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg text-xs font-medium hover:bg-slate-50 transition-colors flex items-center gap-1.5"
           >
-            <ImageIcon size={13} /> Docs
+            <ImageIcon size={13} /> Docs ({s.docs.length})
           </button>
         </div>
       </div>
