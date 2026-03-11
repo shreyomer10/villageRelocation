@@ -178,12 +178,8 @@ def numberOfHomes(decoded_data, villageId):
 
 @analytics_BP.route("/villages/family-count", defaults={"village_id": None}, methods=["GET"])
 @analytics_BP.route("/villages/<village_id>/family-count", methods=["GET"])
-@auth_required
 def get_family_count(decoded_data,village_id):
     try:
-        error = authorizationDD(decoded_data)
-        if error:
-            return make_response(True, message=error["message"], status=error["status"])
         pipeline = []
 
         # Only match villageId if a specific village_id is passed

@@ -77,9 +77,14 @@ def insert_verification(decoded_data, plotId):
             return make_response(True, "Building type not found", status=404)
 
         stages = [s for s in building.get("stages", []) if not s.get("deleted", False)]
-        stage_names = [s["name"].lower() for s in stages]
         stage_ids = [s["stageId"] for s in stages]
-
+        stage_map = {
+            s["stageId"]: {
+                "name": s["name"],
+                "desc": s.get("desc", "")
+            }
+            for s in stages
+        }
         current_stage = verification_obj.currentStage
         if current_stage not in stage_ids:
             return make_response(True, f"Invalid stageId: {current_stage}", status=400)
@@ -105,7 +110,7 @@ def insert_verification(decoded_data, plotId):
         pipeline_result = run_verification_pipeline(
             verification_doc.model_dump(),
             target,
-            stage_names
+            stage_map
         )
         new_verification_id = get_next_verification_id(db, villageId, typeId)
         now = nowIST()

@@ -81,34 +81,45 @@ def validate_time(captured_time_str):
 
 # ---------------- STAGE CLASSIFICATION ----------------
 
-def classify_stage(image_url, stages):
+def classify_stage(image_url, stage_map):
 
     try:
 
         image_bytes = requests.get(image_url, timeout=10).content
 
-        stage_list = "\n".join(stages)
+        stage_text = "\n".join(
+            [
+                f"{stage_id} | {stage['name']} | {stage['desc']}"
+                for stage_id, stage in stage_map.items()
+            ]
+        )
+
+        stage_ids = list(stage_map.keys())
 
         prompt = f"""
-        You are performing a strict classification task.
+You are performing STRICT classification of a construction stage.
 
-        The image shows a construction site. Your task is to determine the stage of construction.
+You MUST return ONLY one stageId from the allowed list.
 
-        You MUST choose exactly ONE stage from the list below.
+Allowed stages:
 
-        Allowed stages:
-        {stage_list}
+{stage_text}
 
-        Rules:
-        - Return ONLY one stage name.
-        - The output MUST exactly match one of the stage names above.
-        - Do NOT explain your answer.
-        - Do NOT add punctuation, sentences, or extra words.
-        - If the stage cannot be determined confidently, return: UNKNOWN
+Rules:
+- Output MUST be ONLY a stageId
+- Output MUST exactly match one of these stageIds
+- Do NOT output stage name
+- Do NOT output explanation
+- Do NOT output punctuation
+- Do NOT output sentences
+- If uncertain return: UNKNOWN
 
-        Output format:
-        <stage_name>
-        """
+Allowed stageIds:
+{", ".join(stage_ids)}
+
+Output format:
+<stageId>
+"""
 
         response = client.models.generate_content(
             model=GEMINI_MODEL,
@@ -118,30 +129,27 @@ def classify_stage(image_url, stages):
             ]
         )
 
-        return response.text.strip().lower()
+        return response.text.strip()
 
     except:
         return None
 
-
 # ---------------- STAGE VALIDATION ----------------
-
-def validate_stage(docs, submitted_stage, stages):
+def validate_stage(docs, submitted_stage, stage_map):
 
     if not docs:
         return False
 
-    predicted_stage = classify_stage(docs[0], stages)
+    predicted_stage = classify_stage(docs[0], stage_map)
 
     if not predicted_stage:
         return False
 
-    return predicted_stage == submitted_stage.lower()
-
+    return predicted_stage == submitted_stage
 
 # ---------------- MAIN PIPELINE ----------------
 
-def run_verification_pipeline(verification, plot, stages):
+def run_verification_pipeline(verification, plot, stage_map):
 
     geo_result = validate_geo(
         verification["latitude"],
@@ -157,7 +165,7 @@ def run_verification_pipeline(verification, plot, stages):
     stage_result = validate_stage(
         verification.get("docs", []),
         verification["currentStage"],
-        stages
+        stage_map
     )
 
     fraud_score = (
