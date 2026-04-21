@@ -23,6 +23,7 @@ import House from "./pages/HousePage.jsx";
 import HouseDetails from "./pages/HouseDetails.jsx";
 import MaterialDetails from "./pages/MaterialDetails.jsx";
 import FacilityDetails from "./pages/FacilitiesDetails.jsx";
+import AIChatWidget from "./component/AIChatWidget.jsx";
 
 export default function App() {
   return (
@@ -41,6 +42,7 @@ export default function App() {
         element={
           <PrivateRoute>
             <Dashboard />
+            <AIChatWidget />
           </PrivateRoute>
         }
       />
@@ -49,6 +51,7 @@ export default function App() {
         element={
           <PrivateRoute>
             <Home />
+            <AIChatWidget/>
           </PrivateRoute>
         }
       />
@@ -57,6 +60,7 @@ export default function App() {
         element={
           <PrivateRoute>
             <PlotPage />
+            <AIChatWidget/>
           </PrivateRoute>
         }
       />
@@ -65,6 +69,7 @@ export default function App() {
         element={
           <PrivateRoute>
             <House />
+            <AIChatWidget/>
           </PrivateRoute>
         }
       />
@@ -73,6 +78,7 @@ export default function App() {
         element={
           <PrivateRoute>
             <Feedbacks />
+            <AIChatWidget/>
           </PrivateRoute>
         }
       />
@@ -81,6 +87,7 @@ export default function App() {
         element={
           <PrivateRoute>
             <Material />
+            <AIChatWidget/>
           </PrivateRoute>
         }
       />
@@ -89,6 +96,7 @@ export default function App() {
         element={
           <PrivateRoute>
             <Facilities />
+            <AIChatWidget/>
           </PrivateRoute>
         }
       />
@@ -99,6 +107,7 @@ export default function App() {
         element={
           <PrivateRoute>
             <FamilyDetails />
+            <AIChatWidget/>
           </PrivateRoute>
         }
       />
@@ -108,6 +117,7 @@ export default function App() {
         element={
           <PrivateRoute>
             <PlotDetails />
+            <AIChatWidget/>
           </PrivateRoute>
         }
       />
@@ -117,6 +127,7 @@ export default function App() {
         element={
           <PrivateRoute>
             <HouseDetails />
+            <AIChatWidget/>
           </PrivateRoute>
         }
       />
@@ -127,6 +138,7 @@ export default function App() {
         element={
           <PrivateRoute>
             <MaterialDetails />
+            <AIChatWidget/>
           </PrivateRoute>
         }
       />
@@ -137,6 +149,7 @@ export default function App() {
         element={
           <PrivateRoute>
             <FacilityDetails />
+            <AIChatWidget/>
           </PrivateRoute>
         }
       />
@@ -146,6 +159,7 @@ export default function App() {
         element={
           <PrivateRoute>
             <StagePage />
+            <AIChatWidget/>
           </PrivateRoute>
         }
       />
@@ -155,6 +169,7 @@ export default function App() {
         element={
           <PrivateRoute>
             <Building />
+            <AIChatWidget/>
           </PrivateRoute>
         }
       />
@@ -164,6 +179,7 @@ export default function App() {
         element={
           <PrivateRoute>
             <EmployeesPage />
+            <AIChatWidget/>
           </PrivateRoute>
         }
       />
@@ -173,6 +189,7 @@ export default function App() {
         element={
           <PrivateRoute>
             <MeetingsPage />
+            <AIChatWidget/>
           </PrivateRoute>
         }
       />
@@ -182,6 +199,7 @@ export default function App() {
         element={
           <PrivateRoute>
             <OptionPage />
+            <AIChatWidget/>
           </PrivateRoute>
         }
       />
@@ -191,6 +209,8 @@ export default function App() {
         element={
           <PrivateRoute>
             <FamilyList />
+            <AIChatWidget/>
+
           </PrivateRoute>
         }
       />

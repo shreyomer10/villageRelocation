@@ -1,6 +1,8 @@
 ﻿// src/context/AuthContext.jsx
 import React, { createContext, useCallback, useEffect, useRef, useState } from "react";
 
+const API_URL = import.meta.env.VITE_API_BASE;
+
 export const AuthContext = createContext({
   user: null,
   setUser: () => { },
@@ -1145,7 +1147,7 @@ export function AuthProvider({ children }) {
         const headers = { "Content-Type": "application/json", Accept: "application/json" };
 
         const attempt = async (bodyObj) => {
-          const { ok, status, json, text } = await safeFetch("https://villagerelocation.onrender.com/refresh", {
+          const { ok, status, json, text } = await safeFetch(`${API_URL}/refresh`, {
             method: "POST",
             headers,
             body: JSON.stringify(bodyObj),
