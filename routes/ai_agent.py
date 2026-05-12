@@ -3,7 +3,7 @@ import json
 import re
 
 from bson import ObjectId
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, abort
 from google import genai
 from google.genai import types
 
@@ -204,11 +204,7 @@ def _save_chat_session(user_id, chat_id, messages, title=None):
         session.update(update_data)
         return _serialize_chat_session(session)
     except Exception as exc:
-        return jsonify({
-            "error":   True,
-            "message": f"Chat Session store to DB error: {str(exc)}",
-            "result":  None,
-        }), 500
+        raise ExecutionError(f"Failed to save chat session: {str(exc)}")
 
 
 # ── System prompt ──────────────────────────────────────────────────────────────
@@ -371,8 +367,7 @@ def ai_chat(claims):
                     try:
                         session = _save_chat_session(user_id, chat_id, persisted_messages)
                     except Exception as exc:
-                        raise Exception(str(exc))
-
+                        abort(500, description=str(exc))
                     if session:
                         final_payload["sessionId"] = session["id"]
                         final_payload["sessionTitle"] = session["title"]
