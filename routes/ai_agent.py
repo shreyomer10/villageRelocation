@@ -1,11 +1,15 @@
+import datetime as dt
 import json
 import re
 
+from bson import ObjectId
 from flask import Blueprint, request, jsonify
 from google import genai
 from google.genai import types
 
 from config import db, GEMINI_API, GEMINI_MODEL
+from utils.helpers import make_response
+from utils.tokenAuth import auth_required
 
 ai_bp = Blueprint("ai", __name__)
 
@@ -14,6 +18,7 @@ _villages = db.villages
 _families = db.testing      # actual families collection is named 'testing'
 _plots    = db.plots
 _houses   = db.house
+_chat_sessions = db.chat_sessions
 
 # ── Tools (plain Python functions that query MongoDB) ──────────────────────────
 
@@ -116,6 +121,86 @@ TOOLS_MAP = {
     "get_construction_progress":   get_construction_progress,
 }
 
+# ── Chat session persistence helpers ─────────────────────────────────────────────
+
+def _normalize_chat_messages(messages):
+    if not isinstance(messages, list):
+        raise ValueError("messages must be an array")
+
+    normalized = []
+    for item in messages:
+        if not isinstance(item, dict):
+            raise ValueError("each message must be an object")
+        role = str(item.get("role", "")).lower()
+        if role not in {"user", "assistant", "system"}:
+            raise ValueError("message role must be 'user', 'assistant', or 'system'")
+        content = item.get("content")
+        if content is None:
+            raise ValueError("each message must include a content field")
+        normalized.append({
+            "role": role,
+            "content": str(content),
+        })
+    return normalized
+
+
+def _message_to_content(message):
+    return types.Content(role=message["role"], parts=[types.Part(text=message["content"])])
+
+
+def _generate_chat_title(messages):
+    first_user = next(
+        (m for m in messages if m.get("role") == "user" and str(m.get("content", "")).strip()),
+        None,
+    )
+    if not first_user:
+        return "New chat"
+
+    text = str(first_user["content"]).strip()
+    title = text[:48].strip()
+    if len(text) > 48:
+        title = title.rstrip() + "..."
+    return title or "New chat"
+
+
+def _serialize_chat_session(doc):
+    return {
+        "id": str(doc["_id"]),
+        "title": doc.get("title", "New chat"),
+        "messages": doc.get("messages", []),
+        "createdAt": doc.get("createdAt"),
+        "updatedAt": doc.get("updatedAt"),
+    }
+
+
+def _load_chat_session(user_id, chat_id):
+    if not ObjectId.is_valid(chat_id):
+        return None
+    return _chat_sessions.find_one({"_id": ObjectId(chat_id), "userId": user_id})
+
+
+def _save_chat_session(user_id, chat_id, messages, title=None):
+    session = _load_chat_session(user_id, chat_id)
+    if not session:
+        return None
+
+    update_data = {
+        "messages": messages,
+        "updatedAt": dt.datetime.utcnow().isoformat(),
+    }
+    if title is not None:
+        update_data["title"] = title.strip() or session.get("title", "New chat")
+    elif not session.get("title") or session.get("title") == "New chat":
+        update_data["title"] = _generate_chat_title(messages)
+
+    _chat_sessions.update_one(
+        {"_id": session["_id"]},
+        {"$set": update_data},
+    )
+    session.update(update_data)
+    return _serialize_chat_session(session)
+
+
 # ── System prompt ──────────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = """
@@ -213,12 +298,16 @@ def _extract_json(text: str) -> dict:
 # ── Route ──────────────────────────────────────────────────────────────────────
 
 @ai_bp.route("/ai/chat", methods=["POST"])
-def ai_chat():
-    body        = request.get_json(silent=True) or {}
-    user_prompt = body.get("prompt", "").strip()
+@auth_required
+def ai_chat(claims):
+    body      = request.get_json(silent=True) or {}
+    messages  = body.get("messages")
+    prompt    = (body.get("prompt") or "").strip()
+    chat_id   = body.get("chat_id")
+    user_id   = claims.get("userId")
 
-    if not user_prompt:
-        return jsonify({"error": True, "message": "Prompt is required", "result": None}), 400
+    if not messages and not prompt:
+        return jsonify({"error": True, "message": "Prompt or messages are required", "result": None}), 400
 
     if not GEMINI_API:
         return jsonify({"error": True, "message": "AI service not configured (missing GEMINI_API)", "result": None}), 503
@@ -227,10 +316,13 @@ def ai_chat():
         client     = genai.Client(api_key=GEMINI_API)
         model_name = GEMINI_MODEL or "gemini-2.0-flash"
 
-        # Conversation history — grows as the ReAct loop runs
-        history = [
-            types.Content(role="user", parts=[types.Part(text=user_prompt)])
-        ]
+        history_messages = []
+        if messages is not None:
+            history_messages = _normalize_chat_messages(messages)
+        else:
+            history_messages = [{"role": "user", "content": prompt}]
+
+        history = [_message_to_content(message) for message in history_messages]
 
         max_iterations = 6
         for _ in range(max_iterations):
@@ -239,31 +331,39 @@ def ai_chat():
                 contents=history,
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_PROMPT,
-                    temperature=0.1,        # low temp → deterministic JSON
+                    temperature=0.1,
                 ),
             )
 
             reply_text = response.text.strip()
 
-            # ── Parse the model's JSON reply ───────────────────────────────
             try:
                 parsed = _extract_json(reply_text)
             except (json.JSONDecodeError, ValueError):
-                # Model returned non-JSON — surface as plain text answer
                 return jsonify({
-                    "error":  False,
+                    "error": False,
                     "result": {
                         "type":    "text",
                         "title":   "Answer",
                         "summary": reply_text,
+                        "assistantText": reply_text,
                     },
                 }), 200
 
-            # ── Final answer ───────────────────────────────────────────────
             if "final" in parsed:
-                return jsonify({"error": False, "result": parsed["final"]}), 200
+                final_payload = dict(parsed["final"])
+                final_payload["assistantText"] = reply_text
+                if chat_id:
+                    final_payload["sessionId"] = chat_id
 
-            # ── Tool call ──────────────────────────────────────────────────
+                if chat_id:
+                    persisted_messages = history_messages + [{"role": "assistant", "content": reply_text}]
+                    session = _save_chat_session(user_id, chat_id, persisted_messages)
+                    if session:
+                        final_payload["sessionId"] = session["id"]
+                        final_payload["sessionTitle"] = session["title"]
+                return jsonify({"error": False, "result": final_payload}), 200
+
             if "action" in parsed:
                 tool_name = parsed.get("action", "")
                 args      = parsed.get("args") or {}
@@ -276,26 +376,24 @@ def ai_chat():
                     }), 500
 
                 tool_result      = TOOLS_MAP[tool_name](**args)
-                tool_result_text = (
-                    f"Tool '{tool_name}' returned:\n{json.dumps(tool_result, indent=2)}"
-                )
+                tool_result_text = f"Tool '{tool_name}' returned: {json.dumps(tool_result, indent=2)}"
 
-                # Append exchange to history
-                history.append(types.Content(role="model", parts=[types.Part(text=reply_text)]))
-                history.append(types.Content(role="user",  parts=[types.Part(text=tool_result_text)]))
+                history.append(types.Content(role="assistant", parts=[types.Part(text=reply_text)]))
+                history.append(types.Content(role="user", parts=[types.Part(text=tool_result_text)]))
+                history_messages.append({"role": "assistant", "content": reply_text})
+                history_messages.append({"role": "user", "content": tool_result_text})
                 continue
 
-            # ── Unrecognised response structure ────────────────────────────
             return jsonify({
-                "error":  False,
+                "error": False,
                 "result": {
                     "type":    "text",
                     "title":   "Answer",
                     "summary": reply_text,
+                    "assistantText": reply_text,
                 },
             }), 200
 
-        # If we exhaust the loop without a final answer
         return jsonify({
             "error":   True,
             "message": "The AI could not converge on an answer. Please rephrase your question.",
@@ -308,3 +406,74 @@ def ai_chat():
             "message": f"AI service error: {str(exc)}",
             "result":  None,
         }), 500
+
+
+@ai_bp.route("/ai/chat-sessions", methods=["GET"])
+@auth_required
+def list_chat_sessions(claims):
+    user_id = claims.get("userId")
+    sessions = list(_chat_sessions.find({"userId": user_id}, {"messages": 0}).sort("updatedAt", -1))
+    payload = [_serialize_chat_session(session) for session in sessions]
+    return make_response(False, "Chat sessions fetched successfully", payload)
+
+
+@ai_bp.route("/ai/chat-sessions", methods=["POST"])
+@auth_required
+def create_chat_session(claims):
+    body = request.get_json(silent=True) or {}
+    title = str(body.get("title", "New chat") or "New chat").strip() or "New chat"
+    user_id = claims.get("userId")
+    now = dt.datetime.utcnow().isoformat()
+
+    new_session = {
+        "userId": user_id,
+        "title": title,
+        "messages": [],
+        "createdAt": now,
+        "updatedAt": now,
+    }
+    result = _chat_sessions.insert_one(new_session)
+    new_session["_id"] = result.inserted_id
+    return make_response(False, "Chat session created successfully", _serialize_chat_session(new_session), 201)
+
+
+@ai_bp.route("/ai/chat-sessions/<chat_id>", methods=["GET"])
+@auth_required
+def get_chat_session(claims, chat_id):
+    user_id = claims.get("userId")
+    session = _load_chat_session(user_id, chat_id)
+    if not session:
+        return make_response(True, "Chat session not found", None, 404)
+    return make_response(False, "Chat session loaded", _serialize_chat_session(session))
+
+
+@ai_bp.route("/ai/chat-sessions/<chat_id>", methods=["PUT"])
+@auth_required
+def update_chat_session(claims, chat_id):
+    body = request.get_json(silent=True) or {}
+    user_id = claims.get("userId")
+    session = _load_chat_session(user_id, chat_id)
+    if not session:
+        return make_response(True, "Chat session not found", None, 404)
+
+    update_payload = {}
+    if "title" in body:
+        update_payload["title"] = str(body.get("title") or session.get("title", "New chat")).strip() or session.get("title", "New chat")
+    if "messages" in body:
+        update_payload["messages"] = _normalize_chat_messages(body.get("messages") or [])
+    update_payload["updatedAt"] = dt.datetime.utcnow().isoformat()
+
+    _chat_sessions.update_one({"_id": session["_id"]}, {"$set": update_payload})
+    session.update(update_payload)
+    return make_response(False, "Chat session updated successfully", _serialize_chat_session(session))
+
+
+@ai_bp.route("/ai/chat-sessions/<chat_id>", methods=["DELETE"])
+@auth_required
+def delete_chat_session(claims, chat_id):
+    user_id = claims.get("userId")
+    session = _load_chat_session(user_id, chat_id)
+    if not session:
+        return make_response(True, "Chat session not found", None, 404)
+    _chat_sessions.delete_one({"_id": session["_id"]})
+    return make_response(False, "Chat session deleted successfully", None, 200)
