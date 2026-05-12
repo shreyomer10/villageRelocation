@@ -145,7 +145,10 @@ def _normalize_chat_messages(messages):
 
 
 def _message_to_content(message):
-    return types.Content(role=message["role"], parts=[types.Part(text=message["content"])])
+    role = message["role"]
+    if role == "assistant":
+        role = "model"
+    return types.Content(role=role, parts=[types.Part(text=message["content"])])
 
 
 def _generate_chat_title(messages):
@@ -378,7 +381,7 @@ def ai_chat(claims):
                 tool_result      = TOOLS_MAP[tool_name](**args)
                 tool_result_text = f"Tool '{tool_name}' returned: {json.dumps(tool_result, indent=2)}"
 
-                history.append(types.Content(role="assistant", parts=[types.Part(text=reply_text)]))
+                history.append(types.Content(role="model", parts=[types.Part(text=reply_text)]))
                 history.append(types.Content(role="user", parts=[types.Part(text=tool_result_text)]))
                 history_messages.append({"role": "assistant", "content": reply_text})
                 history_messages.append({"role": "user", "content": tool_result_text})
