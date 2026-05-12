@@ -183,25 +183,32 @@ def _load_chat_session(user_id, chat_id):
 
 
 def _save_chat_session(user_id, chat_id, messages, title=None):
-    session = _load_chat_session(user_id, chat_id)
-    if not session:
-        return None
+    try:
+        session = _load_chat_session(user_id, chat_id)
+        if not session:
+            return None
 
-    update_data = {
-        "messages": messages,
-        "updatedAt": dt.datetime.utcnow().isoformat(),
-    }
-    if title is not None:
-        update_data["title"] = title.strip() or session.get("title", "New chat")
-    elif not session.get("title") or session.get("title") == "New chat":
-        update_data["title"] = _generate_chat_title(messages)
+        update_data = {
+            "messages": messages,
+            "updatedAt": dt.datetime.utcnow().isoformat(),
+        }
+        if title is not None:
+            update_data["title"] = title.strip() or session.get("title", "New chat")
+        elif not session.get("title") or session.get("title") == "New chat":
+            update_data["title"] = _generate_chat_title(messages)
 
-    _chat_sessions.update_one(
-        {"_id": session["_id"]},
-        {"$set": update_data},
-    )
-    session.update(update_data)
-    return _serialize_chat_session(session)
+        _chat_sessions.update_one(
+            {"_id": session["_id"]},
+            {"$set": update_data},
+        )
+        session.update(update_data)
+        return _serialize_chat_session(session)
+    except Exception as exc:
+        return jsonify({
+            "error":   True,
+            "message": f"Chat Session store to DB error: {str(exc)}",
+            "result":  None,
+        }), 500
 
 
 # ── System prompt ──────────────────────────────────────────────────────────────
@@ -361,7 +368,11 @@ def ai_chat(claims):
 
                 if chat_id:
                     persisted_messages = history_messages + [{"role": "assistant", "content": reply_text}]
-                    session = _save_chat_session(user_id, chat_id, persisted_messages)
+                    try:
+                        session = _save_chat_session(user_id, chat_id, persisted_messages)
+                    except Exception as exc:
+                        raise Exception(str(exc))
+
                     if session:
                         final_payload["sessionId"] = session["id"]
                         final_payload["sessionTitle"] = session["title"]
