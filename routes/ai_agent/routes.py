@@ -10,6 +10,7 @@ from utils.tokenAuth import auth_required
 from .executor import run_conversation
 from .sessions import (
     _chat_sessions,
+    _generate_chat_title,
     _normalize_chat_messages,
     _serialize_chat_session,
     _load_chat_session,
@@ -66,7 +67,8 @@ def ai_chat(claims):
         model_name = GEMINI_MODEL or "gemini-2.0-flash"
 
         if not chat_id:
-            new_session = _create_chat_session(user_id)
+            title = _generate_chat_title([{"role": "user", "content": user_prompt}])
+            new_session = _create_chat_session(user_id, title)
             chat_id = str(new_session["_id"])
             persisted_history = []
         else:
