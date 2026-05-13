@@ -22,10 +22,13 @@ def _normalize_chat_messages(messages):
         content = item.get("content")
         if content is None:
             raise ValueError("each message must include a content field")
-        normalized.append({
+        entry = {
             "role": role,
             "content": str(content),
-        })
+        }
+        if role == "assistant" and isinstance(item.get("trace"), list):
+            entry["trace"] = item["trace"]
+        normalized.append(entry)
     return normalized
 
 

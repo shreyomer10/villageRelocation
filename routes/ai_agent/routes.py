@@ -1,21 +1,16 @@
 import datetime as dt
-import json
-import re
 
 from flask import Blueprint, request, jsonify, abort
 from google import genai
-from google.genai import types
 
 from config import GEMINI_API, GEMINI_MODEL
 from utils.helpers import make_response
 from utils.tokenAuth import auth_required
 
-from .prompt import SYSTEM_PROMPT
-from .tools import TOOLS_MAP
+from .executor import run_conversation
 from .sessions import (
     _chat_sessions,
     _normalize_chat_messages,
-    _message_to_content,
     _serialize_chat_session,
     _load_chat_session,
     _create_chat_session,
@@ -25,135 +20,112 @@ from .sessions import (
 ai_bp = Blueprint("ai", __name__)
 
 
-def _extract_json(text: str) -> dict:
-    """Parse JSON from model output, stripping markdown fences if present."""
-    text = text.strip()
-    fence = re.search(r"```(?:json)?\s*([\s\S]+?)\s*```", text)
-    if fence:
-        text = fence.group(1).strip()
-    return json.loads(text)
+def _extract_user_prompt(body: dict) -> str | None:
+    """Get the new user message text from a /ai/chat body.
+
+    Accepts either `{prompt: "..."}` or `{messages: [...]}` (legacy shape from
+    the frontend). With `messages`, takes the last user-role entry.
+    """
+    prompt = (body.get("prompt") or "").strip()
+    if prompt:
+        return prompt
+    messages = body.get("messages")
+    if isinstance(messages, list):
+        for msg in reversed(messages):
+            if isinstance(msg, dict) and str(msg.get("role", "")).lower() == "user":
+                text = str(msg.get("content", "")).strip()
+                if text:
+                    return text
+    return None
 
 
 @ai_bp.route("/ai/chat", methods=["POST"])
 @auth_required
 def ai_chat(claims):
-    body      = request.get_json(silent=True) or {}
-    messages  = body.get("messages")
-    prompt    = (body.get("prompt") or "").strip()
-    chat_id   = body.get("chat_id")
-    user_id   = claims.get("userId")
+    body = request.get_json(silent=True) or {}
+    chat_id = body.get("chat_id")
+    user_id = claims.get("userId")
 
-    if not messages and not prompt:
-        return jsonify({"error": True, "message": "Prompt or messages are required", "result": None}), 400
+    user_prompt = _extract_user_prompt(body)
+    if not user_prompt:
+        return jsonify({
+            "error": True,
+            "message": "Prompt or messages are required",
+            "result": None,
+        }), 400
 
     if not GEMINI_API:
-        return jsonify({"error": True, "message": "AI service not configured (missing GEMINI_API)", "result": None}), 503
+        return jsonify({
+            "error": True,
+            "message": "AI service not configured (missing GEMINI_API)",
+            "result": None,
+        }), 503
 
     try:
-        client     = genai.Client(api_key=GEMINI_API)
+        client = genai.Client(api_key=GEMINI_API)
         model_name = GEMINI_MODEL or "gemini-2.0-flash"
-
-        history_messages = []
-        if messages is not None:
-            history_messages = _normalize_chat_messages(messages)
-        else:
-            history_messages = [{"role": "user", "content": prompt}]
 
         if not chat_id:
             new_session = _create_chat_session(user_id)
             chat_id = str(new_session["_id"])
-
-        history = [_message_to_content(message) for message in history_messages]
-
-        max_iterations = 6
-        for _ in range(max_iterations):
-            response = client.models.generate_content(
-                model=model_name,
-                contents=history,
-                config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_PROMPT,
-                    temperature=0.1,
-                ),
-            )
-
-            reply_text = response.text.strip()
-
-            try:
-                parsed = _extract_json(reply_text)
-            except (json.JSONDecodeError, ValueError):
+            persisted_history = []
+        else:
+            session = _load_chat_session(user_id, chat_id)
+            if not session:
                 return jsonify({
-                    "error": False,
-                    "result": {
-                        "type":    "text",
-                        "title":   "Answer",
-                        "summary": reply_text,
-                        "assistantText": reply_text,
-                        "sessionId": chat_id,
-                    },
-                }), 200
+                    "error": True,
+                    "message": "Chat session not found",
+                    "result": None,
+                }), 404
+            persisted_history = session.get("messages", [])
 
-            if "final" in parsed:
-                final_payload = dict(parsed["final"])
-                final_payload["assistantText"] = reply_text
-                final_payload["sessionId"] = chat_id
+        # Strip trace fields before sending to Gemini — the model sees only
+        # the clean role/content turns.
+        clean_history = [
+            {"role": m["role"], "content": m["content"]}
+            for m in persisted_history
+            if isinstance(m, dict) and "role" in m and "content" in m
+        ]
 
-                persisted_messages = history_messages + [{"role": "assistant", "content": reply_text}]
-                try:
-                    session = _save_chat_session(user_id, chat_id, persisted_messages)
-                except Exception as exc:
-                    abort(500, description=str(exc))
-                if not session:
-                    return jsonify({
-                        "error":   True,
-                        "message": "Chat session not found",
-                        "result":  None,
-                    }), 404
-                final_payload["sessionId"] = session["id"]
-                final_payload["sessionTitle"] = session["title"]
-                return jsonify({"error": False, "result": final_payload}), 200
+        final_payload, trace = run_conversation(
+            client=client,
+            model=model_name,
+            history_messages=clean_history,
+            user_prompt=user_prompt,
+        )
 
-            if "action" in parsed:
-                tool_name = parsed.get("action", "")
-                args      = parsed.get("args") or {}
+        summary = (
+            final_payload.get("summary")
+            or final_payload.get("title")
+            or "(no summary)"
+        )
+        full_messages = persisted_history + [
+            {"role": "user", "content": user_prompt},
+            {"role": "assistant", "content": summary, "trace": trace},
+        ]
 
-                if tool_name not in TOOLS_MAP:
-                    return jsonify({
-                        "error":   True,
-                        "message": f"Model requested unknown tool '{tool_name}'.",
-                        "result":  None,
-                    }), 500
-
-                tool_result      = TOOLS_MAP[tool_name](**args)
-                tool_result_text = f"Tool '{tool_name}' returned: {json.dumps(tool_result, indent=2)}"
-
-                history.append(types.Content(role="model", parts=[types.Part(text=reply_text)]))
-                history.append(types.Content(role="user", parts=[types.Part(text=tool_result_text)]))
-                history_messages.append({"role": "assistant", "content": reply_text})
-                history_messages.append({"role": "user", "content": tool_result_text})
-                continue
-
+        try:
+            session = _save_chat_session(user_id, chat_id, full_messages)
+        except Exception as exc:
+            abort(500, description=str(exc))
+        if not session:
             return jsonify({
-                "error": False,
-                "result": {
-                    "type":    "text",
-                    "title":   "Answer",
-                    "summary": reply_text,
-                    "assistantText": reply_text,
-                    "sessionId": chat_id,
-                },
-            }), 200
+                "error": True,
+                "message": "Chat session not found",
+                "result": None,
+            }), 404
 
-        return jsonify({
-            "error":   True,
-            "message": "The AI could not converge on an answer. Please rephrase your question.",
-            "result":  {"sessionId": chat_id},
-        }), 500
+        payload = dict(final_payload)
+        payload["assistantText"] = summary
+        payload["sessionId"] = session["id"]
+        payload["sessionTitle"] = session["title"]
+        return jsonify({"error": False, "result": payload}), 200
 
     except Exception as exc:
         return jsonify({
-            "error":   True,
-            "message": f"AI service error: {str(exc)}",
-            "result":  None,
+            "error": True,
+            "message": f"AI service error: {exc}",
+            "result": None,
         }), 500
 
 
