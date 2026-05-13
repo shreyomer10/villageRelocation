@@ -24,6 +24,7 @@ import HouseDetails from "./pages/HouseDetails.jsx";
 import MaterialDetails from "./pages/MaterialDetails.jsx";
 import FacilityDetails from "./pages/FacilitiesDetails.jsx";
 import AIChatWidget from "./component/AIChatWidget.jsx";
+import ChatPage from "./pages/ChatPage.jsx";
 
 export default function App() {
   return (
@@ -211,6 +212,15 @@ export default function App() {
             <FamilyList />
             <AIChatWidget/>
 
+          </PrivateRoute>
+        }
+      />
+
+      <Route
+        path="/chat"
+        element={
+          <PrivateRoute>
+            <ChatPage />
           </PrivateRoute>
         }
       />

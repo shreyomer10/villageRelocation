@@ -21,6 +21,7 @@
  */
 
 import React, { useState, useRef, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   PieChart, Pie, Cell, ResponsiveContainer,
@@ -151,6 +152,7 @@ function ResponseRenderer({ result }) {
 // ── Main widget ────────────────────────────────────────────────────────────────
 
 export default function AIChatWidget() {
+  const navigate = useNavigate();
   const [open,    setOpen]    = useState(false);
   const [prompt,  setPrompt]  = useState("");
   const [loading, setLoading] = useState(false);
@@ -183,11 +185,11 @@ export default function AIChatWidget() {
         method:      "POST",
         headers:     { "Content-Type": "application/json" },
         credentials: "include",
-        body:        JSON.stringify({ prompt: text.trim() }),
+        body:        JSON.stringify({ messages: [{ role: "user", content: text.trim() }] }),
       });
       const json = await res.json();
       if (json.error) setError(json.message || "Something went wrong.");
-      else            setResult(json.result);
+      else            setResult(json.final);
     } catch {
       setError("Could not reach the AI service. Is the backend running?");
     } finally {
@@ -234,11 +236,16 @@ export default function AIChatWidget() {
               <span style={s.headerTitle}>✦ AI Assistant</span>
               <span style={s.headerSub}>Ask anything about relocation data</span>
             </div>
-            {(result || error) && (
-              <button onClick={handleReset} style={s.resetBtn} title="Ask another question">
-                ↩ New
+            <div style={{ display: "flex", gap: "8px" }}>
+              <button onClick={() => navigate("/chat")} style={s.fullChatBtn} title="Open Full Chat">
+                Full Chat
               </button>
-            )}
+              {(result || error) && (
+                <button onClick={handleReset} style={s.resetBtn} title="Ask another question">
+                  ↩ New
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Body */}
@@ -372,6 +379,17 @@ const s = {
     marginTop: 3,
   },
   resetBtn: {
+    background:   "rgba(255,255,255,0.18)",
+    border:       "1px solid rgba(255,255,255,0.35)",
+    color:        "#fff",
+    borderRadius: 20,
+    padding:      "4px 10px",
+    fontSize:     11,
+    cursor:       "pointer",
+    whiteSpace:   "nowrap",
+    marginTop:    2,
+  },
+  fullChatBtn: {
     background:   "rgba(255,255,255,0.18)",
     border:       "1px solid rgba(255,255,255,0.35)",
     color:        "#fff",
