@@ -3,7 +3,6 @@ import datetime as dt
 
 from flask import Flask, Blueprint,request, jsonify
 from flask_cors import CORS
-from flask_limiter import RateLimitExceeded
 from utils.helpers import make_response
 from config import JWT_EXPIRE_MIN, db
 from routes.auth import auth_bp
@@ -30,13 +29,11 @@ from routes.admin.facilities import facilities_bp
 from routes.app.facilityVerification import facility_verifications_bp
 from routes.app.materialUpdates import material_updates_bp
 from routes.admin.facilities import facilities_bp
-from utils.rate_limiting import limiter
 from routes.logs import logs_bp
 from routes.ai_agent import ai_bp
 from datetime import datetime
 
 app = Flask(__name__)
-limiter.init_app(app)
 
 CORS(app,
      supports_credentials=True,
@@ -81,19 +78,6 @@ app.register_blueprint(facilities_bp,url_prefix="/")
 app.register_blueprint(admin_BP,url_prefix="/admin")
 app.register_blueprint(logs_bp,url_prefix="/")
 app.register_blueprint(ai_bp,url_prefix="/")
-
-
-@app.errorhandler(RateLimitExceeded)
-def ratelimit_handler(e):
-
-
-    return make_response(
-        True,
-        message=f"Too many requests — please wait seconds before retrying.",
-        status=429
-    )
-
-
 
 
 @app.route("/", methods=["GET"])
