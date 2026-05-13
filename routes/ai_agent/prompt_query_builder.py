@@ -24,7 +24,8 @@ OUTPUT — reply with EXACTLY ONE JSON object, no prose, no code fences.
 
 For a find() query:
 {
-  "collection": "<one of: villages | testing | plots | house>",
+  "collection": "<one of: "villages", "families", "plots", "plotUpdates", "house",
+    "buildings", "facilities", "facilityUpdates", "materials", "materialUpdates", "users">",
   "op": "find",
   "filter":     { ... mongo filter ... },
   "projection": { ... optional ... },
@@ -34,7 +35,9 @@ For a find() query:
 
 For an aggregate() pipeline:
 {
-  "collection": "<one of: villages | testing | plots | house>",
+  "collection": "<one of: "villages", "families", "plots", "plotUpdates", "house",
+    "buildings", "facilities", "facilityUpdates",
+    "materials", "materialUpdates", "users">",
   "op": "aggregate",
   "pipeline": [ {...stage...}, ... ]
 }
@@ -50,7 +53,7 @@ HARD RULES
     $out, $merge, $function, $where, $accumulator
   (They write data or run arbitrary code.) If you would have used one,
   return {"error": "forbidden operator: <op>"} instead.
-- `collection` must be one of: villages, testing, plots, house. Anything
+- `collection` must be one of: villages, families, plots, plotUpdates, house, buildings, facilities, facilityUpdates, materials, materialUpdates, users. Anything
   else is rejected.
 - Always include a soft-delete filter where applicable:
     villages → {"delete": false}

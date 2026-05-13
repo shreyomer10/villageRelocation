@@ -157,47 +157,57 @@ def run_conversation(
     contents = _to_contents(history_messages, user_prompt)
     trace: list = []
 
-    for _ in range(MAX_OUTER_ROUNDS):
-        try:
-            envelope, raw_text = call_reasoner(client, model, contents)
-        except EnvelopeError as exc:
-            return (
-                {
-                    "type": "text",
-                    "title": "Answer",
-                    "summary": f"(reasoner produced unparseable output: {exc})",
-                },
-                trace,
+    try:
+        for _ in range(MAX_OUTER_ROUNDS):
+            try:
+                envelope, raw_text = call_reasoner(client, model, contents)
+            except EnvelopeError as exc:
+                return (
+                    {
+                        "type": "text",
+                        "title": "Answer",
+                        "summary": f"(reasoner produced unparseable output: {exc})",
+                    },
+                    trace,
+                )
+
+            if "final" in envelope:
+                return envelope["final"], trace
+
+            if "give_up" in envelope:
+                return (
+                    {
+                        "type": "text",
+                        "title": "Couldn't answer",
+                        "summary": envelope["give_up"],
+                    },
+                    trace,
+                )
+
+            # else "queries"
+            queries = envelope["queries"][:MAX_QUERIES_PER_ROUND]
+            results = []
+            for q in queries:
+                entry = _run_pseudo_query(client, model, q["intent"], q["pseudo"])
+                results.append(entry)
+                trace.append(entry)
+
+            # Feed results back as a synthetic user turn so the reasoner can
+            # see what came back on its next call.
+            contents.append(
+                types.Content(role="model", parts=[types.Part(text=_envelope_to_text(envelope, raw_text))])
             )
-
-        if "final" in envelope:
-            return envelope["final"], trace
-
-        if "give_up" in envelope:
-            return (
-                {
-                    "type": "text",
-                    "title": "Couldn't answer",
-                    "summary": envelope["give_up"],
-                },
-                trace,
+            contents.append(
+                types.Content(role="user", parts=[types.Part(text=format_query_result_message_batch(results))])
             )
-
-        # else "queries"
-        queries = envelope["queries"][:MAX_QUERIES_PER_ROUND]
-        results = []
-        for q in queries:
-            entry = _run_pseudo_query(client, model, q["intent"], q["pseudo"])
-            results.append(entry)
-            trace.append(entry)
-
-        # Feed results back as a synthetic user turn so the reasoner can
-        # see what came back on its next call.
-        contents.append(
-            types.Content(role="model", parts=[types.Part(text=_envelope_to_text(envelope, raw_text))])
-        )
-        contents.append(
-            types.Content(role="user", parts=[types.Part(text=format_query_result_message_batch(results))])
+    except Exception as exc:
+        return (
+            {
+                "type": "text",
+                "title": "AI execution failed",
+                "summary": f"Internal execution failed: {type(exc).__name__}: {exc}",
+            },
+            trace,
         )
 
     # MAX_OUTER_ROUNDS exhausted without a final or give_up.

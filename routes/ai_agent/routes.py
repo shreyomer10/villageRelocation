@@ -104,10 +104,7 @@ def ai_chat(claims):
             {"role": "assistant", "content": summary, "trace": trace},
         ]
 
-        try:
-            session = _save_chat_session(user_id, chat_id, full_messages)
-        except Exception as exc:
-            abort(500, description=str(exc))
+        session = _save_chat_session(user_id, chat_id, full_messages)
         if not session:
             return jsonify({
                 "error": True,
@@ -119,6 +116,7 @@ def ai_chat(claims):
         payload["assistantText"] = summary
         payload["sessionId"] = session["id"]
         payload["sessionTitle"] = session["title"]
+        payload["trace"] = trace
         return jsonify({"error": False, "result": payload}), 200
 
     except Exception as exc:
