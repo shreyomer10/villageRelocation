@@ -6,11 +6,31 @@ returns `(final_payload, trace)`.
 """
 
 import json
+from datetime import date, datetime
 from typing import Any
 
+from bson import ObjectId
+from bson.decimal128 import Decimal128
 from google.genai import types
 
 from config import db
+
+
+def _jsonable(value):
+    """Recursively convert BSON / datetime types to JSON-serializable equivalents."""
+    if isinstance(value, ObjectId):
+        return str(value)
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, Decimal128):
+        return str(value.to_decimal())
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    if isinstance(value, dict):
+        return {k: _jsonable(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_jsonable(v) for v in value]
+    return value
 
 from .protocol import (
     EnvelopeError,
@@ -57,8 +77,7 @@ def _execute_query(real: dict) -> dict:
                     break
                 docs.append(doc)
 
-        # JSON-serializable: stringify ObjectId / datetime via default=str at format time.
-        return {"ok": True, "data": docs}
+        return {"ok": True, "data": _jsonable(docs)}
     except Exception as exc:
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
