@@ -1,4 +1,5 @@
 import datetime as dt
+import json
 
 from flask import Blueprint, request, jsonify, abort
 from google import genai
@@ -82,9 +83,29 @@ def ai_chat(claims):
             persisted_history = session.get("messages", [])
 
         # Strip trace fields before sending to Gemini — the model sees only
-        # the clean role/content turns.
+        # the clean role/content turns. Assistant turns are persisted as a
+        # JSON-encoded final_payload (so the frontend can re-render
+        # tables/charts); for the model we fall back to the human-readable
+        # summary so it doesn't see raw JSON in its context.
+        def _content_for_model(msg):
+            content = msg.get("content")
+            if msg.get("role") == "assistant" and isinstance(content, str):
+                stripped = content.strip()
+                if stripped.startswith("{"):
+                    try:
+                        parsed = json.loads(stripped)
+                    except ValueError:
+                        return content
+                    if isinstance(parsed, dict):
+                        return (
+                            parsed.get("summary")
+                            or parsed.get("title")
+                            or content
+                        )
+            return content
+
         clean_history = [
-            {"role": m["role"], "content": m["content"]}
+            {"role": m["role"], "content": _content_for_model(m)}
             for m in persisted_history
             if isinstance(m, dict) and "role" in m and "content" in m
         ]
@@ -101,9 +122,18 @@ def ai_chat(claims):
             or final_payload.get("title")
             or "(no summary)"
         )
+        # Persist the full final_payload (table/chart data + summary) as a
+        # JSON string so the frontend can re-hydrate and re-render the
+        # table/chart on session reload. The clean text history sent to
+        # Gemini still strips this back to plain summary in `clean_history`.
+        try:
+            persisted_assistant_content = json.dumps(final_payload)
+        except (TypeError, ValueError):
+            persisted_assistant_content = summary
+
         full_messages = persisted_history + [
             {"role": "user", "content": user_prompt},
-            {"role": "assistant", "content": summary, "trace": trace},
+            {"role": "assistant", "content": persisted_assistant_content, "trace": trace},
         ]
 
         session = _save_chat_session(user_id, chat_id, full_messages)
