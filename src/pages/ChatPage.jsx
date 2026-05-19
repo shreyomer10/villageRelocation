@@ -304,14 +304,6 @@ function TraceDrawer({ trace, onClose }) {
                 <div style={s.traceEntryHeader}>
                   <span style={s.traceIdx}>#{i + 1}</span>
                   <span style={s.traceIntent}>{entry.intent || "(no intent)"}</span>
-                  {entry.attempts > 1 && (
-                    <span style={s.traceAttempts}>{entry.attempts} attempts</span>
-                  )}
-                </div>
-
-                <div style={s.traceField}>
-                  <div style={s.traceFieldLabel}>Pseudo-query</div>
-                  <pre style={s.traceJson}>{JSON.stringify(entry.pseudo, null, 2)}</pre>
                 </div>
 
                 <div style={s.traceField}>
