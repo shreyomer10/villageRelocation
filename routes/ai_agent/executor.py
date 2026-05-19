@@ -6,6 +6,7 @@ returns `(final_payload, trace)`.
 """
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
 from typing import Any
 
@@ -33,17 +34,16 @@ def _jsonable(value):
     return value
 
 from .protocol import (
+    ALLOWED_COLLECTIONS,
     EnvelopeError,
     format_query_result_message_batch,
-    validate_real_query,
 )
-from .reasoner import call_reasoner
-from .query_builder import build_real_query
+from .agent import call_agent
 from .sessions import _message_to_content
 
 
 MAX_OUTER_ROUNDS = 4
-MAX_QUERIES_PER_ROUND = 10
+MAX_QUERIES_PER_ROUND = 5
 MAX_RESULT_DOCS = 500
 
 
@@ -91,50 +91,39 @@ def _execute_or_reject(real: Any) -> dict:
     if "error" in real and len(real) == 1:
         return {"ok": False, "error": real["error"]}
 
-    reason = validate_real_query(real)
-    if reason:
-        return {"ok": False, "error": f"query rejected: {reason}"}
+    collection = real.get("collection")
+    if collection not in ALLOWED_COLLECTIONS:
+        return {
+            "ok": False,
+            "error": f"query rejected: collection {collection!r} is not allowed",
+        }
+
+    op = real.get("op")
+    if op not in {"find", "aggregate"}:
+        return {
+            "ok": False,
+            "error": "query rejected: op must be 'find' or 'aggregate'",
+        }
 
     return _execute_query(real)
 
 
-# ── One pseudo-query (with the single auto-retry) ─────────────────────
+def _run_query_batch(queries: list) -> list[dict]:
+    """Execute one batch of real queries in parallel and return trace entries."""
+    if not queries:
+        return []
 
-def _run_pseudo_query(client, model: str, intent: str, pseudo) -> dict:
-    """
-    Returns a trace entry:
-        {"intent": str, "pseudo": ..., "real": dict|None, "outcome": {...},
-         "attempts": int}
-    """
-    # Attempt 1
-    real = build_real_query(client, model, intent, pseudo, retry_context=None)
-    outcome = _execute_or_reject(real)
-
-    needs_retry = (
-        not outcome.get("ok")
-        or (outcome.get("ok") and outcome.get("data") == [])
-    )
-    attempts = 1
-
-    if needs_retry:
-        if not outcome.get("ok"):
-            retry_ctx = f"Previous attempt failed: {outcome.get('error')}"
-        else:
-            retry_ctx = "Previous query returned 0 documents."
-        real_retry = build_real_query(client, model, intent, pseudo, retry_context=retry_ctx)
-        outcome_retry = _execute_or_reject(real_retry)
-        # Keep retry outcome whether better or not (caller can see trace).
-        real = real_retry
-        outcome = outcome_retry
-        attempts = 2
-
-    return {
-        "intent": intent,
-        "pseudo": pseudo,
-        "real": real,
-        "outcome": outcome,
-        "attempts": attempts,
-    }
+    results = []
+    max_workers = min(len(queries), MAX_QUERIES_PER_ROUND)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(_execute_or_reject, q) for q in queries]
+        for query, future in zip(queries, futures):
+            try:
+                outcome = future.result()
+            except Exception as exc:
+                outcome = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+            results.append({"intent": query.get("intent", ""), "real": query, "outcome": outcome})
+    return results
 
 
 # ── Outer loop ─────────────────────────────────────────────────────────
@@ -146,11 +135,6 @@ def _to_contents(history_messages: list, user_prompt: str) -> list:
         types.Content(role="user", parts=[types.Part(text=user_prompt)])
     )
     return contents
-
-
-def _envelope_to_text(envelope: dict, raw_text: str) -> str:
-    """Replay the reasoner's last turn back into contents as a 'model' message."""
-    return raw_text or json.dumps(envelope, default=str, ensure_ascii=False)
 
 
 def run_conversation(
@@ -171,7 +155,7 @@ def run_conversation(
         final_payload — dict matching one of the bar_chart / pie_chart / table /
                         text schemas. Has additional fields appended by the
                         caller (assistantText, sessionId, sessionTitle).
-        trace         — list of pseudo-query trace entries (see _run_pseudo_query).
+        trace         — list of query trace entries.
     """
     contents = _to_contents(history_messages, user_prompt)
     trace: list = []
@@ -179,13 +163,13 @@ def run_conversation(
     try:
         for _ in range(MAX_OUTER_ROUNDS):
             try:
-                envelope, raw_text = call_reasoner(client, model, contents)
+                envelope, raw_text = call_agent(client, model, contents)
             except EnvelopeError as exc:
                 return (
                     {
                         "type": "text",
                         "title": "Answer",
-                        "summary": f"(reasoner produced unparseable output: {exc})",
+                        "summary": f"(agent produced unparseable output: {exc})",
                     },
                     trace,
                 )
@@ -203,18 +187,12 @@ def run_conversation(
                     trace,
                 )
 
-            # else "queries"
             queries = envelope["queries"][:MAX_QUERIES_PER_ROUND]
-            results = []
-            for q in queries:
-                entry = _run_pseudo_query(client, model, q["intent"], q["pseudo"])
-                results.append(entry)
-                trace.append(entry)
+            results = _run_query_batch(queries)
+            trace.extend(results)
 
-            # Feed results back as a synthetic user turn so the reasoner can
-            # see what came back on its next call.
             contents.append(
-                types.Content(role="model", parts=[types.Part(text=_envelope_to_text(envelope, raw_text))])
+                types.Content(role="model", parts=[types.Part(text=raw_text)])
             )
             contents.append(
                 types.Content(role="user", parts=[types.Part(text=format_query_result_message_batch(results))])
@@ -229,7 +207,6 @@ def run_conversation(
             trace,
         )
 
-    # MAX_OUTER_ROUNDS exhausted without a final or give_up.
     return (
         {
             "type": "text",
@@ -238,3 +215,4 @@ def run_conversation(
         },
         trace,
     )
+
