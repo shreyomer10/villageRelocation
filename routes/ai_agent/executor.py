@@ -43,7 +43,7 @@ from .sessions import _message_to_content
 
 
 MAX_OUTER_ROUNDS = 4
-MAX_QUERIES_PER_ROUND = 5
+MAX_QUERIES_PER_ROUND = 10
 MAX_RESULT_DOCS = 500
 
 
