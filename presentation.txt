@@ -1,0 +1,60 @@
+Slide 1: Introduction
+
+- Overview of the Village Relocation Management System.
+- Purpose: support coordinated relocation planning, field validation, asset tracking and stakeholder reporting.
+- The system combines a backend data platform, relational data models, user management, mobile-capable frontend, and a small AI assistant layer.
+- AI is one component (~20%) focused on conversational querying, while the larger system handles data integrity, workflows, and field operations.
+
+Slide 2: Proposed System
+
+- Core platform for village relocation data including villages, families, plots, materials, facilities, and employees.
+- Backend API built on Flask with MongoDB for scalable document storage and query execution.
+- Frontend interfaces for administrators, surveyors, and field teams via the React/Vite app.
+- Data workflows include relocation stage tracking, material deliveries, construction verification, and reports.
+- AI assistant is integrated for quick conversational access to key metrics and insights.
+
+Slide 3: Important features and Optimizations
+
+- Structured data models for villages, families, plots, materials, meetings, and relocation stages.
+- Admin and analytics routes to manage communities, employees, facilities, and material updates.
+- Prompt caching and deterministic result handling for demo scenarios.
+- Parallel query execution to accelerate dashboard and report generation.
+- Secure auth, session persistence, and trace logs for every chat interaction.
+
+Slide 3.1: Offline-First Architecture, Stage Detection using Computer Vision
+
+- Offline-first design enables field devices to keep working during connectivity loss.
+- Stage detection can validate construction and relocation progress using computer vision on submitted photos.
+- Local processing supports near-real-time verification without waiting for cloud access.
+- This improves accuracy for stage-based approvals and construction milestone tracking.
+
+Slide 3.2: Geolocation Verification, Automated Integrity Flagging System
+
+- Geolocation checks confirm submitted village or asset locations against expected site boundaries.
+- Integrity flags are raised for inconsistent or suspicious data entries.
+- These flags enable early manual review and help prevent data pollution.
+- The flagging system supports both field validation and post-hoc audit workflows.
+
+Slide 3.3: Parallel + DAG query execution
+
+
+
+Slide 3.4: Local Llama model integration
+
+- Local Llama integration provides on-device NLP capabilities and reduces cloud dependency.
+- This supports offline reasoning, privacy-sensitive processing, and fallback intelligence.
+- The local model augments the system with fast, low-latency analytics for field teams.
+
+Slide 4: Future Scope
+
+- Expand mobile and offline sync for rural field agents.
+- Add richer GIS/maps integration for relocation planning and tracking.
+- Support multi-lingual input and regional language interfaces.
+- Enhance audit trails and data integrity checks with automated workflows.
+- Grow the AI layer to cover more operational questions and predictive recommendations.
+
+Slide 5: Thank You
+
+- Thank you for reviewing the Village Relocation Management System.
+- The platform blends data management, field validation, and AI-assisted insights.
+- Questions and next steps are welcome.
