@@ -20,7 +20,6 @@ AWS_DEFAULT_REGION=os.getenv("AWS_DEFAULT_REGION")
 GEMINI_API=os.getenv("GEMINI_API")
 GEMINI_MODEL=os.getenv("GEMINI_MODEL")
 BUCKET_NAME = os.getenv("BUCKET_NAME")
-REDIS_URL = os.getenv("REDIS_URL")
 MAX_FILE_SIZE_MB = 1  # max allowed file size in MB
 client = MongoClient(
     MONGO_URI,

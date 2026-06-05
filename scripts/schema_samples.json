@@ -1,0 +1,766 @@
+{
+  "buildings": {
+    "count": 8,
+    "samples": [
+      {
+        "_id": "68c965e27f355ca3f0921481",
+        "name": "Community Center",
+        "stages": [
+          {
+            "name": "Foundation",
+            "desc": "Base work",
+            "deleted": false,
+            "stageId": "stage_btype_VILL001_4_1"
+          },
+          {
+            "name": "Walls",
+            "desc": "Brickwork",
+            "deleted": false,
+            "stageId": "stage_btype_VILL001_4_2"
+          }
+        ],
+        "deleted": false,
+        "villageId": "VILL001",
+        "typeId": "btype_VILL001_4"
+      },
+      {
+        "_id": "68df8f40e8ea7c2ef5444e85",
+        "name": "scs",
+        "stages": [
+          {
+            "name": "scscs",
+            "deleted": true,
+            "stageId": "stage_btype_VILL001_7_1"
+          },
+          {
+            "name": "casdsa",
+            "desc": "avasvd",
+            "deleted": true,
+            "stageId": "stage_btype_VILL001_7_2"
+          },
+          {
+            "name": "casdsa",
+            "desc": "avasvd",
+            "deleted": false,
+            "stageId": "stage_btype_VILL001_7_3"
+          }
+        ],
+        "deleted": true,
+        "villageId": "VILL001",
+        "typeId": "btype_VILL001_7"
+      },
+      {
+        "_id": "68c9a24f3d5bfb76d9cf5651",
+        "name": "Stadium",
+        "stages": [],
+        "deleted": false,
+        "villageId": "VILL001",
+        "typeId": "btype_V001_1"
+      }
+    ]
+  },
+  "facilities": {
+    "count": 2,
+    "samples": [
+      {
+        "_id": "68f299096ae5d33934b9ee6f",
+        "name": "Water facility",
+        "villageId": "VILL001",
+        "facilityId": "facility_VILL001_1",
+        "deleted": false
+      },
+      {
+        "_id": "694e18a30165f56e2af4bf0b",
+        "name": "Fire emergency",
+        "villageId": "aaggg",
+        "facilityId": "facility_aaggg_1",
+        "deleted": false
+      }
+    ]
+  },
+  "facilityUpdates": {
+    "count": 2,
+    "samples": [
+      {
+        "_id": "695c5469bb40e268ad5c8c0f",
+        "name": "started supply",
+        "docs": [],
+        "notes": "i have checked it out",
+        "villageId": "VILL001",
+        "facilityId": "facility_VILL001_1",
+        "status": 1,
+        "verificationId": "facility_VILL001_1_U5",
+        "verifiedAt": "2026-01-06 05:46:41",
+        "verifiedBy": "UID_4",
+        "insertedBy": "UID_4",
+        "insertedAt": "2026-01-06 05:46:41",
+        "statusHistory": [
+          {
+            "status": 1,
+            "comments": "created",
+            "verifier": "UID_4",
+            "time": "2026-01-06 05:46:41"
+          }
+        ]
+      },
+      {
+        "_id": "68f29fbb3e77f8735b0cc778",
+        "name": "Water Pump Check",
+        "docs": [
+          "https://docs.aws.amazon.com/pdfs/AmazonS3/latest/userguide/s3-userguide.pdf",
+          "https://upload.wikimedia.org/wikipedia/commons/9/9a/Gull_portrait_ca_usa.jpg",
+          "https://docs.aws.amazon.com/pdfs/AmazonS3/latest/userguide/s3-userguide.pdf"
+        ],
+        "notes": "Initial verification",
+        "villageId": "VILL001",
+        "facilityId": "facility_VILL001_1",
+        "status": 1,
+        "verificationId": "facility_VILL001_1_U1",
+        "verifiedAt": "2025-10-18 01:27:47",
+        "verifiedBy": "UID_4",
+        "insertedBy": "UID_4",
+        "statusHistory": [
+          {
+            "status": 1,
+            "comments": "created",
+            "verifier": "UID_4",
+            "time": "2025-10-18 01:27:47"
+          },
+          {
+            "status": 1,
+            "comments": "Initial verification",
+            "verifier": "UID_4",
+            "time": "2025-10-18 01:30:58"
+          }
+        ],
+        "insertedAt": "2025-10-18 01:27:47"
+      }
+    ]
+  },
+  "house": {
+    "count": 6,
+    "samples": [
+      {
+        "_id": "695c55f9bb40e268ad5c8c17",
+        "mukhiyaName": "Yogendra Kumar",
+        "typeId": "btype_V001_3",
+        "villageId": "VILL001",
+        "familyId": "fam_V001_2",
+        "numberOfHome": 1,
+        "homeDetails": [
+          {
+            "mukhiyaName": "Yogendra Kumar",
+            "familyId": "fam_V001_2",
+            "docs": [],
+            "homeId": "P_VILL001_house_10_H1",
+            "currentStage": "",
+            "stagesCompleted": []
+          }
+        ],
+        "plotId": "P_VILL001_house_10",
+        "deleted": false
+      },
+      {
+        "_id": "695a6b9354aae615a81da119",
+        "mukhiyaName": "Shrey Omar",
+        "typeId": "btype_V001_2",
+        "villageId": "VILL001",
+        "familyId": "fam_V001_3",
+        "numberOfHome": 2,
+        "homeDetails": [
+          {
+            "mukhiyaName": "Shrey omar",
+            "familyId": "fam_V001_3",
+            "docs": [],
+            "homeId": "P_VILL001_house_9_H1",
+            "currentStage": "stage_btype_V001_2_1",
+            "stagesCompleted": [
+              "stage_btype_V001_2_1"
+            ]
+          },
+          {
+            "mukhiyaName": "Shrey Gupta",
+            "familyId": "fam_V001_7",
+            "docs": [],
+            "homeId": "P_VILL001_house_9_H2",
+            "currentStage": "",
+            "stagesCompleted": []
+          }
+        ],
+        "plotId": "P_VILL001_house_9",
+        "deleted": false
+      },
+      {
+        "_id": "68f145374d137a7198f3f66f",
+        "mukhiyaName": "Ramesh Updated4",
+        "typeId": "btype_V001_3",
+        "villageId": "VILL001",
+        "familyId": "F001",
+        "numberOfHome": 2,
+        "homeDetails": [
+          {
+            "mukhiyaName": "Ramesh5",
+            "familyId": "fam_V001_1"
+          },
+          {
+            "mukhiyaName": "Sures6h",
+            "familyId": "fam_V001_2"
+          }
+        ],
+        "plotId": "P_VILL001_house_2",
+        "deleted": true
+      }
+    ]
+  },
+  "materialUpdates": {
+    "count": 6,
+    "samples": [
+      {
+        "_id": "695c54ebbb40e268ad5c8c13",
+        "name": "done",
+        "type": "plot",
+        "materialId": "CM_1",
+        "villageId": "VILL001",
+        "qty": "20",
+        "unit": "Bags",
+        "notes": "done",
+        "docs": [],
+        "updateId": "CM_1_U14",
+        "status": 1,
+        "verifiedAt": "2026-01-06 05:48:51",
+        "verifiedBy": "UID_4",
+        "insertedBy": "UID_4",
+        "insertedAt": "2026-01-06 05:48:51",
+        "statusHistory": [
+          {
+            "status": 1,
+            "comments": "created",
+            "verifier": "UID_4",
+            "time": "2026-01-06 05:48:51"
+          }
+        ]
+      },
+      {
+        "_id": "68f28c42f1a0fc72d26b0d4d",
+        "type": "plot",
+        "materialId": "CM_1",
+        "villageId": "VILL001",
+        "qty": "50",
+        "unit": "bags",
+        "docs": [
+          "https://docs.aws.amazon.com/pdfs/AmazonS3/latest/userguide/s3-userguide.pdf"
+        ],
+        "updateId": "CM_1_U2",
+        "status": 1,
+        "verifiedAt": "2025-10-18 00:04:42",
+        "verifiedBy": "UID_4",
+        "insertedBy": "UID_4",
+        "statusHistory": [
+          {
+            "status": 1,
+            "comments": "created",
+            "verifier": "UID_4",
+            "time": "2025-10-18 00:04:42"
+          }
+        ],
+        "insertedAt": "2025-10-18 00:04:42"
+      },
+      {
+        "_id": "69189b501408cd63c8e72af3",
+        "type": "plot",
+        "materialId": "CM_1",
+        "villageId": "VILL001",
+        "qty": "12",
+        "unit": "bags",
+        "notes": "Changed request details",
+        "docs": [
+          "https://example.com/newfile.jpg"
+        ],
+        "updateId": "CM_1_U8",
+        "status": 1,
+        "verifiedAt": "2025-11-15 20:55:04",
+        "verifiedBy": "UID_4",
+        "insertedBy": "UID_4",
+        "insertedAt": "2025-11-15 20:55:04",
+        "statusHistory": [
+          {
+            "status": 1,
+            "comments": "created",
+            "verifier": "UID_4",
+            "time": "2025-11-15 20:55:04"
+          },
+          {
+            "status": 1,
+            "comments": "Changed request details",
+            "verifier": "UID_4",
+            "time": "2025-11-15 20:56:38"
+          }
+        ]
+      }
+    ]
+  },
+  "materials": {
+    "count": 2,
+    "samples": [
+      {
+        "_id": "694d8c7276a91d255fd59938",
+        "name": "testing",
+        "desc": "hello world",
+        "materialId": "CM_7"
+      },
+      {
+        "_id": "68f28a0bf1a0fc72d26b0d4a",
+        "name": "Bricks",
+        "desc": "Clay bricks",
+        "materialId": "CM_1"
+      }
+    ]
+  },
+  "plotUpdates": {
+    "count": 17,
+    "samples": [
+      {
+        "_id": "691687336540673d47f54e2e",
+        "currentStage": "stage_btype_VILL001_3_5",
+        "name": "rtygcb",
+        "docs": [],
+        "notes": "dk so so so el top ya rl usa ask utah if ah idk osh og dh lv tj Hz g if ah kg at l trek gh lash jax du ih six rj indo pick let keg tj oh sg jar ish over yu orgy kg st it's wet ut az dj inc di oh di obv bl omb kenya hk plato pm",
+        "type": "house",
+        "villageId": "VILL001",
+        "plotId": "P_VILL001_house_3",
+        "homeId": "P_VILL001_house_3_H1",
+        "status": 3,
+        "verificationId": "V_VILL001_btype_V001_3_17",
+        "verifiedAt": "2025-11-14 07:04:43",
+        "verifiedBy": "UID_4",
+        "insertedBy": "UID_4",
+        "insertedAt": "2025-11-14 07:04:43",
+        "geoFlag": true,
+        "timeFlag": true,
+        "stageFlag": false,
+        "fraudScore": 1,
+        "flag": true,
+        "statusHistory": [
+          {
+            "status": 1,
+            "comments": "dk so so so el top ya rl usa ask utah if ah idk osh og dh lv tj Hz g if ah kg at l trek gh lash jax du ih six rj indo pick let keg tj oh sg jar ish over yu orgy kg st it's wet ut az dj inc di oh di obv bl omb kenya hk plato pm",
+            "verifier": "UID_4",
+            "time": "2025-11-14 07:04:43"
+          }
+        ]
+      },
+      {
+        "_id": "695c5784bb40e268ad5c8c1c",
+        "currentStage": "stage_btype_V001_2_1",
+        "name": "updates",
+        "docs": [],
+        "notes": "updates",
+        "type": "plot",
+        "villageId": "VILL001",
+        "plotId": "P_VILL001_btype_V001_2_4",
+        "status": 1,
+        "verificationId": "V_VILL001_btype_V001_2_2",
+        "verifiedAt": "2026-01-06 05:59:56",
+        "verifiedBy": "UID_4",
+        "insertedBy": "UID_4",
+        "insertedAt": "2026-01-06 05:59:56",
+        "geoFlag": true,
+        "timeFlag": true,
+        "stageFlag": false,
+        "fraudScore": 1,
+        "flag": true,
+        "statusHistory": [
+          {
+            "status": 1,
+            "comments": "updates",
+            "verifier": "UID_4",
+            "time": "2026-01-06 05:59:56"
+          }
+        ]
+      },
+      {
+        "_id": "695c5325bb40e268ad5c8c06",
+        "currentStage": "stage_btype_VILL001_3_5",
+        "name": "verification done of this stage",
+        "docs": [],
+        "notes": "okjn",
+        "type": "house",
+        "villageId": "VILL001",
+        "plotId": "P_VILL001_house_3",
+        "homeId": "P_VILL001_house_3_H1",
+        "status": 2,
+        "verificationId": "V_VILL001_btype_V001_3_20",
+        "verifiedAt": "2026-01-09 00:37:49",
+        "verifiedBy": "UID_37",
+        "insertedBy": "UID_4",
+        "insertedAt": "2026-01-06 05:41:17",
+        "geoFlag": true,
+        "timeFlag": true,
+        "stageFlag": false,
+        "fraudScore": 1,
+        "flag": true,
+        "statusHistory": [
+          {
+            "status": 1,
+            "comments": "ok",
+            "verifier": "UID_4",
+            "time": "2026-01-06 05:41:17"
+          },
+          {
+            "status": 1,
+            "comments": "okj",
+            "verifier": "UID_4",
+            "time": "2026-01-06 05:43:49"
+          },
+          {
+            "status": 1,
+            "comments": "okjn",
+            "verifier": "UID_4",
+            "time": "2026-01-06 05:44:00"
+          },
+          {
+            "status": 2,
+            "comments": "correct",
+            "verifier": "UID_37",
+            "time": "2026-01-09 00:37:49"
+          }
+        ]
+      }
+    ]
+  },
+  "plots": {
+    "count": 17,
+    "samples": [
+      {
+        "_id": "68dac33b7322ac4b67d269d2",
+        "name": "Commuinity HALL 2",
+        "typeId": "btype_V001_3",
+        "villageId": "VILL001",
+        "stagesCompleted": [
+          "stage_btype_VILL001_3_5",
+          "stage_btype_VILL001_3_2"
+        ],
+        "docs": [
+          "https/stage_btype_VILL001_3_5"
+        ],
+        "deleted": true,
+        "plotId": "P_VILL001_btype_V001_3_1",
+        "familyId": "fam_V001_1"
+      },
+      {
+        "_id": "68d3cc11fb9eb96efb037983",
+        "name": "Teto Building II",
+        "typeId": "btype_V001_3",
+        "villageId": "V001",
+        "stagesCompleted": [],
+        "docs": [],
+        "deleted": false,
+        "plotId": "P_V001_btype_V001_3_14"
+      },
+      {
+        "_id": "68e0247fb775dda0252e8b74",
+        "name": "badhiya plot hai yaar mujhe bhi dedo",
+        "typeId": "btype_V001_2",
+        "villageId": "VILL001",
+        "stagesCompleted": [],
+        "docs": [],
+        "deleted": true,
+        "plotId": "P_VILL001_btype_V001_2_2"
+      }
+    ]
+  },
+  "testing": {
+    "count": 7,
+    "samples": [
+      {
+        "_id": "6959265e7255987c01879f5c",
+        "mukhiyaName": "Shrey Gupta",
+        "mukhiyaPhoto": "",
+        "relocationOption": "Option_2",
+        "villageId": "VILL001",
+        "mukhiyaHealth": "Healthy",
+        "mukhiyaAge": "45",
+        "lat": 27.12345,
+        "long": 78.54321,
+        "members": [],
+        "photos": [],
+        "docs": [],
+        "familyId": "fam_V001_7",
+        "stagesCompleted": [],
+        "currentStage": "",
+        "plotId": "P_VILL001_house_9"
+      },
+      {
+        "_id": "695925407255987c01879f4a",
+        "mukhiyaName": "Raju gupta",
+        "mukhiyaPhoto": "https://upload.wikimedia.org/wikipedia/commons/9/9a/Gull_portrait_ca_usa.jpg",
+        "relocationOption": "Option_1",
+        "villageId": "VILL001",
+        "mukhiyaHealth": "Healthy",
+        "mukhiyaAge": "45",
+        "lat": 27.12345,
+        "long": 78.54321,
+        "members": [
+          {
+            "name": "Rajesh Singh",
+            "age": "45",
+            "healthStatus": "Healthy",
+            "photo": "http://photos.com/ramesh_member.jpg",
+            "gender": "male"
+          }
+        ],
+        "photos": [],
+        "docs": [],
+        "familyId": "fam_V001_3",
+        "stagesCompleted": [],
+        "currentStage": "",
+        "plotId": "P_VILL001_house_9"
+      },
+      {
+        "_id": "695926137255987c01879f5a",
+        "mukhiyaName": "Kamal Sahu",
+        "mukhiyaPhoto": "",
+        "relocationOption": "Option_1",
+        "villageId": "VILL001",
+        "mukhiyaHealth": "Healthy",
+        "mukhiyaAge": "45",
+        "lat": 27.12345,
+        "long": 78.54321,
+        "members": [],
+        "photos": [],
+        "docs": [],
+        "familyId": "fam_V001_5",
+        "stagesCompleted": [],
+        "currentStage": "",
+        "plotId": "P_VILL001_house_7"
+      }
+    ]
+  },
+  "users": {
+    "count": 8,
+    "samples": [
+      {
+        "_id": "68b5b6d9c48a27d901704daf",
+        "email": "admin@example.com",
+        "name": "Admin User",
+        "role": "Admin",
+        "mobile": "8737861194",
+        "password": "b'$2b$12$Zv3yy8/Si.alzviecnNtvua239fjcHRScOsnpB4jgIPfy2Z6fPeOK'",
+        "villageID": [
+          "VILL001"
+        ]
+      },
+      {
+        "_id": "68d441f326971ed629e98169",
+        "email": "fg1@forest.gov",
+        "name": "Ramesh Kumar",
+        "role": "fg",
+        "mobile": "9876543210",
+        "password": "b'$2b$12$PaCJTBvUdr35tPDDE2BDxO5QcsmrgQPLvRnCDh2Z3BUIcW70IePC.'",
+        "activated": true,
+        "deleted": false,
+        "userId": "UID_4",
+        "otp": {
+          "code": "873970",
+          "used": false,
+          "passed": false,
+          "expiresAt": "2025-10-24 13:00:19"
+        },
+        "verified": true,
+        "villageID": [
+          "VILL001",
+          "V003"
+        ]
+      },
+      {
+        "_id": "68df6f8826ef18f66ffb9dba",
+        "email": "yogi@ad",
+        "name": "yogi",
+        "role": "ra",
+        "mobile": "1111111111",
+        "villageID": [
+          "V007",
+          "V008",
+          "V004",
+          "V002",
+          "VILL001",
+          "V003"
+        ],
+        "activated": true,
+        "deleted": false,
+        "userId": "UID_37",
+        "password": "b'$2b$12$jA61Fdni6dvyQxsEyoYNxON4xkszzx3WwV4slL27SNUoeYs6jF1Oq'",
+        "verified": true,
+        "otp": {
+          "code": "783551",
+          "used": false,
+          "passed": false,
+          "expiresAt": "2025-11-26 22:38:20"
+        }
+      }
+    ]
+  },
+  "villages": {
+    "count": 6,
+    "samples": [
+      {
+        "_id": "68c5e81de901e3eea421cf93",
+        "villageId": "V003",
+        "name": "chhirhatta",
+        "siteOfRelocation": "Block A - Site 12",
+        "range": "Central",
+        "fd": "Forest Division Alpha",
+        "gramPanchayat": "GP-Sundarpur",
+        "tehsil": "Tehsil North",
+        "janpad": "Janpad One",
+        "district": "District X",
+        "lat": 22.5076571,
+        "long": 81.6394748,
+        "currentStage": "2",
+        "currentSubStage": "1",
+        "kme": "https://example.com/kme/v001",
+        "docs": [
+          {
+            "name": "random docs",
+            "url": "https://example.com/lists/village2-families.csv"
+          }
+        ],
+        "photos": [
+          "https://images.all-free-download.com/images/graphicwebp/wild_animal_picture_relaxing_tiger_6934816.webp",
+          "https://images.all-free-download.com/images/graphicwebp/wild_animal_picture_relaxing_tiger_6934816.webp"
+        ],
+        "familyMasterList": "https://example.com/lists/village1-family-list.xlsx",
+        "updatedAt": "5:5",
+        "updatedBy": "shrey",
+        "areaDiverted": "34",
+        "beat": "sd",
+        "circle": "2w",
+        "sd": "SD-1"
+      },
+      {
+        "_id": "68c5e8bee901e3eea421cf94",
+        "villageId": "V004",
+        "name": "Birarpani",
+        "siteOfRelocation": "Block A - Site 12",
+        "range": "Central",
+        "fd": "Forest Division Alpha",
+        "gramPanchayat": "GP-Sundarpur",
+        "tehsil": "Tehsil North",
+        "janpad": "Janpad One",
+        "district": "District X",
+        "lat": 22.5305504,
+        "long": 81.6361747,
+        "currentStage": "2",
+        "currentSubStage": "1",
+        "kme": "https://example.com/kme/v001",
+        "docs": [
+          {
+            "name": "random docs",
+            "url": "https://example.com/lists/village2-families.csv"
+          }
+        ],
+        "photos": [
+          "https://images.all-free-download.com/images/graphicwebp/wild_animal_picture_relaxing_tiger_6934816.webp",
+          "https://images.all-free-download.com/images/graphicwebp/wild_animal_picture_relaxing_tiger_6934816.webp"
+        ],
+        "familyMasterList": "https://example.com/lists/village1-family-list.xlsx",
+        "updatedAt": "5:5",
+        "updatedBy": "shrey",
+        "areaDiverted": "34",
+        "beat": "ss",
+        "circle": "ss",
+        "sd": "SD-1"
+      },
+      {
+        "_id": "68bc37983522b8b5ce7e95f8",
+        "villageId": "VILL001",
+        "name": "Tilaidabra",
+        "siteOfRelocation": "Block A - Site 12",
+        "range": "Central",
+        "fd": "Forest Division Alpha",
+        "gramPanchayat": "GP-Sundarpur",
+        "tehsil": "Tehsil North",
+        "janpad": "Janpad One",
+        "district": "District X",
+        "lat": 22.5183944,
+        "long": 81.7578948,
+        "currentStage": "Stage_17",
+        "currentSubStage": "Stage_17_2",
+        "kme": "https://example.com/kme/v001",
+        "docs": [
+          {
+            "name": "random docs",
+            "url": "https://example.com/lists/village2-families.csv"
+          }
+        ],
+        "photos": [
+          "https://images.all-free-download.com/images/graphicwebp/wild_animal_picture_relaxing_tiger_6934816.webp",
+          "https://images.all-free-download.com/images/graphicwebp/wild_animal_picture_relaxing_tiger_6934816.webp"
+        ],
+        "familyMasterList": "https://example.com/lists/village1-family-list.xlsx",
+        "updatedAt": "5:5",
+        "updatedBy": "shrey",
+        "areaDiverted": "34",
+        "sd": "SD-1",
+        "beat": "33",
+        "circle": "xx",
+        "completed_substages": [
+          "Stage_17_2"
+        ],
+        "updates": [
+          {
+            "currentStage": "Stage_17",
+            "currentSubStage": "Stage_17_1",
+            "name": "update 1",
+            "docs": [],
+            "notes": "Adding DGPS survey notes.",
+            "updateId": "Updates_VILL001_1",
+            "verifiedBy": "user123",
+            "verifiedAt": "2025-09-29T11:25:41.202464",
+            "deleted": true
+          },
+          {
+            "currentStage": "Stage_17",
+            "currentSubStage": "Stage_17_2",
+            "name": "update 2",
+            "docs": [],
+            "notes": "none",
+            "updateId": "Updates_VILL001_2",
+            "verifiedBy": "system",
+            "verifiedAt": "2025-09-29T11:22:47.141566"
+          },
+          {
+            "currentStage": "Stage_17",
+            "currentSubStage": "Stage_17_3",
+            "name": "update 3",
+            "docs": [],
+            "notes": "none",
+            "updateId": "Updates_VILL001_3",
+            "verifiedBy": "system",
+            "verifiedAt": "2025-09-29T11:22:54.129399",
+            "deleted": true
+          },
+          {
+            "currentStage": "Stage_17",
+            "currentSubStage": "Stage_17_3",
+            "name": "update 3",
+            "docs": [],
+            "notes": "none",
+            "updateId": "Updates_VILL001_4",
+            "verifiedBy": "system",
+            "verifiedAt": "2025-09-29T11:27:11.465796",
+            "deleted": true
+          }
+        ],
+        "emp": [
+          "UID_4",
+          "UID_37",
+          "UID_35",
+          "UID_18",
+          "UID_38"
+        ],
+        "deleted": false
+      }
+    ]
+  }
+}
