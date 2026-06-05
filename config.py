@@ -1,0 +1,30 @@
+import os
+import certifi
+from dotenv import load_dotenv
+from pymongo import MongoClient
+
+load_dotenv()
+
+MONGO_URI = os.getenv("MONGO_URI")
+JWT_SECRET = os.getenv("JWT_SECRET")
+DB_NAME = os.getenv("DB_NAME")
+JWT_EXPIRE_MIN = int(os.getenv("JWT_EXPIRE_MIN", "120"))
+OTP_EXPIRE_MIN = int(os.getenv("OTP_EXPIRE_MIN", "5"))
+SENDER_EMAIL=os.getenv("SENDER_EMAIL",default="shreyomer41@gmail.com")
+RECIEVER_EMAIL=os.getenv("RECIEVER_EMAIL",default="luckyomer10@gmail.com")
+APP_PASSWORD=os.getenv("APP_PASSWORD")
+
+AWS_ACCESS_KEY_ID=os.getenv("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS_KEY=os.getenv("AWS_SECRET_ACCESS_KEY")
+AWS_DEFAULT_REGION=os.getenv("AWS_DEFAULT_REGION")
+GEMINI_API=os.getenv("GEMINI_API")
+GEMINI_MODEL=os.getenv("GEMINI_MODEL")
+BUCKET_NAME = os.getenv("BUCKET_NAME")
+MAX_FILE_SIZE_MB = 1  # max allowed file size in MB
+client = MongoClient(
+    MONGO_URI,
+    tls=True,
+    tlsCAFile=certifi.where()
+)
+
+db = client[DB_NAME]

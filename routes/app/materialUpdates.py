@@ -1,0 +1,342 @@
+from flask import Blueprint, request
+from pydantic import ValidationError
+from models.village import Logs
+from models.complaints import StatusHistory
+from utils.tokenAuth import auth_required
+from models.stages import statusHistory
+from config import db
+from utils.helpers import STATUS_TRANSITIONS, authorization, make_response, nowIST, validation_error_response
+from models.constructionMaterial import MaterialUpdateInsert, MaterialUpdateUpdate, MaterialUpdates
+from models.counters import get_next_material_id, get_next_materialUpdate_id
+from datetime import datetime
+
+material_updates_bp = Blueprint("material_updates", __name__)
+material_updates = db.materialUpdates
+materials = db.materials  # reference to main materials collection
+logs=db.logs
+
+# ================= ADD MATERIAL UPDATE =================
+@material_updates_bp.route("/material_update/insert", methods=["POST"])
+@auth_required
+def insert_material_update(decoded_data):
+    try:
+        payload = request.get_json(force=True)
+        userId = payload.pop("userId", None)
+        if not payload or not userId:
+            return make_response(True, "Missing request body or userId", status=400)
+        error = authorization(decoded_data, userId)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
+        try:
+            update_obj = MaterialUpdateInsert(**payload)
+        except ValidationError as ve:
+            return validation_error_response(ve)
+
+        # Check if material exists
+        material = materials.find_one({"materialId": update_obj.materialId})
+        if not material:
+            return make_response(True, "Material not found", status=404)
+
+        # Generate unique updateId
+        update_id = get_next_materialUpdate_id(materialId=update_obj.materialId,db=db)
+
+        now = nowIST()
+        history=statusHistory(
+            status=1,
+            comments="created",
+            verifier=userId,
+            time=str(now)
+        )
+        update_doc = MaterialUpdates(
+            updateId=update_id,
+            name=update_obj.name,
+            type=update_obj.type,
+            materialId=update_obj.materialId,
+            villageId=update_obj.villageId,
+            qty=update_obj.qty,
+            unit=update_obj.unit,
+            docs=update_obj.docs,
+            status=1,
+            verifiedAt=str(now),
+            verifiedBy=userId,  # or set from user
+            insertedBy=userId,
+            insertedAt=str(now),
+            notes=update_obj.notes,
+            statusHistory=[history.model_dump()]
+        )
+
+        material_updates.insert_one(update_doc.model_dump(exclude_none=True))
+        log=Logs(
+            userId=userId,
+            updateTime=nowIST(),
+            type='Materials',
+            action='Verification Insert',
+            comments="",
+            relatedId=update_id,
+            villageId=update_obj.villageId
+        )
+
+        # Insert into DB
+        logs.insert_one(log.model_dump())
+        return make_response(False, "Material update inserted successfully", result=update_doc.model_dump(exclude_none=True))
+
+    except Exception as e:
+        return make_response(True, f"Error inserting material update: {str(e)}", status=500)
+
+
+# ================= UPDATE MATERIAL UPDATE =================
+@material_updates_bp.route("/material_update/<updateId>", methods=["PUT"])
+@auth_required
+def update_material_update(decoded_data,updateId):
+    try:
+        payload = request.get_json(force=True)
+        userId = payload.pop("userId", None)
+        if not payload or not userId:
+            return make_response(True, "Missing request body or userId", status=400)
+        error = authorization(decoded_data, userId)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
+        try:
+            update_obj = MaterialUpdateUpdate(**payload)
+        except ValidationError as ve:
+            return validation_error_response(ve)
+
+        existing = material_updates.find_one({"updateId": updateId})
+        if not existing:
+            return make_response(True, "Material update not found", status=404)
+        villageId=existing.get("villageId")
+        update_dict = update_obj.model_dump(exclude_none=True)
+        if not update_dict:
+            return make_response(True, "No valid fields to update", status=400)
+        now = nowIST()
+
+        history=statusHistory(
+            status=1,
+            comments=update_obj.notes,
+            verifier=userId,
+            time=str(now)
+        )
+        material_updates.update_one(
+            {"updateId": updateId},
+            {"$set": update_dict,
+            "$push": {"statusHistory": history.model_dump(exclude_none=True)}})
+        
+        log=Logs(
+            userId=userId,
+            updateTime=nowIST(),
+            type='Materials',
+            action='Verification Edited',
+            comments="",
+            relatedId=updateId,
+            villageId=villageId
+        )
+
+        # Insert into DB
+        logs.insert_one(log.model_dump())
+        return make_response(False, "Material update updated successfully", result=update_dict)
+
+    except Exception as e:
+        return make_response(True, f"Error updating material update: {str(e)}", status=500)
+
+
+# ================= DELETE MATERIAL UPDATE =================
+@material_updates_bp.route("/material_update/<updateId>", methods=["DELETE"])
+@auth_required
+def delete_material_update(decoded_data,updateId):
+    try:
+        payload = request.get_json(force=True)
+        userId = payload.get("userId")
+
+        if not payload or not userId:
+            return make_response(True, "Missing request body", status=400)
+
+        error = authorization(decoded_data, userId)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
+        existing = material_updates.find_one({"updateId": updateId})
+        if not existing:
+            return make_response(True, "Material update not found", status=404)
+        villageId=existing.get("villageId")
+
+
+        # Hard delete
+        material_updates.delete_one({"updateId": updateId})
+        log=Logs(
+            userId=userId,
+            updateTime=nowIST(),
+            type='Materials',
+            action='Verification Deleted',
+            comments="",
+            relatedId=updateId,
+            villageId=villageId
+        )
+
+        # Insert into DB
+        logs.insert_one(log.model_dump())
+        return make_response(False, "Material update deleted successfully")
+
+    except Exception as e:
+        return make_response(True, f"Error deleting material update: {str(e)}", status=500)
+
+
+# ================= GET ALL MATERIAL UPDATES =================
+@material_updates_bp.route("/material_update/one/<updateId>", methods=["GET"])
+@auth_required
+def get_material_update(decoded_data,updateId):
+    try:
+        docs = material_updates.find_one({"updateId":updateId}, {"_id": 0})
+        if not docs:
+            return make_response(True, "Material updates not found",status=404)
+        return make_response(False, "Material update fetched successfully", result=docs,status=200)
+    except Exception as e:
+        return make_response(True, f"Error fetching material updates: {str(e)}", status=500)
+
+@material_updates_bp.route("/material_updates/<villageId>/<materialId>", methods=["GET"])
+@auth_required
+def get_updates(decoded_data, villageId, materialId):
+    try:
+        args = request.args
+
+        # Extract filters
+        name=args.get("name")
+        type=args.get("type")
+        status = args.get("status")
+        from_date = args.get("fromDate")
+        to_date = args.get("toDate")
+        user_role = decoded_data.get("role")
+
+        page = int(args.get("page", 1))
+        limit = int(args.get("limit", 15))
+
+        # Build query
+        query = {"villageId": villageId, "materialId": materialId}
+        if name:
+            query["name"] = {"$regex": name, "$options": "i"}
+        if type:
+            query["type"] = type
+        if status:
+            query["status"] = int(status)
+        elif user_role and user_role.lower() in STATUS_TRANSITIONS:
+            query["status"] = STATUS_TRANSITIONS[user_role.lower()]
+
+        # Date filtering
+        if from_date or to_date:
+            date_filter = {}
+            if from_date:
+                date_filter["$gte"] = from_date
+            if to_date:
+                date_filter["$lte"] = to_date
+            query["insertedAt"] = date_filter
+
+        projection = {"_id": 0, "statusHistory": 0}
+        skip = (page - 1) * limit
+
+        cursor = (
+            material_updates.find(query, projection)
+            .sort("insertedAt", -1)
+            .skip(skip)
+            .limit(limit)
+        )
+
+        update_items = list(cursor)
+        total_count = material_updates.count_documents(query)
+
+        if not update_items:
+            return make_response(
+                True,
+                f"No updates found",
+                result={"count": 0, "items": []},
+                status=404,
+            )
+
+        return make_response(
+            False,
+            "Updates fetched successfully",
+            result={
+                "count": total_count,
+                "page": page,
+                "limit": limit,
+                "items": update_items,
+            },
+        )
+
+    except Exception as e:
+        return make_response(
+            True,
+            f"Error fetching updates: {str(e)}",
+            result={"count": 0, "items": []},
+            status=500,
+        )
+
+
+@material_updates_bp.route("/material_updates/verify", methods=["POST"])
+@auth_required
+def verify_update(decoded_data):
+    try:
+        payload = request.get_json(force=True)
+        materialId = payload.get("materialId")
+        updateId = payload.get("updateId")
+        userId = payload.get("userId")
+        status = payload.get("status")  # 1=accept, -1=send back
+        comments = payload.get("comments", "")
+
+
+        if not materialId or not updateId or not userId or not comments or status not in [1, -1]:
+            return make_response(True, "Missing required fields", status=400)
+        error = authorization(decoded_data, userId)
+        if error:
+            return make_response(True, message=error["message"], status=error["status"])
+        user_role = decoded_data.get("role")
+
+        update = material_updates.find_one({"materialId":materialId,"updateId":updateId}, {"_id": 0})
+
+        if not update:
+            return make_response(True, "Update not found", status=404)
+        villageId=update.get("villageId")
+        previous_status = update.get("status", 1) 
+        
+        required_status = STATUS_TRANSITIONS.get(user_role)
+        if not required_status or previous_status != required_status:
+            return make_response(True, f"Unauthorized: {user_role} cannot verify status {previous_status}", status=403)
+
+
+        # Update status
+        now = nowIST()
+        final_status = min(max(previous_status + status, 1), 4)
+        new_history=StatusHistory(
+            status=1,
+            comments=comments,
+            verifier=userId,
+            time=str(now)
+        )
+
+
+        material_updates.update_one(
+            {"updateId": updateId, "materialId": materialId},
+            {
+                "$set": {
+                    "status": final_status,
+                    "verifiedBy": userId,
+                    "verifiedAt": now,
+                },
+                "$push": {"statusHistory": new_history.model_dump(exclude_none=True)}
+            },
+            upsert=False
+        )
+
+        log=Logs(
+            userId=userId,
+            updateTime=nowIST(),
+            type='Materials',
+            action='Action',
+            comments=comments,
+            relatedId=updateId,
+            villageId=villageId
+        )
+
+        # Insert into DB
+        logs.insert_one(log.model_dump())
+        return make_response(False, "Verification status updated successfully", result=new_history.model_dump())
+
+    except Exception as e:
+        return make_response(True, f"Error verifying update: {str(e)}", status=500)
