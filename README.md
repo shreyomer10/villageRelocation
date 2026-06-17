@@ -1,54 +1,57 @@
-# Village Relocation AI Assistant
+# Village Relocation Management System
 
-This repository contains the backend and supporting scripts for the Village Relocation project. It provides an AI-driven chat assistant with a MongoDB-backed prompt cache, a single-agent Gemini orchestration flow, and a set of utilities for building AI query responses from village relocation data.
+This repository documents the backend side of the Village Relocation Management System. The platform is designed to support relocation planning, field validation, asset tracking, and stakeholder reporting through a structured data backend, operational workflows, and a focused AI assistant layer.
 
-## Project Structure
+The AI component is intentionally only one part of the system. Most of the application is built around managing villages, families, plots, materials, facilities, employees, meetings, and relocation stages. The assistant is used to surface information quickly, while the core platform keeps the operational records consistent and traceable.
 
-- `backend.py` – Flask application entry point for the backend API.
-- `config.py` – Environment configuration loader for MongoDB and Gemini settings.
-- `routes/ai_agent/` – AI agent route handlers, executor logic, prompt protocol, and supporting modules.
-- `scripts/` – Utility scripts, including prompt cache population.
-- `models/` – Data model definitions for application collections.
-- `utils/` – Shared helper utilities and authentication logic.
+## System Overview
 
-## Key Features
+The application combines a Flask API, MongoDB collections, route-based business logic, and shared utility layers for authentication and verification. It supports the data flow needed for relocation operations, including stage tracking, material updates, facility management, and community records.
 
-- Single-agent AI orchestration using Google Gemini.
-- Exact-match prompt cache for demo latency control and deterministic responses.
-- Parallel/DAG query execution for faster data retrieval from MongoDB.
-- Chat session management with persistence and trace logging.
-- Prompt population script for seeding stable cached responses.
+The project also reflects a broader field workflow vision: offline-first usage, location-aware verification, integrity flagging, and computer-vision-assisted stage checks are part of the intended operational model described in the project presentation.
 
-## Setup
+## Core Capabilities
 
-1. Create and activate a Python virtual environment.
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-3. Add `.env` variables:
-   - `MONGO_URI`
-   - `DB_NAME`
-   - `GEMINI_API`
-   - `GEMINI_MODEL`
-   - `JWT_SECRET`
-4. Run the backend:
-   ```bash
-   python backend.py
-   ```
+- Village, family, plot, material, facility, employee, and meeting data management.
+- Relocation stage tracking and workflow-based operational updates.
+- Admin and analytics routes for community, material, and facility oversight.
+- AI-assisted querying for quick access to key summaries and insights.
+- Prompt caching and deterministic chat handling for repeatable demo responses.
+- Parallel query execution to improve response time for dashboard and reporting requests.
+- Session persistence and trace logging for chat interactions.
+- Integrity-oriented validation concepts such as geolocation checks and suspicious-entry flagging.
 
-## Usage
+## Architecture
 
-- Use the `/ai/chat` endpoint to submit user prompts.
-- Use the prompt cache script to pre-populate demo responses for exact questions.
-- The `prompt_cache` collection is checked before invoking the AI, and cached answers are returned with a simulated 4-7 second delay.
+- `backend.py` provides the Flask application entry point.
+- `config.py` centralizes environment and service configuration.
+- `models/` defines the collections used by the system.
+- `routes/` contains the API surface for authentication, family records, village operations, meetings, complaints, logs, admin workflows, and AI assistant endpoints.
+- `routes/ai_agent/` contains the orchestration logic, protocol handling, executor flow, prompt reasoning, and session management for the assistant.
+- `utils/` holds shared helpers, token authentication, and verification pipeline support.
+- `scripts/` contains utility scripts such as prompt cache population and schema/data helpers.
 
-## Script
+## AI Layer
 
-- `scripts/populate_prompt_cache.py` — populates `prompt_cache` with selected questions and their AI responses.
+The AI assistant is built for focused conversational access to the underlying relocation data. It uses a MongoDB-backed prompt cache for exact-match responses, which keeps demo behavior stable and avoids unnecessary recomputation for repeated questions.
 
-## Notes
+The assistant flow is also designed to work with parallel or DAG-style query execution so that multi-step questions can be answered more efficiently. This keeps the conversational layer responsive while the main platform continues to handle data integrity and workflow control.
 
-- The system requires a running MongoDB instance reachable via `MONGO_URI`.
-- The AI backend uses Google Gemini, so valid Gemini credentials are required.
-- Exact prompt matching is intentional for demo confidence and reproducible output.
+## Operational Direction
+
+The presentation highlights several forward-looking directions for the system, including offline-first field support, stage detection from submitted photos, geolocation-based verification, automated integrity alerts, and local model integration for low-latency reasoning. These ideas position the platform as a practical tool for on-ground relocation work rather than just a chat interface.
+
+## Future Scope
+
+- Expand offline sync for field agents working in low-connectivity areas.
+- Add richer GIS and map-based planning support.
+- Support multilingual input for regional deployment.
+- Strengthen audit trails and automated validation workflows.
+- Extend the AI layer to cover more operational and predictive questions.
+
+## Supporting Files
+
+- `routes/ai_agent/` for the AI orchestration flow.
+- `scripts/populate_prompt_cache.py` for seeding stable demo responses.
+- `requirements.txt` for Python dependency tracking.
+- `README.md` for the project-level explanation.
