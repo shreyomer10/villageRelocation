@@ -1,31 +1,39 @@
-# Village Relocation Management System (VRMS)
+# MAATI — Village Relocation Management System
 
-**A field-operations backend for government-supervised village relocation — 105 REST endpoints over MongoDB, a geo- and vision-verified field audit trail, and a schema-grounded AI agent that answers questions by writing and running its own database queries.**
+**A field-operations backend for the relocation of villages out of a tiger reserve — 105 REST endpoints over MongoDB, an AI fraud-detection pipeline that validates geo-tagged field evidence, and a schema-grounded AI agent that answers officials' questions by writing and running its own database queries.**
 
 ---
 
 ## Table of Contents
-- [Problem Statement](#problem-statement)
+- [The Problem](#the-problem)
 - [Our Solution](#our-solution)
 - [Tech Stack](#tech-stack)
 - [Architecture](#architecture)
-- [The AI Core](#the-ai-core)
+- [AI System #1 — Fraud Verification](#ai-system-1--fraud-verification)
+- [AI System #2 — The Analytics Agent](#ai-system-2--the-analytics-agent)
 - [Advanced Architectural Patterns](#advanced-architectural-patterns)
 - [API Surface](#api-surface)
 - [Getting Started](#getting-started)
 
 ---
 
-## Problem Statement
+## The Problem
 
-When a village is relocated out of a protected forest area, the state must track — for **every single family** — where they were, what they were promised, what has actually been built, and what was paid. In practice this is run on paper registers, WhatsApp photos, and spreadsheets that live on one officer's laptop.
+The Forest Department must relocate **19 villages** situated inside a tiger reserve. This is a legally-governed, multi-year process involving public funds, court scrutiny, and audit — and before this system, it ran entirely on paper files.
 
-Four failures follow from that, and they compound:
+A single village relocation means tracking, simultaneously:
 
-1. **Verification is unfalsifiable.** A field officer submits a photo captioned "foundation complete." Nothing ties that image to *that plot*, on *that date*, showing *that construction stage*. A photo taken 40 km away, or last year, or of a different house, is indistinguishable from a real one.
-2. **Progress has no single source of truth.** Relocation runs in stages, per village, per plot, per house, per facility. When each of those lives in a different register, "how far along is Village X?" has no answer anyone can defend in an audit.
-3. **Field staff work where there is no network.** Data is captured at the relocation site — frequently with no usable connectivity — and reconciled later, so the system must tolerate delayed, out-of-order submissions without corrupting the record.
-4. **The people who need answers cannot query the data.** A District Collector asking "which villages have families still on Option 1?" must route the question through whoever can write a database query. The answer arrives days later, if at all.
+- **10–15 official stages per village** — Gram Sabha consent, land identification, compensation approval, and so on, each of which must be completed in order.
+- **Hundreds of families**, each headed by a *mukhiya*, each choosing **Option 1** (a government-built house) or **Option 2** (cash compensation, disbursed through the Collector's account into a joint account, then split across house purchase, fixed deposit, and household needs).
+- **Physical construction** — plots, houses, and community facilities, each with its own ordered stage sequence.
+- **Continuous photographic evidence** for every claim of progress.
+
+Four failures follow from doing this on paper, and they compound:
+
+1. **Evidence is unfalsifiable.** A field officer submits a photo captioned "foundation complete." Nothing ties that image to *that plot*, on *that date*, showing *that stage*. A photo taken 40 km away, or last year, or of a different house, is indistinguishable from a real one.
+2. **Progress has no single source of truth.** Stages live in separate registers, so "how far along is Village X?" has no answer anyone can defend in an audit.
+3. **Field staff work where there is no network.** Data is captured at the relocation site, frequently with no connectivity, and reconciled later — so the system must tolerate delayed submissions without corrupting the record.
+4. **The people who need answers cannot query the data.** A Collector asking "which villages still have families on Option 1?" must route the question through whoever can write a database query. The answer arrives days later, if at all.
 
 The hard part is not storing the data. It is making a distributed, intermittently-connected, human-entered record **trustworthy enough to audit** — and then making it **answerable in plain language**.
 
@@ -33,14 +41,15 @@ The hard part is not storing the data. It is making a distributed, intermittentl
 
 ## Our Solution
 
-VRMS is a Flask + MongoDB backend that treats every field submission as a **claim requiring verification**, and layers a natural-language query agent on top of the verified record.
+MAATI is a three-surface system — a **Flutter Android app** for field officers, a **React dashboard** for senior officers, and this **Flask + MongoDB backend** tying them together. The backend treats every field submission as a **claim requiring verification**, and layers a natural-language query agent on top of the verified record.
 
-- **Every stage update is evidence-bound.** A submission carries GPS coordinates, a timestamp, and a photo. The verification pipeline independently checks each of these before the update is accepted.
-- **Relocation is modeled as explicit stage machines.** Villages, plots, houses, facilities, and buildings each carry `currentStage` and `stagesCompleted[]`, so progress is a queryable property of the record, not a status someone reports.
-- **Soft deletes preserve the audit trail.** Records carry a `deleted` flag rather than being removed, so a correction never erases what was previously claimed.
+- **Every stage update is evidence-bound.** A submission carries GPS coordinates, a timestamp, and a photo. An automated pipeline checks all three — including a vision model that reads the construction stage straight from the image — and attaches a `fraudScore` before any human looks at it.
+- **Relocation is modeled as explicit stage machines.** Villages, plots, houses, and facilities each carry `currentStage` and `stagesCompleted[]`, with predecessor stages enforced, so progress is a queryable property of the record rather than a status someone reports.
+- **Approvals are a role-gated ladder.** Verifications climb RA → RO → AD, each transition permitted only to the matching role and appended to an immutable `statusHistory`.
+- **Nothing is ever destroyed.** Soft deletes and a global audit log mean a correction is always distinguishable from an omission.
 - **Officials query in plain English.** The AI agent translates a question into MongoDB queries against a fixed schema, runs them, and returns a chart, table, or text answer for the dashboard.
 
-The AI is deliberately **one component, not the product**. The platform's value is the verified operational record; the agent is the fastest way to interrogate it.
+Two AI systems solve opposite problems: **#1 is vision plus rules, for trust. #2 is language plus queries, for insight.**
 
 ---
 
@@ -58,11 +67,14 @@ The AI is deliberately **one component, not the product**. The platform's value 
 - **ThreadPoolExecutor** — parallel fan-out of independent queries within a round
 
 ### Storage & Infrastructure
-- **AWS S3** (boto3) — photo and document storage, server-side size limits
-- **SMTP** — OTP delivery for authentication
+- **AWS S3** (boto3) — private photo/document storage, presigned URLs, size caps
+- **gunicorn** — WSGI server in production (hosted on Render)
+- **MongoDB Atlas** — TLS via `certifi` CA bundle
+- **SMTP** — email OTP delivery for onboarding
 
-### Frontend *(companion, see `frontend` branch)*
-- React + Vite + Tailwind SPA consuming this API. A Flutter field app (`app/`) handles offline capture.
+### Client Surfaces *(separate repos/branches)*
+- **React 19 + Vite + Tailwind + Recharts** — senior-officer dashboard (`frontend` branch)
+- **Flutter (Dart 3)** — MAATI field app for officers; Retrofit-over-Dio typed client, English/Hindi localization, CI-built APKs via GitHub Actions
 
 ---
 
@@ -149,9 +161,39 @@ POST /ai/chat  →  @auth_required  →  session loaded from chat_sessions
 
 ---
 
-## The AI Core
+## AI System #1 — Fraud Verification
 
-The agent is not a text-to-SQL wrapper. It is a **bounded agentic loop** that plans, queries, inspects results, and re-queries until it can answer — with every step constrained by a validating protocol layer.
+**File:** `utils/verificationPipeline.py`
+
+Every field submission is scored for trustworthiness *before* a human reviews it. Three **independent, orthogonal** checks run against each one:
+
+| Check | Function | Rule |
+|---|---|---|
+| **Geo-fence** | `validate_geo` | Haversine great-circle distance between the photo's GPS and the plot's registered coordinates must be **≤ 50 m** |
+| **Freshness** | `validate_time` | Capture timestamp must be **within 24 hours** of submission (IST) |
+| **Vision** | `classify_stage` | Gemini reads the photo and classifies the construction stage; it must **match the stage the officer claimed** |
+
+```
+fraudScore = (geo failed) + (time failed) + (stage mismatch)     # 0–3
+flag       = fraudScore > 0
+```
+
+`geoFlag`, `timeFlag`, `stageFlag`, `fraudScore`, and `flag` are stored **on the verification record**, so a reviewer sees immediately which submissions are suspicious and precisely why.
+
+**Design decisions worth noting:**
+- **Constrained output for determinism.** The vision prompt demands *only* a stage ID — no explanation, no punctuation — and `UNKNOWN` when uncertain. Shrinking the output space makes the classifier reliably parseable.
+- **Cheap signals first.** Geo and time are deterministic and free; the vision model is the expensive-but-smart layer. Three orthogonal signals beat one heavy model.
+- **It augments humans, it does not replace them.** The pipeline flags; a human still approves. That is the correct posture for a government accountability context.
+
+---
+
+## AI System #2 — The Analytics Agent
+
+**Directory:** `routes/ai_agent/`
+
+The agent is not a text-to-SQL wrapper, and it has **no fixed set of tools**. It is a **bounded agentic loop** that plans, writes its own MongoDB queries, inspects the results, and re-queries until it can answer — with every step constrained by a validating protocol layer.
+
+> **Why no fixed tools?** Hardcoded functions like `get_village_overview()` only answer questions someone anticipated in advance. Letting the model compose arbitrary queries answers questions nobody predicted — but it means the model could propose a *dangerous* query. The protocol layer exists precisely to make that impossible.
 
 ### Design
 
@@ -217,7 +259,35 @@ Every response carries a `trace`: each query's intent, the exact query executed,
 
 **Solution:** Records carry a `deleted` boolean and are filtered at query time. Nothing is ever physically removed, so a correction is always distinguishable from an omission — and both remain reviewable.
 
-### 6. Stage Machines Over Status Fields
+### 6. Role-Gated Approval State Machine
+**Challenge:** "Approved" must mean a specific person at a specific rank signed off — and that record must survive scrutiny years later.
+
+**Solution:** Verifications climb a **multi-level ladder** enforced server-side by `STATUS_TRANSITIONS`:
+
+```
+Range Assistant (ra):  status 1 → 2
+Range Officer   (ro):  status 2 → 3
+Assistant Director(ad):status 3 → 4   (final)
+```
+
+A user may only act on a record whose **current status matches their role's expected status** — an RA cannot approve something already at the RO stage, and vice versa. Body `status` is `+1` (advance) or `-1` (send back), clamped to `[1, 4]`. **Freeze semantics** prevent editing once `status ≥ 3` and deletion once `status ≥ 2`, and every transition appends to an immutable `statusHistory` (who, what, when, comments).
+
+### 7. Race-Free Human-Readable IDs
+**Challenge:** Officials need IDs they can read aloud in a meeting (`plot_VILL_3_B001_4`), not ObjectIds — but naive counters race under concurrency.
+
+**Solution:** A dedicated `counters` collection using MongoDB's atomic **`find_one_and_update` with `$inc` + upsert**. Counters are **scoped per parent** (per-village family counters, per-plot verification counters), yielding readable hierarchical IDs that remain correct under concurrent writes.
+
+### 8. Dual-Delivery JWT Auth
+**Challenge:** One auth system must serve a mobile app and a browser, which have opposite security constraints.
+
+**Solution:** One JWT (HS256), two delivery mechanisms. Mobile receives the token in the response body and returns it as a `Bearer` header; web receives an **httponly, secure, SameSite=None cookie** so JavaScript cannot read it (XSS-resistant). The `@auth_required` decorator accepts whichever is present. **Authorization is a separate layer** from authentication — role helpers and `STATUS_TRANSITIONS` gate what an authenticated user may actually do.
+
+### 9. Private-by-Default Object Storage
+**Challenge:** Field photos are evidence in a public-funds process; they cannot sit behind guessable public URLs, and the API should not proxy large files.
+
+**Solution:** Uploads are extension-allowlisted (`jpg/jpeg/png/pdf/csv`), size-capped at **1 MB**, and stored under opaque `uploads/<uuid>.<ext>` keys, with **transactional rollback** deleting earlier objects if any file in a batch fails. Retrieval mints a **presigned GET URL valid for 1 hour**, so objects stay private and clients fetch S3 directly.
+
+### 10. Stage Machines Over Status Fields
 **Challenge:** "Percent complete" typed in by hand is unverifiable and drifts from reality.
 
 **Solution:** Each entity carries `currentStage` plus an append-only `stagesCompleted[]`. Progress becomes a **derived, queryable property** of the record, so village-level dashboards and the AI agent read the same ground truth as the field app.
