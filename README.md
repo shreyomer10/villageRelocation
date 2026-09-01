@@ -63,7 +63,6 @@ Two AI systems solve opposite problems: **#1 is vision plus rules, for trust. #2
 
 ### AI Layer
 - **Google Gemini** (`google-genai`) — reasoning and query synthesis
-- **MongoDB prompt cache** — deterministic replay for a fixed prompt set
 - **ThreadPoolExecutor** — parallel fan-out of independent queries within a round
 
 ### Storage & Infrastructure
@@ -133,8 +132,6 @@ Official's question ("Bar chart of family count per district")
   │
   ▼
 POST /ai/chat  →  @auth_required  →  session loaded from chat_sessions
-  │
-  ├─ prompt cache hit? ──► stored final_payload returned (deterministic replay)
   │
   ▼
 [Executor Loop]  routes/ai_agent/executor.py — up to 4 rounds
@@ -228,7 +225,7 @@ Every response carries a `trace`: each query's intent, the exact query executed,
 | `executor.py` | Outer loop, parallel query execution, BSON coercion |
 | `prompt_agent.py` / `prompt_reasoner.py` | System prompts |
 | `sessions.py` | Chat persistence, title generation, role mapping |
-| `routes.py` | HTTP surface, auth, prompt cache |
+| `routes.py` | HTTP surface, auth, session endpoints |
 
 ---
 
@@ -244,22 +241,17 @@ Every response carries a `trace`: each query's intent, the exact query executed,
 
 **Solution:** A validating protocol layer sits between the model and the database, enforcing a **collection allowlist**, an **operation allowlist** (`find`/`aggregate` only), and a **result cap** — checked at both parse time and execution time. The model produces a *proposal*; the executor decides what actually runs. No agent output can reach a write operation.
 
-### 3. Deterministic Prompt Cache
-**Challenge:** Live demos to government stakeholders cannot depend on LLM nondeterminism or API availability, but the system must still be genuinely live.
-
-**Solution:** A curated prompt set is precomputed into a `prompt_cache` collection (`scripts/populate_prompt_cache.py`). Exact matches return a stored `final_payload` — identical every time, with zero API dependency — while every other question runs the full agentic loop. Reliability where it is needed, generality everywhere else.
-
-### 4. Validate-at-the-Edge with Pydantic
+### 3. Validate-at-the-Edge with Pydantic
 **Challenge:** Field-submitted payloads from multiple clients drift over time; MongoDB's flexibility means bad shapes persist silently and corrupt later aggregations.
 
 **Solution:** Pydantic models with `extra = "forbid"` reject unknown fields outright at the boundary. Malformed data is refused on entry rather than discovered months later in a report.
 
-### 5. Soft Deletes as an Audit Primitive
+### 4. Soft Deletes as an Audit Primitive
 **Challenge:** In a government workflow, "this record was removed" is itself auditable information. A hard delete destroys the trail.
 
 **Solution:** Records carry a `deleted` boolean and are filtered at query time. Nothing is ever physically removed, so a correction is always distinguishable from an omission — and both remain reviewable.
 
-### 6. Role-Gated Approval State Machine
+### 5. Role-Gated Approval State Machine
 **Challenge:** "Approved" must mean a specific person at a specific rank signed off — and that record must survive scrutiny years later.
 
 **Solution:** Verifications climb a **multi-level ladder** enforced server-side by `STATUS_TRANSITIONS`:
@@ -272,22 +264,22 @@ Assistant Director(ad):status 3 → 4   (final)
 
 A user may only act on a record whose **current status matches their role's expected status** — an RA cannot approve something already at the RO stage, and vice versa. Body `status` is `+1` (advance) or `-1` (send back), clamped to `[1, 4]`. **Freeze semantics** prevent editing once `status ≥ 3` and deletion once `status ≥ 2`, and every transition appends to an immutable `statusHistory` (who, what, when, comments).
 
-### 7. Race-Free Human-Readable IDs
+### 6. Race-Free Human-Readable IDs
 **Challenge:** Officials need IDs they can read aloud in a meeting (`plot_VILL_3_B001_4`), not ObjectIds — but naive counters race under concurrency.
 
 **Solution:** A dedicated `counters` collection using MongoDB's atomic **`find_one_and_update` with `$inc` + upsert**. Counters are **scoped per parent** (per-village family counters, per-plot verification counters), yielding readable hierarchical IDs that remain correct under concurrent writes.
 
-### 8. Dual-Delivery JWT Auth
+### 7. Dual-Delivery JWT Auth
 **Challenge:** One auth system must serve a mobile app and a browser, which have opposite security constraints.
 
 **Solution:** One JWT (HS256), two delivery mechanisms. Mobile receives the token in the response body and returns it as a `Bearer` header; web receives an **httponly, secure, SameSite=None cookie** so JavaScript cannot read it (XSS-resistant). The `@auth_required` decorator accepts whichever is present. **Authorization is a separate layer** from authentication — role helpers and `STATUS_TRANSITIONS` gate what an authenticated user may actually do.
 
-### 9. Private-by-Default Object Storage
+### 8. Private-by-Default Object Storage
 **Challenge:** Field photos are evidence in a public-funds process; they cannot sit behind guessable public URLs, and the API should not proxy large files.
 
 **Solution:** Uploads are extension-allowlisted (`jpg/jpeg/png/pdf/csv`), size-capped at **1 MB**, and stored under opaque `uploads/<uuid>.<ext>` keys, with **transactional rollback** deleting earlier objects if any file in a batch fails. Retrieval mints a **presigned GET URL valid for 1 hour**, so objects stay private and clients fetch S3 directly.
 
-### 10. Stage Machines Over Status Fields
+### 9. Stage Machines Over Status Fields
 **Challenge:** "Percent complete" typed in by hand is unverifiable and drifts from reality.
 
 **Solution:** Each entity carries `currentStage` plus an append-only `stagesCompleted[]`. Progress becomes a **derived, queryable property** of the record, so village-level dashboards and the AI agent read the same ground truth as the field app.
@@ -355,8 +347,7 @@ python backend.py
 
 Optional helper scripts:
 ```bash
-python scripts/seed_data.py             # seed sample collections
-python scripts/populate_prompt_cache.py # precompute cached prompts
+python scripts/seed_data.py   # seed sample collections
 ```
 
 ---

@@ -7,7 +7,6 @@ from flask import Blueprint, request, jsonify, abort
 from google import genai
 
 from config import GEMINI_API
-# GEMINI_API="AQ.Ab8RN6Ik7_sLmTbQgN6oBnir1I_Zc4Cv7ahg1NbGQkce5-QhoA"
 from config import GEMINI_MODEL, db
 from utils.helpers import make_response
 from utils.tokenAuth import auth_required
